@@ -11,6 +11,7 @@ Built by Stonefletcher Productions LLC. Choose a project, see what is building, 
 ## What you can do
 
 - **See progress:** current step, elapsed time, queue, and recent logs.
+- **Understand waits:** release-priority waits use neutral gray and “Waiting for … to finish”; real blockers stay highlighted.
 - **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
 - **Switch projects:** create, import, edit, and export profiles in the app.
 - **Stay responsive:** GitHub reads and bulk PR moves happen in the background. Moves show progress, keep unconfirmed items selected, and notify the lane once.

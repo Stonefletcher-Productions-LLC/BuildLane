@@ -340,9 +340,20 @@ function Update-View {
     $Queue.BeginUpdate(); $Queue.Items.Clear()
     foreach ($Q in @(if ($S) { $S.queue })) {
         $It = New-Object Windows.Forms.ListViewItem("#$($Q.number)")
-        [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add([string]$Q.state); $It.Tag = $Q.number
-        if ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
+        $QueueState = [string]$Q.state
+        $ReleaseWait = $false
+        if ($QueueState -match '^held: (.+?) is being packaged first(?<suffix>;.*)?$') {
+            $QueueState = "Waiting for $($Matches[1]) to finish$($Matches['suffix'])"
+            $ReleaseWait = $true
+        } elseif ($QueueState -match '^held: after the (.+) freeze$') {
+            $QueueState = "Waiting for the $($Matches[1]) release freeze to end"
+            $ReleaseWait = $true
+        }
+        [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add($QueueState); $It.Tag = $Q.number
+        if ($ReleaseWait) { $It.ForeColor = $Grey; $It.Text = "○ #$($Q.number)" }
+        elseif ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
         elseif ($Q.state -match 'held|conflict') { $It.ForeColor = $Orange }
+        elseif ($Q.state -match '^waiting') { $It.ForeColor = $Grey }
         [void]$Queue.Items.Add($It)
         if ($SelectedPr -eq $Q.number) { $It.Selected = $true }
     }

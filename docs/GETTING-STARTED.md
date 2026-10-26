@@ -49,6 +49,8 @@ Saved app tokens are encrypted for your Windows user and stored separately from 
 
 **No build has reported yet** means the configured status file is missing. It is not a GitHub authentication failure. See [integration](INTEGRATION.md) to connect a producer.
 
+Queue colors distinguish normal waiting from problems: **gray** means waiting for a release or a turn, **blue** means active work, and **orange** highlights blockers such as merge conflicts or failing main checks. “Waiting for v0.2.2 to finish” covers both preparation and packaging; it does not imply packaging has already started.
+
 To move multiple PRs, tick them, choose a destination, and press **Move**. Progress appears below the move controls while you can browse other tabs. Project switching, another move, and closing the app wait until the operation finishes. Confirmed moves are unticked; unconfirmed items remain ticked. If notifying the lane fails, the app says so separately from the saved moves.
 
 GitHub refreshes retain the previous results if a request fails or is rate-limited. The Releases message explains when another attempt is available.
