@@ -1,0 +1,59 @@
+# Connect a build system
+
+BuildLane separates the Windows desktop client from the build backend. A profile tells the client where to look; it does not provision the backend. The [LifeShare profile](../examples/LifeShare.profile.json) is an optional example of an existing integration.
+
+```mermaid
+flowchart LR
+    UI[BuildLane desktop] --> Profile[Project profile]
+    Profile --> GitHub[GitHub repository and lane workflow]
+    Profile --> Runner[Local runner files and services]
+    GitHub --> Build[Your build pipeline]
+    Build --> Status[Status JSON]
+    Status --> UI
+```
+
+## Local status
+
+Your runner writes the configured `statusFile`. Use ISO 8601 timestamps, and replace the file atomically when possible. BuildLane retains the last valid snapshot if it encounters a partial write.
+
+```json
+{
+  "updated": "2026-10-26T14:03:00Z",
+  "started": "2026-10-26T14:00:00Z",
+  "phase": 1,
+  "phases": ["Prepare", "Build", "Test", "Package"],
+  "what": "Acme Desktop 1.2",
+  "step": "Compiling desktop app",
+  "progress": { "done": 3, "total": 5 },
+  "queue": [{ "number": 42, "title": "Improve welcome screen", "state": "building now" }],
+  "notes": [],
+  "done": ""
+}
+```
+
+`phase` is zero-based. Keep `done` empty during work; use `success` or `failure` when finished. Optional `runId` supports canceling the associated GitHub Actions run; `runUrl` and `issueUrl` enable log/status links. Recent step logs are read from `<runnerPath>\_diag\pages\*.log`.
+
+## Pause and resume
+
+The app creates the configured `pauseFile` to request a pause, and removes it to resume. The parent folder must exist and be writable. Your runner must check that marker before starting work. On resume, the app dispatches the lane workflow. BuildLane cannot enforce a pause on a backend that ignores this file.
+
+## GitHub workflow and releases
+
+The configured workflow must accept `workflow_dispatch` with `inputs.task = lane` on the configured branch. It must implement the queue/release semantics expected by the app:
+
+- Milestones represent releases; their description contains a line `lane: open`, `lane: queued`, `lane: packaging`, `lane: packaged`, or `lane: failed`.
+- The `ready` and `fix-main` PR labels identify work eligible for the lane.
+- Queuing a milestone tells the backend to prioritize its ready PRs, build/package them, and update release state.
+- Closing or moving a milestone/PR changes GitHub data and can dispatch the lane again.
+
+Do not enable release management against a workflow that does not implement these semantics. The [original LifeShare lane documentation](https://github.com/Stonefletcher-Productions-LLC/LifeShare/blob/main/Docs/BuildLane.md) describes the reference backend; access to that private repository may be required.
+
+## Machine health
+
+The client lists Windows services matching both `actions.runner.*` and the configured `serviceFilter`. Use a project-specific filter. The drive and thresholds control display warnings; your pipeline performs any waits or cleanup. `cachePort` checks whether a local TCP port is listening; `0` disables the check.
+
+## Profile format
+
+See [the neutral template](../app/BuildLane.profile.json) for field names. `Read-LaneProfile` expands Windows environment variables in the three path fields. The bundled template has `setupRequired: true` to prevent actions before configuration. Profiles saved through the editor omit that setup marker.
+
+Existing profiles without `setupRequired` continue to work. The client currently supports GitHub.com URLs only. Tokens must never be embedded in profiles.

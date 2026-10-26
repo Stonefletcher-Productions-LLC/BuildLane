@@ -1,60 +1,74 @@
 # BuildLane
 
-Windows desktop control panel for build queues, GitHub releases, and local runner health, maintained by Stonefletcher Productions LLC.
+**Your build queue, releases, and runner health in one Windows desktop app.**
 
-BuildLane opens as a desktop app with no command window. It includes an Overview dashboard, Releases, System health, and an in-app Projects editor. GitHub reads refresh in the background with pagination, rate-limit handling, and protection against results from a previously selected project.
+Built by Stonefletcher Productions LLC. Choose a project, see what is building, and manage releases without keeping a terminal open.
 
-## Run it
+![BuildLane overview with sample build data](docs/images/overview.png)
 
-Requires Windows, Windows PowerShell 5.1, and the .NET Framework compiler installed with Windows. Run the following from this repository in Windows PowerShell:
+[Get started](docs/GETTING-STARTED.md) · [Connect your build system](docs/INTEGRATION.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Contribute](CONTRIBUTING.md)
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\app\InstallLaneApp.ps1
-```
+## What you can do
 
-Open **Buildlane** from the desktop shortcut. The installer script builds the launcher and installs the app in `%LOCALAPPDATA%\Programs\Buildlane`. It does not install or reconfigure runner services.
+- **See progress:** current step, elapsed time, queue, and recent logs.
+- **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
+- **Switch projects:** create, import, edit, and export profiles in the app.
+- **Stay responsive:** GitHub reads happen in the background, with pagination and rate-limit backoff.
+- **Start simply:** first-run setup, repository URL pasting, path pickers, and expandable advanced settings.
+- **Keep settings:** profiles and encrypted tokens live outside the installation folder.
 
-The bundled profile is the LifeShare example. In **Projects**, create or import a profile for another project, edit its GitHub repository, branch, workflow, local status/pause paths, runner path, service filter, cache port, and disk thresholds, then select **Save and use**. Profiles and the selected project are stored in `%APPDATA%\Buildlane\Projects`.
+BuildLane is a desktop client for an existing build system. It does not create a runner or supply a universal CI pipeline. Local status and pause controls need the [backend contract](docs/INTEGRATION.md); GitHub connectivity alone does not make an arbitrary workflow compatible.
 
-GitHub access uses the app's token setup or existing GitHub CLI authentication. Saved app tokens are encrypted for the current Windows user. Keep credentials and personal project profiles out of this repository.
+## Start here
 
-## Connecting other products
+**Requirements:** Windows, Windows PowerShell 5.1, and the .NET Framework compiler. GitHub CLI is optional; the app also accepts a GitHub token.
 
-The desktop client is configurable across projects. Each project still needs a compatible build backend; this repository does not install GitHub runners, build a game, or supply a universal CI workflow.
+1. Clone this repository, or use **Code → Download ZIP** and extract it. Organization access is required while this repository is private.
+2. Open **Windows PowerShell** in the extracted repository folder.
+3. Run:
 
-The current backend contract comes from [LifeShare's build lane](https://github.com/Stonefletcher-Productions-LLC/LifeShare/blob/main/Docs/BuildLane.md):
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\app\InstallLaneApp.ps1
+   ```
 
-- The selected workflow accepts a `workflow_dispatch` input named `task`, including `lane` for starting the queue.
-- GitHub milestones represent releases, with a `lane: <state>` line in their description.
-- Pull requests use the lane's `ready` and `fix-main` labels.
-- The runner publishes compatible local status JSON and observes the configured pause file.
-- System health uses the configured Windows services, drive, and cache endpoint.
+4. Open **Buildlane** from the new desktop icon. The PowerShell window can be closed.
+5. Enter your project name, paste its GitHub repository URL, and select your runner paths. Choose **Save and use**, then **Connect GitHub**.
 
-Use the LifeShare integration as the reference when adapting another backend. Switching the profile alone does not make an unrelated workflow compatible. GitHub writes and token validation currently run synchronously.
+![First-run project setup; paths shown are examples](docs/images/setup.png)
 
-## Validate changes
+The app installs to `%LOCALAPPDATA%\Programs\Buildlane`. Existing saved projects remain selected after an upgrade. New installations start with a neutral setup screen; the optional [LifeShare example](examples/LifeShare.profile.json) is available to import.
 
-Run under Windows PowerShell 5.1, which is also the launcher's runtime:
+See the [illustrated setup guide](docs/GETTING-STARTED.md) for field explanations, switching projects, and sharing profiles.
+
+## Development and checks
+
+Run from the repository root:
 
 ```powershell
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneApp.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHub.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
 ```
 
-The tests cover status rendering, progress, profile validation and conflict handling, background refresh coordination, stale results, and multi-page GitHub array parsing. An optional `-Live` flag on `TestLaneGitHub.ps1` checks the bundled profile against GitHub using available authentication.
+These tests use temporary profiles and mocked GitHub responses. GitHub Actions runs the same checks on Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) for optional live checks and screenshot generation.
 
-## Prepare an installer
+## Installer status
+
+The direct installation command above is the verified setup route. MSI packaging is available for testing:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\app\BuildLaneInstaller.ps1 -Version 1.1.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\app\BuildLaneInstaller.ps1 -Version 1.2.0
 ```
 
-Outputs go to `%LOCALAPPDATA%\Buildlane-Packages`. The MSI is per-user and includes desktop and Start menu shortcuts. Packaging uses Windows Installer, makecab, and the .NET Framework compiler; no external installer SDK is required.
+Output: `%LOCALAPPDATA%\Buildlane-Packages\Buildlane-1.2.0-unsigned.msi`.
 
-Signing credentials are pending. Without them, the output is explicitly named `Buildlane-<version>-unsigned.msi`. When a valid code-signing certificate with its private key is available in the current user's certificate store, pass `-CertificateThumbprint` and optionally `-TimestampServer` to sign the payload and MSI. Do not commit private keys or certificates containing them.
+**Signing credentials are pending.** The latest MSI still needs a clean install/upgrade/uninstall validation pass; a stuck Windows Installer transaction blocked the previous development-machine sweep. Do not treat it as a signed production release. See [packaging instructions](docs/PACKAGING.md).
 
-**Installer validation status:** package creation has passed. Earlier candidates passed install/uninstall and upgrade checks; the latest MSI still needs a clean install/upgrade/uninstall validation pass after resetting a stuck Windows Installer transaction on the development PC. Use the direct installation script above for the currently verified installation path.
+## Current boundaries
 
-## Source
+- Windows desktop only; the backend still needs an adapter for each build system.
+- GitHub writes and token validation can briefly block the interface.
+- Hosted GitHub is supported; GitHub Enterprise Server endpoints are not configurable yet.
+- Screenshots show the real app with sample project data and illustrative paths.
 
-`app/` contains the client, launcher, profile example, packaging scripts, and regression tests. BuildLane was extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`, including the Windows PowerShell 5.1 GitHub array/date fix. This repository contains the application source, without game assets, local credentials, or generated installers.
+Source originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`. This repository contains the standalone app, tests, and packaging source.

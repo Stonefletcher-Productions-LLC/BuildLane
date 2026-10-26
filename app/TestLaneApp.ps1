@@ -81,7 +81,7 @@ try {
 } finally {
     if ($Timer) { $Timer.Stop(); $Timer.Dispose() }
     if ($RefreshTimer) { $RefreshTimer.Stop(); $RefreshTimer.Dispose() }
-    Stop-LaneRefresh
+    if (Get-Command Stop-LaneRefresh -ErrorAction SilentlyContinue) { Stop-LaneRefresh }
     if ($Form) { $Form.Dispose() }
     # Only the unique directory created by this test is eligible for cleanup.
     $ResolvedFixture=[IO.Path]::GetFullPath($FixtureRoot)

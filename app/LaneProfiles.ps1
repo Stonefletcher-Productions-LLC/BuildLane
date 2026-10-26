@@ -1,4 +1,4 @@
-# Profile persistence stays outside the installation so upgrades never replace user settings.
+﻿# Profile persistence stays outside the installation so upgrades never replace user settings.
 function Test-LaneProfile($Value) {
     foreach ($Key in @('name','repo','branch','workflow','statusFile','pauseFile','runnerPath','drive','serviceFilter')) {
         if ([string]::IsNullOrWhiteSpace([string]$Value.$Key)) { throw "Enter a value for $Key." }
@@ -17,7 +17,8 @@ function Test-LaneProfile($Value) {
     if ([int]$Value.cleanBelowGB -lt [int]$Value.minimumFreeGB) { throw 'Cleanup threshold must be at least the minimum free space.' }
 }
 function Read-LaneProfile([string]$Path) {
-    $Value = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json
+    $Value = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
+    foreach ($Key in @('statusFile','pauseFile','runnerPath')) { $Value.$Key=[Environment]::ExpandEnvironmentVariables([string]$Value.$Key) }
     Test-LaneProfile $Value
     $Value
 }
@@ -34,4 +35,17 @@ function Save-LaneProfile([string]$Path, $Value, [string]$ExpectedHash) {
         if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, $null) }
         else { [IO.File]::Move($Temporary, $Path) }
     } finally { if (Test-Path -LiteralPath $Temporary) { Remove-Item -LiteralPath $Temporary -Force } }
+}
+
+# Accept repository links pasted from a browser, but never arbitrary hosts or URL tails.
+function ConvertTo-LaneRepository([string]$Text) {
+    $Name=$Text.Trim().TrimEnd('/')
+    if ($Name -match '^https://github\.com/([^/?#]+/[^/?#]+)$') { $Name=$Matches[1] }
+    $Name=$Name -replace '\.git$', ''
+    if ($Name -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Enter owner/repository or an https://github.com/owner/repository link.' }
+    $Name
+}
+function New-LaneProjectDefaults {
+    $Folder=Join-Path $env:LOCALAPPDATA 'Buildlane\Runner'
+    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
 }

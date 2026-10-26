@@ -7,7 +7,7 @@ param(
     [switch]$NoShortcut
 )
 $ErrorActionPreference = 'Stop'
-$Config = Get-Content -LiteralPath $Profile -Raw | ConvertFrom-Json
+$Config = Get-Content -LiteralPath $Profile -Raw -Encoding UTF8 | ConvertFrom-Json
 if (-not $Config.name -or $Config.repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Profile requires a name and owner/repository.' }
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 $LauncherHash = (Get-FileHash (Join-Path $PSScriptRoot 'BuildLaneLauncher.cs')).Hash

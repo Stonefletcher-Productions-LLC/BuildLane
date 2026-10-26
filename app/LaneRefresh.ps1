@@ -1,4 +1,4 @@
-# One background read at a time; results are applied only on the UI thread.
+﻿# One background read at a time; results are applied only on the UI thread.
 $script:RefreshJob = $null
 $script:RetiredJobs = New-Object Collections.ArrayList
 $script:ProjectGeneration = 0
@@ -13,6 +13,7 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
+    if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
     if ([datetime]::UtcNow -lt $script:NextRefresh) {
         $RelMsg.Text = "Retry available at $($script:NextRefresh.ToLocalTime().ToString('HH:mm:ss')). Showing previous results."
