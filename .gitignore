@@ -1,0 +1,21 @@
+# Generated packages and build output
+/dist/
+/build/
+/payload/
+*.exe
+*.msi
+*.cab
+*.ddf
+*.inf
+*.rpt
+*.log
+launcher.sha256
+# Local credentials and project settings
+*.token
+*.pfx
+*.p12
+*.key
+.env
+.env.*
+/local/
+/Projects/
