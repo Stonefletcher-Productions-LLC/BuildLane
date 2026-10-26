@@ -66,6 +66,7 @@ function Reset-LaneCredential {
 Reset-LaneCredential
 function Get-Token { if (-not $SmokeTest) { $script:Token } }
 function Invoke-Gh([string]$Method, [string]$Path, $Body = $null) {
+    if ($Config.setupRequired) { throw "Save your project settings first." }
     if ($Method -ne "GET") { $script:DataRevision++ }
     $T = Get-Token
     if (-not $T) { throw "Connect GitHub first (the button at the top right)." }
@@ -179,6 +180,7 @@ $Brand.Margin = New-Object Windows.Forms.Padding(0, 10, 24, 0)
 # Pause everything: no new build starts (batches, the release build, the nightly, a PR's own build), and the lane
 # starts nothing. The build running now can be stopped too (it asks). Resume lets the lane go on at once.
 $PauseButton = New-Button "Pause builds" {
+    if ($Config.setupRequired) { return }
     if (Test-Path $PauseFile) {
         Remove-Item $PauseFile -ErrorAction SilentlyContinue
         Start-Lane
@@ -201,7 +203,7 @@ $PauseState.AutoSize = $true; $PauseState.Font = $FontBody; $PauseState.Margin =
 [void]$TopBar.Controls.Add($PauseState)
 $GhButton = New-Button "Connect GitHub" { Show-Connect } $TopBar
 
-# Connect GitHub: a fine-grained token for the LifeShare repo, kept for this Windows user only.
+# Connect GitHub: a fine-grained token for the selected repository, kept for this Windows user only.
 function Show-Connect {
     $D = New-Object Windows.Forms.Form
     $D.Text = "Connect GitHub"; $D.Size = New-Object Drawing.Size(560, 330); $D.StartPosition = "CenterParent"; $D.Font = $FontBody; $D.BackColor = $Paper
@@ -254,6 +256,10 @@ function Set-Bar($Bar, [double]$Fraction) {
 
 $script:State = $null
 function Update-View {
+    $Ready = -not $Config.setupRequired
+    $PauseButton.Enabled=$Ready; $GhButton.Enabled=$Ready
+    $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
+    if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
     $ReadWarning = ''
     if (Test-Path $JsonFile) {
@@ -276,7 +282,7 @@ function Update-View {
 
     if (-not $S) {
         $Title.Text = "No build has reported yet"; $Title.ForeColor = $Grey
-        $Sub.Text = "The lane writes its status here when a build starts."
+        $Sub.Text = "Waiting for a status file. Check the runner paths in Projects, or open the setup guide."
         $JobLabel.Text = ""; $StepLabel.Text = ""; $Time.Text = ""; Set-Bar $JobBar 0; Set-Bar $StepBar 0
     }
     else {
@@ -349,15 +355,15 @@ function Update-View {
         $D = Get-PSDrive $Drive -ErrorAction Stop
         $FreeGB = [math]::Round($D.Free / 1GB, 1); $TotalGB = [math]::Round(($D.Free + $D.Used) / 1GB)
         Set-Bar $DiskBar (1 - $D.Free / ($D.Free + $D.Used))
-        $DiskLabel.Text = if ($FreeGB -lt $Config.minimumFreeGB) { "⚠ Drive ${Drive}: $FreeGB GB free of $TotalGB GB. Builds wait until $($Config.minimumFreeGB) GB is free." }
-                          elseif ($FreeGB -lt $Config.cleanBelowGB) { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB (the next build cleans old build folders first)" }
+        $DiskLabel.Text = if ($FreeGB -lt $Config.minimumFreeGB) { "⚠ Drive ${Drive}: $FreeGB GB free of $TotalGB GB. Below the configured $($Config.minimumFreeGB) GB minimum." }
+                          elseif ($FreeGB -lt $Config.cleanBelowGB) { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB (below the configured cleanup threshold)" }
                           else { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB" }
         $DiskLabel.ForeColor = if ($FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
     } catch { $DiskLabel.Text = "Drive ${Drive}: not found" }
     $Svc = @(Get-Service "actions.runner.*" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $Config.serviceFilter } |
-        ForEach-Object { "$(if ($_.Status -eq 'Running') { '✓' } else { '✗' }) $((($_.Name -split '\.')[-1]) -replace '^ALEX_GAMING_PC-', '') runner $($_.Status.ToString().ToLower())" })
+        ForEach-Object { "$(if ($_.Status -eq 'Running') { '✓' } else { '✗' }) $($_.DisplayName) runner $($_.Status.ToString().ToLower())" })
     if (-not $Svc.Count) { $Svc = @("✗ No matching runner services found for $ProductName") }
-    $Zen = if (-not $Config.cachePort) { "" } elseif (Get-NetTCPConnection -LocalPort $Config.cachePort -State Listen -ErrorAction SilentlyContinue) { "✓ Unreal cache server up" } else { "○ Unreal cache server off (the next build starts it)" }
+    $Zen = if (-not $Config.cachePort) { "" } elseif (Get-NetTCPConnection -LocalPort $Config.cachePort -State Listen -ErrorAction SilentlyContinue) { "✓ Cache endpoint listening" } else { "○ Cache endpoint not listening" }
     $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Not paused" }
     $Health.Text = (@($Svc) + @($Zen, $P)) -join "`n"
     $Health.ForeColor = if ($Paused) { $Orange } else { $Ink }
@@ -535,7 +541,7 @@ function Resize-Content {
         if ($List -eq $Queue) { $List.Columns[0].Width = 80; $List.Columns[2].Width = [int]($Width * .30); $List.Columns[1].Width = [math]::Max(120, $Width - 80 - $List.Columns[2].Width) }
         else { foreach ($Column in $List.Columns) { $Column.Width = [int]($Width / $List.Columns.Count) } }
     }
-    foreach ($Panel in @($Root, $RelRoot, $SystemRoot)) {
+    foreach ($Panel in @($Root, $RelRoot, $SystemRoot, $ProjectRoot)) {
         foreach ($Control in $Panel.Controls) {
             if ($Control -is [Windows.Forms.Label]) { $Control.MaximumSize = New-Object Drawing.Size([math]::Max(240, $Panel.ClientSize.Width - 64), 0) }
         }

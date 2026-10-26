@@ -1,14 +1,15 @@
 {
-  "name": "LifeShare",
-  "repo": "Stonefletcher-Productions-LLC/LifeShare",
+  "name": "Your project",
+  "repo": "example/project",
   "branch": "main",
   "workflow": "lane.yml",
-  "statusFile": "E:\\GitHubRunner\\status.json",
-  "pauseFile": "E:\\GitHubRunner\\PAUSED",
-  "runnerPath": "E:\\GitHubRunner\\LifeShare",
-  "drive": "E",
-  "serviceFilter": "*lifeshare*",
-  "cachePort": 8558,
+  "statusFile": "%LOCALAPPDATA%\\Buildlane\\Runner\\status.json",
+  "pauseFile": "%LOCALAPPDATA%\\Buildlane\\Runner\\PAUSED",
+  "runnerPath": "%LOCALAPPDATA%\\Buildlane\\Runner",
+  "drive": "C",
+  "serviceFilter": "*your-project*",
+  "cachePort": 0,
   "minimumFreeGB": 12,
-  "cleanBelowGB": 25
+  "cleanBelowGB": 25,
+  "setupRequired": true
 }

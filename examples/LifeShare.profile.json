@@ -1,0 +1,14 @@
+{
+  "name": "LifeShare",
+  "repo": "Stonefletcher-Productions-LLC/LifeShare",
+  "branch": "main",
+  "workflow": "lane.yml",
+  "statusFile": "E:\\GitHubRunner\\status.json",
+  "pauseFile": "E:\\GitHubRunner\\PAUSED",
+  "runnerPath": "E:\\GitHubRunner\\LifeShare",
+  "drive": "E",
+  "serviceFilter": "*lifeshare*",
+  "cachePort": 8558,
+  "minimumFreeGB": 12,
+  "cleanBelowGB": 25
+}

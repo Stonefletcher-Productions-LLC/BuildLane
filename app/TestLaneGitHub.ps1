@@ -1,8 +1,10 @@
 # Default: isolated reader regression test. -Live: read-only GitHub refresh through the actual UI renderer.
-param([switch]$Live)
+param([switch]$Live, [string]$Profile)
 $ErrorActionPreference='Stop'
 if ($Live) {
-    . "$PSScriptRoot\LaneApp.ps1" -Profile "$PSScriptRoot\BuildLane.profile.json" -NoShow
+    if (-not $Profile) { throw 'Pass -Profile with a configured project JSON file for the live test.' }
+    . "$PSScriptRoot\LaneApp.ps1" -Profile $Profile -NoShow
+    if ($Config.setupRequired) { throw 'Configure the project before running the live test.' }
     try {
         Start-LaneRefresh
         $Deadline=[datetime]::UtcNow.AddSeconds(60)
