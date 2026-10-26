@@ -22,5 +22,7 @@ jobs:
         run: ./app/TestLaneGitHub.ps1
       - name: First-run onboarding checks
         run: ./app/TestLaneOnboarding.ps1
+      - name: Responsive bulk move checks
+        run: ./app/TestLaneMoves.ps1
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut

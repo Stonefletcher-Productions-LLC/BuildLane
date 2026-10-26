@@ -10,6 +10,7 @@ Run in Windows PowerShell from the repository root:
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneApp.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHub.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1
 ```
 
 Tests use isolated temporary profiles and mocked GitHub responses. The onboarding test drives the actual Save button. The GitHub test catches Windows PowerShell array-enumeration errors across multiple pages.
@@ -25,7 +26,8 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHu
 The documentation images are rendered from the real Windows Forms interface with synthetic data. Regenerate them after UI changes:
 
 ```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1 -PreviewDirectory .\docs\images
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1 -PreviewDirectory .\docs\images
 ```
 
 Review the resulting images for clipping and accidental personal data before committing them.
@@ -36,6 +38,7 @@ Review the resulting images for clipping and accidental personal data before com
 | --- | --- |
 | `app/LaneApp.ps1` | Main dashboard and GitHub mutations |
 | `app/LaneProjectsUi.ps1` | Project editor and first-run setup |
+| `app/LaneMoves.ps1` | Background bulk moves, progress, and partial results |
 | `app/LaneProfiles.ps1` | Profile validation and persistence |
 | `app/LaneRefresh.ps1`, `app/LaneGitHub.ps1` | Background reads and pagination |
 | `app/BuildLaneLauncher.cs` | Console-free Windows launcher |

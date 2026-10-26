@@ -94,6 +94,7 @@ function Update-ProjectPicker {
     foreach ($Button in $ProjectActions.Controls) { if ($Button.Text -in @('Edit selected','Use selected')) { $Button.Enabled=($ProjectPicker.Items.Count -gt 0) } }
 }
 function Use-LaneProject([string]$Path) {
+    if ($script:MoveJob) { throw 'Wait for the current move to finish before switching projects.' }
     $Value=Read-LaneProfile $Path
     # Persist first, so a failed write cannot partially switch the UI.
     [void][IO.Directory]::CreateDirectory($ProfileDirectory)
@@ -108,6 +109,7 @@ function Use-LaneProject([string]$Path) {
     $RelList.Items.Clear(); $PrList.Items.Clear(); $MoveTo.Items.Clear()
     $RelButtons.Enabled=$true; $MoveBar.Enabled=$true
     $RelMsg.Text='Open Releases to refresh this project.'
+    if ($MoveStatus) { $MoveStatus.Text='' }
     $Form.Text="Buildlane | $ProductName"; $Brand.Text="Buildlane / $ProductName"
     $ProjectInfo.Text="Project: $Repo`nStatus: $JsonFile`nRunner: $Runner"
     Update-View; Start-LaneRefresh 'auth'

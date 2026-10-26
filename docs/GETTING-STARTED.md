@@ -49,6 +49,8 @@ Saved app tokens are encrypted for your Windows user and stored separately from 
 
 **No build has reported yet** means the configured status file is missing. It is not a GitHub authentication failure. See [integration](INTEGRATION.md) to connect a producer.
 
+To move multiple PRs, tick them, choose a destination, and press **Move**. Progress appears below the move controls while you can browse other tabs. Project switching, another move, and closing the app wait until the operation finishes. Confirmed moves are unticked; unconfirmed items remain ticked. If notifying the lane fails, the app says so separately from the saved moves.
+
 GitHub refreshes retain the previous results if a request fails or is rate-limited. The Releases message explains when another attempt is available.
 
 ## 5. Add or share another project
