@@ -1,4 +1,4 @@
-# BuildLane
+﻿# BuildLane
 
 **Your build queue, releases, and runner health in one Windows desktop app.**
 
@@ -10,6 +10,9 @@ Built by Stonefletcher Productions LLC. Choose a project, see what is building, 
 
 ## What you can do
 
+- **Recognize the app:** the running window, desktop shortcut and taskbar relaunch use the Buildlane icon and identity, even though the interface runs in PowerShell.
+- **Choose your appearance:** switch between light and dark dashboard colors; your preference is saved with your profiles.
+- **Reduce polling overhead:** runner service and cache health checks run every 30 seconds, while build progress and pause status continue updating every three seconds.
 - **See progress:** current step, elapsed time, queue, and recent logs.
 - **Understand waits:** release-priority waits use neutral gray and “Waiting for … to finish”; real blockers stay highlighted.
 - **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
