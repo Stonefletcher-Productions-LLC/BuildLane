@@ -24,5 +24,7 @@ jobs:
         run: ./app/TestLaneOnboarding.ps1
       - name: Responsive bulk move checks
         run: ./app/TestLaneMoves.ps1
+      - name: Shared resource and process cleanup checks
+        run: ./app/TestLaneResources.ps1
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut

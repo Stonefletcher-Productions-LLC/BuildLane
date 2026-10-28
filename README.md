@@ -77,3 +77,7 @@ Output: `%LOCALAPPDATA%\Buildlane-Packages\Buildlane-1.2.0-unsigned.msi`.
 - Screenshots show the real app with sample project data and illustrative paths.
 
 Source originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`. This repository contains the standalone app, tests, and packaging source.
+
+## Shared local builds and captures
+
+[Resource reservations](docs/RESERVATIONS.md) let cooperating chats and scripts reserve a shared build output or GPU across worktrees. The command reports ownership, waits for busy resources, preserves exit codes, and stops its child process tree if the reservation owner closes. Existing runners and captures must opt in; installing BuildLane does not intercept running jobs.

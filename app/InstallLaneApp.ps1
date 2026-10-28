@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 $LauncherHash = (Get-FileHash (Join-Path $PSScriptRoot 'BuildLaneLauncher.cs')).Hash
 $Receipt = Join-Path $Destination 'launcher.sha256'
 $NeedsCompile = -not (Test-Path (Join-Path $Destination 'Buildlane.exe')) -or -not (Test-Path $Receipt) -or (Get-Content $Receipt -ErrorAction SilentlyContinue) -ne $LauncherHash
-foreach ($Name in @('LaneApp.ps1', 'LaneProfiles.ps1', 'LaneGitHub.ps1', 'LaneRefresh.ps1','LaneMoves.ps1', 'LaneProjectsUi.ps1', 'LaneTheme.ps1', 'BuildLane.ico', 'BuildLaneLauncher.cs', 'LaneTaskbar.cs')) {
+foreach ($Name in @('LaneApp.ps1', 'LaneProfiles.ps1', 'LaneGitHub.ps1', 'LaneRefresh.ps1','LaneMoves.ps1', 'LaneProjectsUi.ps1', 'LaneTheme.ps1', 'BuildLane.ico', 'BuildLaneLauncher.cs', 'LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs')) {
     $Source = Join-Path $PSScriptRoot $Name
     $Target = Join-Path $Destination $Name
     if ([IO.Path]::GetFullPath($Source) -ne [IO.Path]::GetFullPath($Target)) { Copy-Item -LiteralPath $Source -Destination $Target -Force }

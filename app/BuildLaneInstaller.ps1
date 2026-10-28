@@ -17,7 +17,7 @@ function Sign-Artifact([string]$Path) {
     $Signature=Set-AuthenticodeSignature -FilePath $Path -Certificate $Certificate -HashAlgorithm SHA256 -TimestampServer $TimestampServer
     if ($Signature.Status -ne 'Valid' -or -not $Signature.TimeStamperCertificate) { throw "Signing or timestamp verification failed: $Path ($($Signature.Status))." }
 }
-$Files=@('Buildlane.exe','LaneApp.ps1','LaneProfiles.ps1','LaneGitHub.ps1','LaneRefresh.ps1','LaneMoves.ps1','LaneProjectsUi.ps1', 'LaneTheme.ps1','BuildLane.profile.json','BuildLane.ico','LaneTaskbar.cs')
+$Files=@('Buildlane.exe','LaneApp.ps1','LaneProfiles.ps1','LaneGitHub.ps1','LaneRefresh.ps1','LaneMoves.ps1','LaneProjectsUi.ps1', 'LaneTheme.ps1','BuildLane.profile.json','BuildLane.ico','LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs')
 foreach ($Name in $Files) { if ($Name -match '\.(exe|ps1)$') { Sign-Artifact (Join-Path $Stage $Name) } }
 $Cabinet=Join-Path $OutputDirectory 'Buildlane.cab'
 $Ddf=Join-Path $OutputDirectory 'Buildlane.ddf'
