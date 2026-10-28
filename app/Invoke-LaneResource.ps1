@@ -56,7 +56,7 @@ try {
         $Path = Join-Path $ReservationDirectory "$Name.json"
         $Temp = "$Path.$PID.tmp"
         [IO.File]::WriteAllText($Temp,($Receipt | ConvertTo-Json -Depth 4))
-        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($Temp,$Path,$null) }
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($Temp,$Path,[NullString]::Value) }
         else { [IO.File]::Move($Temp,$Path) }
     }
     Write-Host "Reserved $($Names -join ', ') for $Owner : $Purpose"

@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $Root = Join-Path ([IO.Path]::GetTempPath()) ('LaneResources-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($Root) | Out-Null
 $Runner = Join-Path $PSScriptRoot 'Invoke-LaneResource.ps1'
-$Shell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+$Shell = (Get-Process -Id $PID).Path
 $Fixture = Join-Path $Root 'fixture.ps1'
 @'
 param([string]$Root)
