@@ -300,10 +300,10 @@ function Update-View {
         $Phase = [int]$S.phase
         if ($S.done) {
             $Ok = $S.done -eq "success"
-            $Title.Text = if ($Ok) { "✓ Last build passed" } elseif ($S.done -eq "cancelled") { "○ Last build was cancelled" } else { "✗ Last build FAILED" }
+            $Title.Text = if ($Ok) { "✓ $($S.what): passed" } elseif ($S.done -eq "cancelled") { "○ $($S.what): cancelled" } elseif ($S.done -eq 'failure') { "✗ $($S.what): FAILED" } else { "○ $($S.what): $($S.done)" }
             $Title.ForeColor = if ($Ok) { $Green } elseif ($S.done -eq "cancelled") { $Grey } else { $Orange }
             $Sub.Text = "$($S.what), finished $($Updated.ToString('HH:mm')) after $(Format-Span ($Updated - $Started)). $(if ($Ok) { 'Check the queue below for upcoming work.' } else { 'Open the live log for details.' })"
-            $JobLabel.Text = "Done"; Set-Bar $JobBar 1
+            $JobLabel.Text = "Run ended: $($S.done)"; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 }))
             $StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 }))
             $Time.Text = ""
         }
@@ -325,6 +325,8 @@ function Update-View {
             if ($S.progress -and [int]$S.progress.total -gt 0) { Set-Bar $StepBar $Frac } else { Set-Bar $StepBar -1 }
             $Time.Text = "Running for $(Format-Span ((Get-Date) - $Started)) (started $($Started.ToString('HH:mm')), your time)"
         }
+        $Identity = if ($S.runId) { "Run #$($S.runId)" } else { 'Run ID not reported' }
+        $Sub.Text += "`nLatest local report: $Identity. This result applies only to $($S.what), not other builds or releases."
         $Notes.Text = (@($S.notes) | Select-Object -Last 3 | ForEach-Object { "⚠ Watchdog, $_" }) -join "`n"
     }
 
@@ -334,12 +336,17 @@ function Update-View {
     $StepsBox.SuspendLayout(); while ($StepsBox.Controls.Count) { $StepsBox.Controls[0].Dispose() }
     for ($i = 0; $i -lt $Phases.Count; $i++) {
         $Cur = if ($S) { [int]$S.phase } else { -1 }
-        $Glyph, $Color = if ($S -and $S.done -eq "success") { "✓", $Green }
-                         elseif ($i -lt $Cur) { "✓", $Green }
+        # A phase index is a cursor, not a receipt: earlier steps may have been skipped.
+        # Legacy producers report no per-phase conclusions. Never turn them all green.
+        $Glyph, $Color = if ($i -eq $Cur -and $S.done -eq "success") { "✓", $Green }
                          elseif ($i -eq $Cur -and $S.done -eq "failure") { "✗", $Orange }
                          elseif ($i -eq $Cur -and -not $S.done) { "▶", $Blue }
                          else { "○", $Grey }
-        $L = New-Label "$Glyph $($Phases[$i])   " $FontBody $Color
+        $PhaseNote = if ($i -eq $Cur -and $S.done -eq 'cancelled') { ' (cancelled)' }
+                     elseif ($S.done -and $i -gt $Cur) { ' (not reported)' }
+                     elseif ($i -lt $Cur) { ' (completed or skipped)' }
+                     else { '' }
+        $L = New-Label "$Glyph $($Phases[$i])$PhaseNote   " $FontBody $Color
         [void]$StepsBox.Controls.Add($L)
     }
     $StepsBox.ResumeLayout()

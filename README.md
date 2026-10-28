@@ -14,6 +14,7 @@ Built by Stonefletcher Productions LLC. Choose a project, see what is building, 
 - **Choose your appearance:** switch between light and dark dashboard colors; your preference is saved with your profiles.
 - **Reduce polling overhead:** runner service and cache health checks run every 30 seconds, while build progress and pause status continue updating every three seconds.
 - **See progress:** current step, elapsed time, queue, and recent logs.
+- **Know which build passed:** the overview names the latest reported build and run ID. A successful test run does not turn an unreported Package phase green or certify another release.
 - **Understand waits:** release-priority waits use neutral gray and “Waiting for … to finish”; real blockers stay highlighted.
 - **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
 - **Switch projects:** create, import, edit, and export profiles in the app.

@@ -60,6 +60,22 @@ try {
     $Fixture | ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
     Update-View
     Assert ($Title.Text -match 'passed') 'Success state is missing.'
+    # The cancelled release must not be confused with a later successful branch run.
+    $Fixture.what='release v0.2.4 (package build)'; $Fixture.runId='40716658133'
+    $Fixture.phases=@('Wait for the PC','Quick checks','Compile','Content imports','Tests','Package')
+    $Fixture.phase=4; $Fixture.done='cancelled'
+    $Fixture | ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
+    Update-View
+    Assert ($Title.Text -match 'v0.2.4.*cancelled' -and $Sub.Text -match '40716658133') 'Cancelled release identity was lost.'
+    Assert ($StepsBox.Controls[4].Text -match 'cancelled' -and $StepsBox.Controls[5].ForeColor -eq $Grey) 'Cancelled tests or unreported package look successful.'
+    Assert ($JobBar.Value -eq 0) 'Cancelled run displays full completion.'
+    $Fixture.what='branch codex/creator-meshy-validation'; $Fixture.runId='40719403752'; $Fixture.done='success'
+    $Fixture | ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
+    Update-View
+    Assert ($Title.Text -match 'creator-meshy-validation: passed' -and $Title.Text -notmatch '0.2.4') 'Later success was attributed to the release.'
+    Assert ($Sub.Text -match '40719403752' -and $Sub.Text -notmatch '40716658133') 'Run identity became stale.'
+    Assert ($StepsBox.Controls[5].ForeColor -eq $Grey -and $StepsBox.Controls[5].Text -match 'not reported') 'Successful tests falsely certify packaging.'
+    Assert ($StepsBox.Controls[3].ForeColor -eq $Grey) 'Skipped content import inferred as successful.'
     Set-Content $PauseFile 'test fixture only'
     Update-View
     Assert ($PauseButton.Text -eq 'Resume builds') 'Pause state is incorrect.'
