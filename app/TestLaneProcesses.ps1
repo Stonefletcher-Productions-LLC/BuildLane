@@ -69,3 +69,6 @@ try {
         if ($Process -and -not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
     }
 }
+# The checks above deliberately call the script in its busy state, which leaves $LASTEXITCODE at 1; without an
+# explicit exit the runner would report the passing test as a failure.
+exit 0
