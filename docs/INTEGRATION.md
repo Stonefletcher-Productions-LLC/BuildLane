@@ -39,6 +39,8 @@ The overview is the latest local report, not a release history. Its result appli
 
 The app creates the configured `pauseFile` to request a pause, and removes it to resume. The parent folder must exist and be writable. Your runner must check that marker before starting work. On resume, the app dispatches the lane workflow. BuildLane cannot enforce a pause on a backend that ignores this file.
 
+Pausing also cancels the run that is already in progress, and a queue or release action cancels a batch that is no longer wanted. A cancelled step does not cancel the processes it started: on Windows an editor or commandlet outlives the run, keeps the workspace's output files open, and the next job on that runner fails to write them. Your backend has to end the job's process tree on cancellation, and check before starting that nothing else already has the workspace. [Cancelled builds and leftover processes](CANCELLATION.md) describes the requirement and ships a reference script.
+
 ## GitHub workflow and releases
 
 The configured workflow must accept `workflow_dispatch` with `inputs.task = lane` on the configured branch. It must implement the queue/release semantics expected by the app:
@@ -53,6 +55,8 @@ Do not enable release management against a workflow that does not implement thes
 ## Machine health
 
 The client lists Windows services matching both `actions.runner.*` and the configured `serviceFilter`. Use a project-specific filter. The drive and thresholds control display warnings; your pipeline performs any waits or cleanup. `cachePort` checks whether a local TCP port is listening; `0` disables the check.
+
+A runner service that is running is not the same as a runner that can build: a cancelled job can leave a process behind in the service's session, holding the workspace's output files. BuildLane cannot see or stop it from your desktop session, and its only symptom is the next job failing to link or write. See [Cancelled builds and leftover processes](CANCELLATION.md).
 
 ## Profile format
 

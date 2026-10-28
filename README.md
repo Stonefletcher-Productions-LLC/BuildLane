@@ -82,3 +82,5 @@ Source originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f
 ## Shared local builds and captures
 
 [Resource reservations](docs/RESERVATIONS.md) let cooperating chats and scripts reserve a shared build output or GPU across worktrees. The command reports ownership, waits for busy resources, preserves exit codes, and stops its child process tree if the reservation owner closes. Existing runners and captures must opt in; installing BuildLane does not intercept running jobs.
+
+[Cancelled builds and leftover processes](docs/CANCELLATION.md) covers the other half: a cancelled or paused run ends, but the editor or commandlet it started keeps running and holds the workspace's files, so the next job on that runner fails to link or write. The page states what a backend must do and ships a reference script to copy into its CI folder.
