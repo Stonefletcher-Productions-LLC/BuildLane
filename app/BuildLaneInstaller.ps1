@@ -1,4 +1,4 @@
-# Build a per-user MSI using only Windows Installer, makecab and the .NET compiler.
+﻿# Build a per-user MSI using only Windows Installer, makecab and the .NET compiler.
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version='1.1.0',
     [string]$OutputDirectory="$env:LOCALAPPDATA\Buildlane-Packages",
@@ -17,7 +17,7 @@ function Sign-Artifact([string]$Path) {
     $Signature=Set-AuthenticodeSignature -FilePath $Path -Certificate $Certificate -HashAlgorithm SHA256 -TimestampServer $TimestampServer
     if ($Signature.Status -ne 'Valid' -or -not $Signature.TimeStamperCertificate) { throw "Signing or timestamp verification failed: $Path ($($Signature.Status))." }
 }
-$Files=@('Buildlane.exe','LaneApp.ps1','LaneProfiles.ps1','LaneGitHub.ps1','LaneRefresh.ps1','LaneMoves.ps1','LaneProjectsUi.ps1','BuildLane.profile.json','BuildLane.ico')
+$Files=@('Buildlane.exe','LaneApp.ps1','LaneProfiles.ps1','LaneGitHub.ps1','LaneRefresh.ps1','LaneMoves.ps1','LaneProjectsUi.ps1', 'LaneTheme.ps1','BuildLane.profile.json','BuildLane.ico','LaneTaskbar.cs')
 foreach ($Name in $Files) { if ($Name -match '\.(exe|ps1)$') { Sign-Artifact (Join-Path $Stage $Name) } }
 $Cabinet=Join-Path $OutputDirectory 'Buildlane.cab'
 $Ddf=Join-Path $OutputDirectory 'Buildlane.ddf'
@@ -58,6 +58,7 @@ try {
     Sql 'CREATE TABLE `RegLocator` (`Signature_` CHAR(72) NOT NULL, `Root` SHORT NOT NULL, `Key` CHAR(255) NOT NULL, `Name` CHAR(255), `Type` SHORT PRIMARY KEY `Signature_`)'
     Sql 'CREATE TABLE `Registry` (`Registry` CHAR(72) NOT NULL, `Root` SHORT NOT NULL, `Key` CHAR(255) NOT NULL LOCALIZABLE, `Name` CHAR(255) LOCALIZABLE, `Value` CHAR(0) LOCALIZABLE, `Component_` CHAR(72) NOT NULL PRIMARY KEY `Registry`)'
     Sql 'CREATE TABLE `Shortcut` (`Shortcut` CHAR(72) NOT NULL, `Directory_` CHAR(72) NOT NULL, `Name` CHAR(128) NOT NULL LOCALIZABLE, `Component_` CHAR(72) NOT NULL, `Target` CHAR(255) NOT NULL LOCALIZABLE, `Arguments` CHAR(255) LOCALIZABLE, `Description` CHAR(255) LOCALIZABLE, `Hotkey` SHORT, `Icon_` CHAR(72), `IconIndex` SHORT, `ShowCmd` SHORT, `WkDir` CHAR(72) PRIMARY KEY `Shortcut`)'
+    Sql 'CREATE TABLE `MsiShortcutProperty` (`MsiShortcutProperty` CHAR(72) NOT NULL, `Shortcut_` CHAR(72) NOT NULL, `PropertyKey` CHAR(0) NOT NULL, `PropVariantValue` CHAR(0) NOT NULL PRIMARY KEY `MsiShortcutProperty`)'
     Sql 'CREATE TABLE `RemoveFile` (`FileKey` CHAR(72) NOT NULL, `Component_` CHAR(72) NOT NULL, `FileName` CHAR(255) LOCALIZABLE, `DirProperty` CHAR(72) NOT NULL, `InstallMode` SHORT NOT NULL PRIMARY KEY `FileKey`)'
     Sql 'CREATE TABLE `InstallExecuteSequence` (`Action` CHAR(72) NOT NULL, `Condition` CHAR(255), `Sequence` SHORT PRIMARY KEY `Action`)'
     Sql 'CREATE TABLE `Upgrade` (`UpgradeCode` CHAR(38) NOT NULL, `VersionMin` CHAR(20), `VersionMax` CHAR(20), `Language` CHAR(255), `Attributes` LONG NOT NULL, `Remove` CHAR(255), `ActionProperty` CHAR(72) NOT NULL PRIMARY KEY `UpgradeCode`, `VersionMin`, `VersionMax`, `Language`, `Attributes`)'
@@ -82,6 +83,9 @@ try {
         Row 'File' @('File','Component_','FileName','FileSize','Version','Attributes','Sequence') @($FileId,$Component,$Files[$Index],[int](Get-Item (Join-Path $Stage $Files[$Index])).Length,$FileVersion,512,($Index+1))
     }
     foreach ($Target in @('DESKTOPROOT','STARTMENUROOT')) { Row 'Shortcut' @('Shortcut','Directory_','Name','Component_','Target','Description','ShowCmd','WkDir') @($Target,$Target,'Buildlane','C0','[APPDIR]Buildlane.exe','Buildlane projects, builds and releases',1,'APPDIR') }
+    foreach ($Target in @('DESKTOPROOT','STARTMENUROOT')) {
+        Row 'MsiShortcutProperty' @('MsiShortcutProperty','Shortcut_','PropertyKey','PropVariantValue') @(($Target+'AppId'),$Target,'System.AppUserModel.ID','Stonefletcher.BuildLane.Desktop')
+    }
     Row 'RemoveFile' @('FileKey','Component_','DirProperty','InstallMode') @('StartMenuFolder','C0','STARTMENUROOT',2)
     Row 'Media' @('DiskId','LastSequence','Cabinet') @(1,$Files.Count,'#Buildlane.cab')
     Row 'Upgrade' @('UpgradeCode','VersionMax','Attributes','ActionProperty') @($UpgradeCode,$Version,1,'OLDERPRODUCTS')

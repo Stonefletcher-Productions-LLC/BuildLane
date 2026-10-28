@@ -30,6 +30,8 @@ $Workflow = [uri]::EscapeDataString([string]$Config.workflow)
 $Drive = [string]$Config.drive
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+if (-not ('LaneTaskbar' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'LaneTaskbar.cs') }
+[LaneTaskbar]::InitializeProcess()
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 # Colour-blind-safe palette (blue / orange / grey), and every state also has a glyph and words.
@@ -52,7 +54,14 @@ $Form.AutoScaleMode = "Dpi"
 $Form.StartPosition = "CenterScreen"
 # The BuildLane icon lives beside this script.
 $IcoFile = Join-Path $PSScriptRoot "BuildLane.ico"
-if (Test-Path $IcoFile) { try { $Form.Icon = New-Object Drawing.Icon $IcoFile } catch {} }
+$Form.Icon = New-Object Drawing.Icon $IcoFile
+$Form.ShowIcon = $true
+$Form.ShowInTaskbar = $true
+$Launcher = Join-Path $PSScriptRoot 'Buildlane.exe'
+$RelaunchCommand = if (Test-Path -LiteralPath $Launcher) { '"' + $Launcher + '"' } else {
+    '"' + (Join-Path $PSHOME 'powershell.exe') + '" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+}
+$Form.Add_HandleCreated({ [LaneTaskbar]::ConfigureWindow($Form.Handle, $RelaunchCommand, $IcoFile) })
 
 # GitHub, for the buttons that change things: a token kept for this Windows user (DPAPI), or the gh CLI's.
 function Reset-LaneCredential {
@@ -371,12 +380,16 @@ function Update-View {
                           else { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB" }
         $DiskLabel.ForeColor = if ($FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
     } catch { $DiskLabel.Text = "Drive ${Drive}: not found" }
+    if (-not $script:HealthChecked -or $script:HealthProfile -ne $Profile -or ((Get-Date) - $script:HealthChecked).TotalSeconds -ge 30) {
     $Svc = @(Get-Service "actions.runner.*" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $Config.serviceFilter } |
         ForEach-Object { "$(if ($_.Status -eq 'Running') { '✓' } else { '✗' }) $($_.DisplayName) runner $($_.Status.ToString().ToLower())" })
     if (-not $Svc.Count) { $Svc = @("✗ No matching runner services found for $ProductName") }
     $Zen = if (-not $Config.cachePort) { "" } elseif (Get-NetTCPConnection -LocalPort $Config.cachePort -State Listen -ErrorAction SilentlyContinue) { "✓ Cache endpoint listening" } else { "○ Cache endpoint not listening" }
+    $script:CachedHealth=@($Svc)+@($Zen)
+    $script:HealthChecked=Get-Date; $script:HealthProfile=$Profile
+    }
     $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Not paused" }
-    $Health.Text = (@($Svc) + @($Zen, $P)) -join "`n"
+    $Health.Text = (@($script:CachedHealth) + @($P)) -join "`n"
     $Health.ForeColor = if ($Paused) { $Orange } else { $Ink }
 
     # The running step's log, from the runner's live page.
@@ -563,6 +576,7 @@ function Resize-Content {
 $Form.Add_Resize({ Resize-Content })
 $Form.Add_Shown({ Resize-Content })
 $Form.Add_FormClosed({ $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
+. (Join-Path $PSScriptRoot 'LaneTheme.ps1')
 if ($NoShow) { return }
 if ($SmokeTest) {
     $Form.Show(); $Timer.Stop(); $RefreshTimer.Stop(); Update-View; Resize-Content

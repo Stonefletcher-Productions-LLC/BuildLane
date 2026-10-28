@@ -14,6 +14,17 @@ try {
     function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
     Update-View
     Assert ($Form.Text -eq 'Buildlane | Another Product') 'Project branding leaked.'
+    Assert ($Form.Icon -and $Form.ShowIcon -and $Form.ShowInTaskbar) 'Window branding is missing.'
+    Assert ([LaneTaskbar]::WindowProperty($Form.Handle,5) -eq [LaneTaskbar]::AppId) 'Taskbar identity is still inherited from PowerShell.'
+    Assert ([LaneTaskbar]::WindowProperty($Form.Handle,3) -eq ((Join-Path $PSScriptRoot 'BuildLane.ico')+',0')) 'Taskbar relaunch icon is wrong.'
+    Assert ([LaneTaskbar]::WindowProperty($Form.Handle,2) -eq $RelaunchCommand) 'Taskbar relaunch command is wrong.'
+    $TaskbarLink=Join-Path $FixtureRoot 'Buildlane test.lnk'
+    $Shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut($TaskbarLink)
+    $Shortcut.TargetPath=Join-Path $env:WINDIR 'notepad.exe'
+    $Shortcut.Save()
+    [LaneTaskbar]::ConfigureShortcut($TaskbarLink)
+    Assert ([LaneTaskbar]::ShortcutIdentity($TaskbarLink) -eq [LaneTaskbar]::AppId) 'Shortcut identity differs from the running window.'
+
     Assert ($Repo -eq 'example/another-product' -and $Branch -eq 'develop') 'Project settings did not load.'
     Assert ($TokenFile -notmatch 'LifeShare') 'Project credentials were not isolated.'
     Assert ($Title.Text -eq 'No build has reported yet') 'Missing status is not handled.'
