@@ -35,7 +35,7 @@ if (-not $NoShortcut) {
     $Link.IconLocation = "$Destination\BuildLane.ico,0"
     $Link.Description = "Buildlane - $($Config.name)"
     $Link.Save()
-    if (-not ('LaneTaskbar' -as [type])) { Add-Type -Path (Join-Path $Destination 'LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs') }
+    if (-not ('LaneTaskbar' -as [type])) { Add-Type -Path (Join-Path $Destination 'LaneTaskbar.cs') }
     [LaneTaskbar]::ConfigureShortcut((Join-Path $Desktop "$ShortcutName.lnk"))
 }
 Write-Output $Exe
