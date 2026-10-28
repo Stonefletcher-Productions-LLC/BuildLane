@@ -9,6 +9,7 @@
 | Retry available at a later time | GitHub returned an error/rate limit. Previous results remain visible; wait until the stated time. |
 | No matching runner services | Check the service filter. A runner started manually may not be installed as a Windows service. |
 | Could not pause | The pause file's parent folder must exist and be writable. The runner must observe that marker. |
+| Next build fails to link or write into the workspace | A cancelled run left a process holding the files. See [Cancelled builds and leftover processes](CANCELLATION.md): list what holds the workspace, then clear it or restart the runner service. |
 | This profile changed on disk | Reopen the saved profile before editing again; another process changed it. |
 | Drive not found | Change the **Build drive** in advanced settings for this computer. |
 | MSI reports another installation is running | Finish the other installer or restart Windows before trying again. Direct installation does not need Windows Installer. |
