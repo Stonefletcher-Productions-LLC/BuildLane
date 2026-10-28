@@ -26,5 +26,8 @@ jobs:
         run: ./app/TestLaneMoves.ps1
       - name: Shared resource and process cleanup checks
         run: ./app/TestLaneResources.ps1
+      - name: PowerShell 7 resource cleanup checks
+        shell: pwsh
+        run: ./app/TestLaneResources.ps1
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut
