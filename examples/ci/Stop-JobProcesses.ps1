@@ -106,9 +106,10 @@ if ($GraceSeconds -gt 0) {
     } while ([DateTime]::UtcNow -lt $Deadline)
 }
 
+$Asked = @()
 $Refused = @()
 foreach ($Item in $Owned) {
-    try { Stop-Process -Id $Item.ProcessId -Force -ErrorAction Stop; Write-Host "Stopped $($Item.Name) PID $($Item.ProcessId)" }
+    try { Stop-Process -Id $Item.ProcessId -Force -ErrorAction Stop; $Asked += $Item; Write-Host "Stopped $($Item.Name) PID $($Item.ProcessId)" }
     catch { $Refused += $Item; Write-Host "CANNOT STOP $($Item.Name) PID $($Item.ProcessId): $($_.Exception.Message)" }
 }
 
@@ -130,6 +131,18 @@ if ($Probes.Count -gt 0) {
 }
 
 if ($Left.Count -eq 0 -and -not $Locked) { Write-Host "Cleared: $WorkspacePath"; exit 0 }
+
+# A process Windows accepted the kill for can outlive it. The process object lingers until every handle a driver
+# still holds is closed, so it is listed for minutes with no work left to do, and it lets go of the workspace's
+# files well before it disappears. That is not in the way of the next job, so judge it by the probe: with nothing
+# under -ProbePath locked, a process whose kill was accepted is shutting down rather than holding the checkout.
+# Only a process Windows refused to stop, or a probe path that is still locked, is a reason to fail.
+$RefusedIds = @($Refused | ForEach-Object { $_.ProcessId })
+if ($Asked.Count -gt 0 -and $RefusedIds.Count -eq 0 -and $Probes.Count -gt 0 -and -not $Locked) {
+    foreach ($Item in $Left) { Write-Host "NOTE $($Item.Name) PID $($Item.ProcessId) is still shutting down; it no longer holds the workspace" }
+    Write-Host "Cleared: $WorkspacePath"
+    exit 0
+}
 
 foreach ($Item in $Left) { Write-Host "STILL RUNNING $($Item.Name) PID $($Item.ProcessId)" }
 if ($Locked) { Write-Host "STILL LOCKED $Locked" }
