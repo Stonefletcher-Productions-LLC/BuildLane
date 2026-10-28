@@ -257,7 +257,7 @@ function Set-Bar($Bar, [double]$Fraction) {
 $script:State = $null
 function Update-View {
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=$Ready; $GhButton.Enabled=$Ready
+    $PauseButton.Enabled=$Ready; $GhButton.Enabled=($Ready -and -not $script:MoveJob)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
@@ -340,9 +340,20 @@ function Update-View {
     $Queue.BeginUpdate(); $Queue.Items.Clear()
     foreach ($Q in @(if ($S) { $S.queue })) {
         $It = New-Object Windows.Forms.ListViewItem("#$($Q.number)")
-        [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add([string]$Q.state); $It.Tag = $Q.number
-        if ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
+        $QueueState = [string]$Q.state
+        $ReleaseWait = $false
+        if ($QueueState -match '^held: (.+?) is being packaged first(?<suffix>;.*)?$') {
+            $QueueState = "Waiting for $($Matches[1]) to finish$($Matches['suffix'])"
+            $ReleaseWait = $true
+        } elseif ($QueueState -match '^held: after the (.+) freeze$') {
+            $QueueState = "Waiting for the $($Matches[1]) release freeze to end"
+            $ReleaseWait = $true
+        }
+        [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add($QueueState); $It.Tag = $Q.number
+        if ($ReleaseWait) { $It.ForeColor = $Grey; $It.Text = "○ #$($Q.number)" }
+        elseif ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
         elseif ($Q.state -match 'held|conflict') { $It.ForeColor = $Orange }
+        elseif ($Q.state -match '^waiting') { $It.ForeColor = $Grey }
         [void]$Queue.Items.Add($It)
         if ($SelectedPr -eq $Q.number) { $It.Selected = $true }
     }
@@ -510,19 +521,21 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
     $To = [string]$MoveTo.SelectedItem
     $M = $script:Milestones | Where-Object { $_.title -eq $To } | Select-Object -First 1
     $Num = if ($M) { $M.number } else { $null }
-    $Bad = @()
-    foreach ($N in $Ns) { try { Invoke-Gh PATCH "/issues/$N" @{ milestone = $Num } | Out-Null } catch { $Bad += "#$N" } }
-    foreach ($It in @($PrList.CheckedItems)) { $It.Checked = $false }
-    Start-Lane; Update-Releases
-    if ($Bad.Count) { [void][Windows.Forms.MessageBox]::Show("Could not move $($Bad -join ', ').", "Move", "OK", "Warning") }
-    else { $RelMsg.Text = "Moved $($Ns.Count) PR(s) to $To." }
+    try {
+        if (-not $M -and $To -ne 'No release') { throw 'Choose a destination release first.' }
+        Start-LaneMove -Numbers $Ns -Milestone $Num -Target $To
+    }
+    catch { Show-Error 'Could not start the move.' $_ }
 } $MoveBar)
 . (Join-Path $PSScriptRoot 'LaneRefresh.ps1')
+. (Join-Path $PSScriptRoot 'LaneMoves.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
+$MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
+$Form.Add_FormClosing({ if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases } })
 $RefreshTimer=New-Object Windows.Forms.Timer
 $RefreshTimer.Interval=150
-$RefreshTimer.Add_Tick({ Complete-LaneRefresh })
+$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh })
 
 $script:Ticks = 0
 $Timer = New-Object Windows.Forms.Timer

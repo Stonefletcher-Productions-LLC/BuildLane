@@ -11,9 +11,10 @@ Built by Stonefletcher Productions LLC. Choose a project, see what is building, 
 ## What you can do
 
 - **See progress:** current step, elapsed time, queue, and recent logs.
+- **Understand waits:** release-priority waits use neutral gray and “Waiting for … to finish”; real blockers stay highlighted.
 - **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
 - **Switch projects:** create, import, edit, and export profiles in the app.
-- **Stay responsive:** GitHub reads happen in the background, with pagination and rate-limit backoff.
+- **Stay responsive:** GitHub reads and bulk PR moves happen in the background. Moves show progress, keep unconfirmed items selected, and notify the lane once.
 - **Start simply:** first-run setup, repository URL pasting, path pickers, and expandable advanced settings.
 - **Keep settings:** profiles and encrypted tokens live outside the installation folder.
 
@@ -48,6 +49,7 @@ Run from the repository root:
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneApp.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHub.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1
 ```
 
 These tests use temporary profiles and mocked GitHub responses. GitHub Actions runs the same checks on Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) for optional live checks and screenshot generation.
@@ -67,7 +69,7 @@ Output: `%LOCALAPPDATA%\Buildlane-Packages\Buildlane-1.2.0-unsigned.msi`.
 ## Current boundaries
 
 - Windows desktop only; the backend still needs an adapter for each build system.
-- GitHub writes and token validation can briefly block the interface.
+- Other GitHub writes (such as queuing a release) and token validation can still briefly block the interface.
 - Hosted GitHub is supported; GitHub Enterprise Server endpoints are not configurable yet.
 - Screenshots show the real app with sample project data and illustrative paths.
 

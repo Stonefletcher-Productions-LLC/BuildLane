@@ -23,6 +23,21 @@ try {
     $Fixture | ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
     Update-View
     Assert ($JobBar.Value -eq 250 -and $StepBar.Value -eq 500) "Progress is incorrect: job=$($JobBar.Value), step=$($StepBar.Value), status=$($Sub.Text), file=$JsonFile"
+    $Fixture.queue=@(
+        @{number=7;title='Next release';state='held: v0.2.2 is being packaged first'},
+        @{number=8;title='Assigned later';state='held: v0.2.2 is being packaged first; in v0.3.0'},
+        @{number=9;title='Actual blocker';state='held: main is red'},
+        @{number=10;title='Conflict';state='waits for the next batch: it conflicts with #11'},
+        @{number=11;title='Working';state='in the batch, building now'},
+        @{number=12;title='Release freeze';state='held: after the v0.2.2 freeze'}
+    )
+    $Fixture | ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
+    Update-View
+    Assert ($Queue.Items[0].SubItems[2].Text -eq 'Waiting for v0.2.2 to finish' -and $Queue.Items[0].ForeColor -eq $Grey) 'Release wait still looks like an error or claims packaging has started.'
+    Assert ($Queue.Items[1].SubItems[2].Text -eq 'Waiting for v0.2.2 to finish; in v0.3.0') 'Release assignment was lost from wait wording.'
+    Assert ($Queue.Items[2].ForeColor -eq $Orange -and $Queue.Items[3].ForeColor -eq $Orange) 'Actual blockers lost their warning color.'
+    Assert ($Queue.Items[4].ForeColor -eq $Blue) 'Active work lost its progress color.'
+    Assert ($Queue.Items[5].ForeColor -eq $Grey -and $Queue.Items[5].SubItems[2].Text -match 'release freeze to end') 'Planned release freeze looks like an error.'
     Set-Content $FixtureStatus '{incomplete'
     Update-View
     Assert ($script:State.what -eq 'sample' -and $Sub.Text -match 'last valid') 'Malformed status did not preserve the last valid update.'
