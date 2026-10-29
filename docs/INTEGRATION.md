@@ -46,8 +46,11 @@ Pausing also cancels the run that is already in progress, and a queue or release
 The configured workflow must accept `workflow_dispatch` with `inputs.task = lane` on the configured branch. It must implement the queue/release semantics expected by the app:
 
 - Milestones represent releases; their description contains a line `lane: open`, `lane: queued`, `lane: packaging`, `lane: packaged`, or `lane: failed`.
+- A queued release may also carry `lane-deadline: <ISO 8601>`. It is a cut, not an open-ended promise: at that time the backend packages what landed and moves anything still open to the next release. The app shows the local cut time on the release row ("ships by 14:00"), and "cut reached" once it has passed.
 - The `ready` and `fix-main` PR labels identify work eligible for the lane.
 - Queuing a milestone tells the backend to prioritize its ready PRs, build/package them, and update release state.
+- A pull request the backend takes out of the lane leaves its release as well, so a queued release is never blocked by work that cannot land; it joins the next release when it is ready again.
+- Integration batches are bounded (a small number of PRs per build) so one failing change cannot hold every other PR in the release.
 - Closing or moving a milestone/PR changes GitHub data and can dispatch the lane again.
 
 Do not enable release management against a workflow that does not implement these semantics. The [original LifeShare lane documentation](https://github.com/Stonefletcher-Productions-LLC/LifeShare/blob/main/Docs/BuildLane.md) describes the reference backend; access to that private repository may be required.

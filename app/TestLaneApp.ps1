@@ -118,6 +118,20 @@ try {
     Assert ([IO.File]::ReadAllText((Join-Path $FixtureRoot 'current.txt')) -eq $SavedPath) 'Current project was not persisted.'
     Edit-LaneProject $SavedPath
     Assert ($script:ProjectFields['repo'].Text -eq 'example/saved') 'Project editor did not load settings.'
+
+    # A queued release must show when it ships, and a broken or absent deadline must never fabricate a time.
+    Assert ($null -eq (Get-CutDeadline @{ description = 'lane: queued' })) 'A release without a deadline reported one.'
+    $Future = (Get-Date).ToUniversalTime().AddHours(2).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $Cut = Get-CutDeadline @{ description = "lane: queued`nlane-deadline: $Future" }
+    Assert ($Cut -and [math]::Abs(($Cut.ToUniversalTime() - [datetime]::Parse($Future).ToUniversalTime()).TotalSeconds) -lt 2) "Cut deadline was not read: got '$Cut' from '$Future'."
+    Assert ($null -eq (Get-CutDeadline @{ description = 'lane: queued' + "`n" + 'lane-deadline: tomorrow-ish' })) 'A malformed deadline was accepted.'
+    $Queued = @{ description = "lane: queued`nlane-deadline: $Future" }
+    Assert ((Format-RelState $Queued 'queued') -match 'ships by \d\d:\d\d$') "Queued wording does not name the cut time: $(Format-RelState $Queued 'queued')"
+    $Past = (Get-Date).ToUniversalTime().AddMinutes(-5).ToString('yyyy-MM-ddTHH:mm:ssZ')
+    Assert ((Format-RelState @{ description = "lane: queued`nlane-deadline: $Past" } 'queued') -match 'cut reached') 'An expired cut still promises a future time.'
+    Assert ((Format-RelState @{ description = 'lane: queued' } 'queued') -eq '▶ queued: landing its PRs') 'A release without a deadline lost its plain wording.'
+    Assert ((Format-RelState @{ description = 'lane: open' } 'closed') -eq '✓ closed') 'Closed wording changed.'
+
     $Form.Close()
     Write-Output 'PASS: status, profile validation/persistence/conflicts, responsive background refresh, coalescing, backoff and stale-project isolation.'
 } finally {
