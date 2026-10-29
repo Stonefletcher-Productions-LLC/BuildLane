@@ -23,14 +23,19 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHu
 
 ## Screenshots
 
-The documentation images are rendered from the real Windows Forms interface with synthetic data. Regenerate them after UI changes:
+The documentation images are rendered from the real Windows Forms interface with synthetic data. No network calls, no
+saved projects: each script builds a temporary profile and throws it away.
 
 ```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1 -PreviewDirectory .\docs\images
+# The dashboard (light and dark) and the Releases tab
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\PreviewDocs.ps1 -OutDirectory .\docs\images
+# The first-run screen and the project editor
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1 -PreviewDirectory .\docs\images
 ```
 
-Review the resulting images for clipping and accidental personal data before committing them.
+`PreviewDocs.ps1` writes `overview.png`, `overview-dark.png` and `releases.png`; the onboarding test writes `setup.png`
+and `projects.png`. Both render at the app's normal window size, so a layout change that clips a button shows up in the
+images. Review the results for clipping and accidental personal data before committing them.
 
 ## Layout
 
@@ -43,6 +48,7 @@ Review the resulting images for clipping and accidental personal data before com
 | `app/LaneRefresh.ps1`, `app/LaneGitHub.ps1` | Background reads and pagination |
 | `app/BuildLaneLauncher.cs` | Console-free Windows launcher |
 | `app/InstallLaneApp.ps1`, `app/BuildLaneInstaller.ps1` | Local installation and MSI packaging |
+| `app/PreviewDocs.ps1` | Renders the documentation screenshots from the real interface with fixture data |
 | `docs/`, `examples/` | User guides and sample integrations |
 
 Update the README and relevant guide when behavior changes. Do not add credentials, personal profiles, generated binaries, or game assets. Signing and production release validation are separate from regression tests.

@@ -14,6 +14,10 @@ Open the **Buildlane** desktop shortcut. Installation is per Windows user; it do
 
 New installations open **Projects**. Existing installations retain their selected project; choose **New project** to add another.
 
+![First run: the three numbered steps, a project name, a repository link and the three runner paths](images/setup.png)
+
+The screen lists the same three steps it asks for: choose a repository, point to your runner, save and connect GitHub. Everything below that is a field in that order.
+
 ![Project editor with a saved sample project](images/projects.png)
 
 | Field | What to enter |
@@ -46,6 +50,8 @@ Saved app tokens are encrypted for your Windows user and stored separately from 
 | Releases | Refresh GitHub milestones and PRs; manage releases for a compatible lane. |
 | System | Check local runner services, drive space, and optional cache endpoint. |
 | Projects | Edit, import, export, and switch saved project profiles. |
+
+The Overview tab is split: the build above, the queue below. Drag the divider between them (and between the release list and the pull request list on Releases) to give either side more room; the app remembers those positions, the window size and the light or dark choice. **Use dark mode** / **Use light mode** is in the top bar.
 
 **No build has reported yet** means the configured status file is missing. It is not a GitHub authentication failure. See [integration](INTEGRATION.md) to connect a producer.
 

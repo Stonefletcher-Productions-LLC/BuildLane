@@ -133,7 +133,7 @@ $QueuePanel.Padding = New-Object Windows.Forms.Padding(24, 4, 24, 8)
 $NowSplit = New-Object Windows.Forms.SplitContainer
 $NowSplit.Dock = "Fill"; $NowSplit.Orientation = "Horizontal"; $NowSplit.SplitterWidth = 6
 $NowSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
-$NowSplit.Panel1MinSize = 240; $NowSplit.Panel2MinSize = 120
+$NowSplit.Panel1MinSize = 300; $NowSplit.Panel2MinSize = 120
 $NowSplit.Panel1.Controls.Add($Root)
 $NowSplit.Panel2.Controls.Add($QueuePanel)
 $NowTab.Controls.Add($NowSplit)
@@ -670,7 +670,7 @@ if (Test-Path -LiteralPath $LayoutFile) {
 }
 # Both dividers store the size of the *lower* pane, so the remembered size survives a different window height.
 $script:Panes = @(
-    [pscustomobject]@{ Split = $NowSplit; Key = 'queue'; Share = 0.42 }
+    [pscustomobject]@{ Split = $NowSplit; Key = 'queue'; Share = 0.36 }
     [pscustomobject]@{ Split = $RelSplit; Key = 'prs'; Share = 0.52 }
 )
 function Set-PaneHeights {
