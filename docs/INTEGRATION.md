@@ -79,6 +79,28 @@ The configured workflow must accept `workflow_dispatch` with `inputs.task = lane
 
 Do not enable release management against a workflow that does not implement these semantics. The [original LifeShare lane documentation](https://github.com/Stonefletcher-Productions-LLC/LifeShare/blob/main/Docs/BuildLane.md) describes the reference backend; access to that private repository may be required.
 
+## Advisory build-choice workflow
+
+The optional profile field `planWorkflow` is a YAML filename (for example `build-plan-shadow.yml`). Leave it blank
+for unsupported backends. The app uses the configured branch for the workflow definition and resolves the user's
+PR/branch/commit inputs to exact source/base SHAs through GitHub before POSTing a preview. It sends these workflow
+inputs: `source`, `base`, `tier` (`auto|release|nightly`), `test_mode` (`auto|focused|full`), `tests` (comma-separated),
+`compile` (`auto|incremental|clean|none`) and `request_id` (UUID). No `task=lane`, release mutation or native-validation
+workflow is dispatched by the Build choices tab.
+
+The backend must implement advisory-only semantics, read-only hosted evaluation and full release/nightly coverage.
+It must reject runtime no-compile without verified binary/source/toolchain receipts. Workflow-dispatch run names
+must start `Plan <UUID> source <sourceSHA> base <baseSHA> `, followed by optional context text. The app polls only
+that workflow/branch/event, rejects duplicate UUID matches or wrong source/base/attempt identities, and never uses
+a latest unrelated run as confirmation. It displays the workflow-definition SHA separately from candidate SHA.
+Run attempts retain their observed outcomes; links include the attempt. Failed observations retain prior evidence
+and back off; completed previews stop polling unless refreshed. Reads share the existing background API boundary.
+
+A preview is untrusted advice, including a successful one. The app never executes its JSON or treats a plan ID as
+acceptance. To activate reduced validation later, use a trusted planner revision over candidate data and preserve
+the release gate. Installing the app does not provision or activate this backend. Existing user profiles are not
+silently migrated; the release owner can enable the optional filename after the compatible workflow is merged.
+
 ## Machine health
 
 The client lists Windows services matching both `actions.runner.*` and the configured `serviceFilter`. Use a project-specific filter. The drive and thresholds control display warnings; your pipeline performs any waits or cleanup. `cachePort` checks whether a local TCP port is listening; `0` disables the check.

@@ -14,7 +14,7 @@ in a browser tab.
 
 Made by Stonefletcher Productions LLC. The source is available in this repository.
 
-**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The four tabs](#the-four-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
+**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The tabs](#the-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
 
 ## What it does
 
@@ -83,12 +83,13 @@ The setup screen walks the same three steps the app shows at the top:
 Press **Refresh** on Releases and the tab fills in. If the status file is missing, Overview says *No build has
 reported yet* — that is a path problem, not a crash.
 
-## The four tabs
+## The tabs
 
 | Tab | What you do there |
 |---|---|
 | **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
 | **Releases** | Milestones become releases. Queue a release build, unqueue or close it, and see which pull requests are in it. Tick pull requests and move them to another release in one go. |
+| **Build choices** | Preview Auto/Focused/Full test scope and compilation choices for fixed source/base commits. Previews are advisory and never start a build. |
 | **Timing history** | Job and step times for reported runs, with source commit, attempt and result. Failed and cancelled attempts stay visible. |
 | **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
 | **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |
@@ -126,6 +127,22 @@ summed into wall time. History is collected as runs are encountered, rather than
 successful entry does not certify another build or release. A rerun's waiting time excludes the gap since the
 original run was created. Reads share one background worker and respect retry delays; timings refresh no more than
 once every 30 seconds. No build is launched by viewing history.
+
+**Build choices** is available when Projects > Advanced settings has a planning workflow configured. Enter a PR
+number, commit or branch and the comparison revision, choose a context, test scope and compilation mode, then
+press **Preview plan**. The app resolves both revisions to immutable commits before sending. Release and nightly
+contexts force the full suite; no-compilation runtime validation is refused until verified binary receipts exist.
+Focused checks are diagnostic and cannot certify a merge or release.
+
+Requests run in the background and carry a unique ID. The app matches that ID, source/base, branch and workflow,
+shows the run and attempt separately, and keeps earlier failed attempts visible. **Open preview attempt** opens
+the observed attempt; before a match is found, **Open preview runs** opens the workflow list. An uncertain POST
+is never resent automatically. Workflow success means an advisory plan was produced, not that compilation,
+tests or packaging passed. Plan artifacts are untrusted advice and are never automatically executed.
+
+Old profiles keep previews disabled. The LifeShare example opts into `build-plan-shadow.yml`; merge the compatible
+backend (LifeShare PR #494, including `request_id` support) before enabling that setting in an existing profile.
+Reduced-test execution is a separate, release-owner-reviewed backend change. Existing release validation stays full.
 
 ## Where your settings live
 
@@ -165,6 +182,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneFeedback.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActions.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneHistory.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLanePlanning.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneResources.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneProcesses.ps1
 ```

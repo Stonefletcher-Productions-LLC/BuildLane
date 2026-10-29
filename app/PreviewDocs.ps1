@@ -95,6 +95,12 @@ try {
     Set-LaneHistoryResult @{RunId='40931784541';What='batch #473, #478';Report='fixture'} @{History=$HistoryFixture}
     $Tabs.SelectedTab=$HistoryTab; Save-Shot 'timings.png'
 
+    $Config | Add-Member NoteProperty planWorkflow 'build-plan-shadow.yml' -Force
+    Initialize-LanePlanning
+    $PlanSource.Text='#473'; $PlanBase.Text='main'; $PlanTests.SelectedIndex=1; $PlanNames.Text='RunAnimTest'; $PlanCompile.SelectedIndex=1
+    $PlanStatus.Text='Choose options, then preview the proposed work. No build is started.'
+    $Tabs.SelectedTab=$PlanTab; Save-Shot 'build-choices.png'
+
     # The same overview in dark mode, for the appearance setting. Light is the app's default, so the guide's images
     # are light; this one shows what the toggle does.
     Set-LaneTheme $true

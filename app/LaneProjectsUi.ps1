@@ -25,8 +25,8 @@ $AdvancedToggle.Add_CheckedChanged({ $AdvancedEditor.Visible=$AdvancedToggle.Che
 $script:ProjectFields = [ordered]@{}
 $ProjectTips=New-Object Windows.Forms.ToolTip
 $ProjectTips.AutoPopDelay=15000
-$Hints=@{name='A friendly name shown in the app.';repo='Paste a GitHub repository URL or enter owner/repository.';branch='The branch your lane builds, usually main.';workflow='The workflow filename accepting task=lane.';statusFile='JSON status file written by your build runner.';pauseFile='A marker file your runner checks before starting work.';runnerPath='Existing runner folder, used to find recent step logs.';drive='Drive letter to monitor for free space.';serviceFilter='Only show runner services matching this pattern.';cachePort='Optional local cache port. Leave 0 to disable.';minimumFreeGB='Display a warning below this amount. Your backend enforces build limits.';cleanBelowGB='Display the cleanup threshold. Your backend performs cleanup.'}
-$FieldLabels = [ordered]@{name='Project name';repo='GitHub repository';branch='Base branch';workflow='Lane workflow';statusFile='Status file';pauseFile='Pause file';runnerPath='Runner folder';drive='Build drive';serviceFilter='Runner service filter';cachePort='Cache port (0 = off)';minimumFreeGB='Minimum free GB';cleanBelowGB='Cleanup below GB'}
+$Hints=@{name='A friendly name shown in the app.';repo='Paste a GitHub repository URL or enter owner/repository.';branch='The branch your lane builds, usually main.';workflow='The workflow filename accepting task=lane.';planWorkflow='Optional advisory planner workflow implementing the documented source/base/test/compile/request_id inputs. Leave blank to disable previews.';statusFile='JSON status file written by your build runner.';pauseFile='A marker file your runner checks before starting work.';runnerPath='Existing runner folder, used to find recent step logs.';drive='Drive letter to monitor for free space.';serviceFilter='Only show runner services matching this pattern.';cachePort='Optional local cache port. Leave 0 to disable.';minimumFreeGB='Display a warning below this amount. Your backend enforces build limits.';cleanBelowGB='Display the cleanup threshold. Your backend performs cleanup.'}
+$FieldLabels = [ordered]@{name='Project name';repo='GitHub repository';branch='Base branch';workflow='Lane workflow';planWorkflow='Planning workflow (optional)';statusFile='Status file';pauseFile='Pause file';runnerPath='Runner folder';drive='Build drive';serviceFilter='Runner service filter';cachePort='Cache port (0 = off)';minimumFreeGB='Minimum free GB';cleanBelowGB='Cleanup below GB'}
 foreach ($Key in $FieldLabels.Keys) {
     $Label=New-Label $FieldLabels[$Key] $FontSmall
     $Label.Margin=New-Object Windows.Forms.Padding(0,7,12,5)
@@ -94,6 +94,7 @@ function Update-ProjectPicker {
     foreach ($Button in $ProjectActions.Controls) { if ($Button.Text -in @('Edit selected','Use selected')) { $Button.Enabled=($ProjectPicker.Items.Count -gt 0) } }
 }
 function Use-LaneProject([string]$Path) {
+    if ($script:PlanJob) { throw 'Wait for the preview request to finish before switching projects.' }
     if ($script:ActionJob) { throw 'Wait for the release or connection request to finish before switching projects.' }
     if ($script:CommandJob) { throw 'Wait for the lane request to finish before switching projects.' }
     if ($script:MoveJob) { throw 'Wait for the current move to finish before switching projects.' }
