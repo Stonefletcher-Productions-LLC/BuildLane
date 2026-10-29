@@ -659,21 +659,25 @@ if (Test-Path -LiteralPath $LayoutFile) {
     }
 }
 # Both dividers store the size of the *lower* pane, so the remembered size survives a different window height.
+$script:Panes = @(
+    [pscustomobject]@{ Split = $NowSplit; Key = 'queue'; Share = 0.42 }
+    [pscustomobject]@{ Split = $RelSplit; Key = 'prs'; Share = 0.52 }
+)
 function Set-PaneHeights {
-    foreach ($Pair in @(@($NowSplit, 'queue', 240), @($RelSplit, 'prs', 320))) {
-        $Split = $Pair[0]; $Key = $Pair[1]; $Default = $Pair[2]
+    foreach ($Pane in $script:Panes) {
+        $Split = $Pane.Split
         $Room = $Split.Height - $Split.SplitterWidth
         if ($Room -lt ($Split.Panel1MinSize + $Split.Panel2MinSize)) { continue }
-        $Lower = if ($script:LaneLayout.ContainsKey($Key)) { [int]$script:LaneLayout[$Key] } else { $Default }
+        $Fallback = [int]($Room * [double]$Pane.Share)
+        $Lower = if ($script:LaneLayout.ContainsKey($Pane.Key)) { [int]$script:LaneLayout[$Pane.Key] } else { $Fallback }
         $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
         $Split.SplitterDistance = $Room - $Lower
     }
 }
 function Save-PaneHeights {
     try {
-        foreach ($Pair in @(@($NowSplit, 'queue'), @($RelSplit, 'prs'))) {
-            $Split = $Pair[0]
-            $script:LaneLayout[$Pair[1]] = $Split.Height - $Split.SplitterWidth - $Split.SplitterDistance
+        foreach ($Pane in $script:Panes) {
+            $script:LaneLayout[$Pane.Key] = $Pane.Split.Height - $Pane.Split.SplitterWidth - $Pane.Split.SplitterDistance
         }
         New-Item -ItemType Directory -Force (Split-Path $LayoutFile) | Out-Null
         ($script:LaneLayout.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) |
@@ -695,6 +699,18 @@ function Resize-Content {
     }
 }
 $Form.Add_Resize({ Resize-Content })
+# The tab content now nests two splitters, which can talk the form into opening at its minimum width. Give it a
+# deliberate starting size (and keep it inside the monitor's working area) before the panes are measured.
+$Form.Add_Shown({
+    $Work = [Windows.Forms.Screen]::FromControl($Form).WorkingArea
+    $WantedW = [math]::Min(1040, $Work.Width - 40)
+    $WantedH = [math]::Min(840, $Work.Height - 40)
+    if ($Form.Width -lt 940) { $Form.Width = [math]::Max($WantedW, $Form.MinimumSize.Width) }
+    if ($Form.Height -lt 700 -or $Form.Height -gt $Work.Height - 20) { $Form.Height = [math]::Max($WantedH, $Form.MinimumSize.Height) }
+    $Form.Location = New-Object Drawing.Point(
+        [int](($Work.Width - $Form.Width) / 2) + $Work.X,
+        [int](($Work.Height - $Form.Height) / 2) + $Work.Y)
+})
 $Form.Add_Shown({ Resize-Content; Set-PaneHeights })
 $Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
 . (Join-Path $PSScriptRoot 'LaneTheme.ps1')

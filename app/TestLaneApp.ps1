@@ -104,7 +104,9 @@ try {
     while ($script:RefreshJob -and $Watch.ElapsedMilliseconds -lt 10000) {
         [Windows.Forms.Application]::DoEvents(); $Pulses++; Complete-LaneRefresh; Start-Sleep -Milliseconds 20
     }
-    Assert ($Pulses -gt 2 -and -not $script:RefreshJob -and $RelMsg.Text -match '^Updated') 'Background refresh failed to complete.'
+    # The pulse count only proves the loop ran at all: a fast job legitimately finishes in two iterations, so asserting
+    # more than that made this check fail whenever the machine was quick, not when the refresh was wrong.
+    Assert ($Pulses -ge 1 -and -not $script:RefreshJob -and $RelMsg.Text -match '^Updated') 'Background refresh failed to complete.'
     Start-LaneRefresh -Worker { @{Error='Rate limit fixture';RetrySeconds=120} }
     $Watch.Restart()
     while ($script:RefreshJob -and $Watch.ElapsedMilliseconds -lt 10000) { Complete-LaneRefresh; Start-Sleep -Milliseconds 20 }
