@@ -1,5 +1,5 @@
 # Runs in an isolated PowerShell runspace. Never touches Windows Forms controls.
-param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases')
+param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue)
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
@@ -25,6 +25,13 @@ try {
     if (-not $AccessToken) { throw 'Connect GitHub to view releases.' }
     if ($Kind -eq 'auth') { return @{ Token = $AccessToken } }
     $Headers = @{ Authorization="Bearer $AccessToken"; Accept='application/vnd.github+json'; 'User-Agent'='Buildlane-Desktop' }
+    if ($Kind -eq 'controller') {
+        $Uri="https://api.github.com/repos/$Repository/actions/workflows/$([uri]::EscapeDataString($Workflow))/runs?event=workflow_dispatch&branch=$([uri]::EscapeDataString($BaseBranch))&per_page=30"
+        $Response=Invoke-WebRequest -UseBasicParsing -Uri $Uri -Headers $Headers -TimeoutSec 15
+        $Runs=($Response.Content | ConvertFrom-Json).workflow_runs
+        $Run=$Runs | Where-Object { [DateTimeOffset]::Parse($_.created_at).UtcDateTime -ge $RequestedAfterUtc.ToUniversalTime().AddSeconds(-1) } | Sort-Object created_at -Descending | Select-Object -First 1
+        return @{Controller=$Run}
+    }
     function Read-Pages([string]$Path) {
         $Items = New-Object 'Collections.Generic.List[object]'
         for ($Page = 1; $Page -le 100; $Page++) {

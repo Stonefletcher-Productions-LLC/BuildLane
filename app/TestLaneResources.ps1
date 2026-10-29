@@ -19,11 +19,29 @@ function Start-Runner([string]$Resources, [string]$Payload, [string]$Label) {
     return $Process
 }
 function Assert([bool]$Ok,[string]$Message) { if (-not $Ok) { throw $Message } }
+function Write-StartupDiagnostics($Process) {
+    $Process.Refresh()
+    $Exit = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { 'still running at the 15-second startup deadline' }
+    Write-Host "STARTUP FAILURE: wrapper PID $($Process.Id) $Exit; shell $Shell; evidence $Root"
+    foreach ($Name in @('first.out','first.err')) {
+        $Path=Join-Path $Root $Name
+        $Tail=if (Test-Path -LiteralPath $Path) { (Get-Content -LiteralPath $Path -Tail 40 -ErrorAction SilentlyContinue) -join "`n" } else { '<file missing>' }
+        if (-not $Tail) { $Tail='<empty>' }
+        if ($Tail.Length -gt 4096) { $Tail=$Tail.Substring($Tail.Length-4096) }
+        Write-Host "${Name} (last 40 lines, at most 4096 characters):`n$Tail"
+    }
+    try {
+        $Status=(& $Runner -Resource gpu -ReservationDirectory $Root -Status | ConvertTo-Json -Depth 6 -Compress) -join "`n"
+        if ($Status.Length -gt 4096) { $Status=$Status.Substring(0,4096) }
+        Write-Host "Reservation status: $Status"
+    } catch { Write-Host "Reservation status unavailable: $($_.Exception.Message)" }
+}
 $First = $null
 try {
     $First = Start-Runner 'gpu' ('-NoProfile -File "{0}" -Root "{1}"' -f $Fixture,$Root) 'first'
     $Deadline = (Get-Date).AddSeconds(15)
-    while (-not (Test-Path (Join-Path $Root 'running.json')) -and (Get-Date) -lt $Deadline) { Start-Sleep -Milliseconds 100 }
+    while (-not (Test-Path (Join-Path $Root 'running.json')) -and (Get-Date) -lt $Deadline -and -not $First.HasExited) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path (Join-Path $Root 'running.json'))) { Write-StartupDiagnostics $First }
     Assert (Test-Path (Join-Path $Root 'running.json')) 'Child did not start.'
     $Owned = Get-Content (Join-Path $Root 'running.json') -Raw | ConvertFrom-Json
     $State = & $Runner -Resource gpu -ReservationDirectory $Root -Status
