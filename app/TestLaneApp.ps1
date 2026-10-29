@@ -132,6 +132,31 @@ try {
     Assert ((Format-RelState @{ description = 'lane: queued' } 'queued') -eq '▶ queued: landing its PRs') 'A release without a deadline lost its plain wording.'
     Assert ((Format-RelState @{ description = 'lane: open' } 'closed') -eq '✓ closed') 'Closed wording changed.'
 
+    # A rogue producer (a PR's quick checks share the runner and the status file) can write a one-phase status.
+    # Presenting that as "Step 1 of 1" for a running batch is worse than showing the standard phases.
+    @{ updated = (Get-Date).ToString('o'); started = (Get-Date).AddMinutes(-3).ToString('o'); phase = 0
+       phases = @('Quick checks'); what = 'quick checks'; step = 'UI text and save fields'; done = '' } |
+        ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
+    $script:StepsKey = $null
+    Update-View
+    Assert ($JobLabel.Text -match 'Step \d+ of 6:') "One-phase status was rendered as a job: $($JobLabel.Text)"
+
+    # Panes: the queue fills a resizable pane, and its height is remembered.
+    Assert ($Queue.Dock -eq 'Fill' -and $Queue.Parent -eq $QueuePanel -and $QueuePanel.Parent -eq $NowSplit.Panel2) 'The queue is not in its own resizable pane.'
+    Assert (-not $NowSplit.IsSplitterFixed) 'The queue divider cannot be dragged.'
+    $script:LaneLayout['queue'] = 176
+    Set-PaneHeights
+    Assert ([math]::Abs(($NowSplit.Height - $NowSplit.SplitterWidth - $NowSplit.SplitterDistance) - 176) -le 2) "Queue pane height was not applied: $($NowSplit.SplitterDistance)."
+    Save-PaneHeights
+    Assert ((Get-Content $LayoutFile -Raw) -match 'queue=17[4-8]') 'Queue pane height was not remembered.'
+
+    # Nothing changed, nothing rebuilt: the 3-second refresh must not recreate the same labels.
+    $script:StepsKey = $null
+    Update-View
+    $FirstStep = $StepsBox.Controls[0]
+    Update-View
+    Assert ([object]::ReferenceEquals($FirstStep, $StepsBox.Controls[0])) 'Step labels are rebuilt even when the phase did not change.'
+
     $Form.Close()
     Write-Output 'PASS: status, profile validation/persistence/conflicts, responsive background refresh, coalescing, backoff and stale-project isolation.'
 } finally {
