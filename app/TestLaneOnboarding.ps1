@@ -25,13 +25,20 @@ try {
     try { ConvertTo-LaneRepository 'https://untrusted.example/acme/desktop' } catch { $Rejected=$true }
     Assert $Rejected 'A non-GitHub URL was accepted.'
     if ($PreviewDirectory) {
+        # A complete example rather than an empty form: the guide shows what a filled first run looks like.
+        $script:ProjectFields.name.Text='Acme Desktop'
+        $script:ProjectFields.repo.Text='https://github.com/acme/desktop'
         $script:ProjectFields.runnerPath.Text='C:\BuildRunner\Acme'
         $script:ProjectFields.statusFile.Text='C:\BuildRunner\Acme\status.json'
         $script:ProjectFields.pauseFile.Text='C:\BuildRunner\Acme\PAUSED'
         $script:ProjectDirty=$false
-        $ProjectMessage.Text='Give your project a name and repository. Check that the paths match your runner.'
+        $ProjectMessage.Text='Looks good. Save and use, then connect GitHub.'
         $ProjectMessage.ForeColor=$Grey
         Save-Preview 'setup.png'
+        # Back to an unsaved form so the assertions below still exercise typing.
+        $script:ProjectFields.name.Text=''
+        $script:ProjectFields.repo.Text=''
+        $script:ProjectDirty=$false
     }
     $script:ProjectFields.name.Text='Acme Desktop'
     $script:ProjectFields.repo.Text='https://github.com/acme/desktop'
@@ -55,7 +62,8 @@ try {
     $Fixture=@{updated=(Get-Date).ToString('o');started=(Get-Date).AddMinutes(-3).ToString('o');phase=1;phases=@('Prepare','Build','Test','Package');what='Acme Desktop 1.2';step='Building desktop app';progress=@{done=3;total=5};queue=@(@{number=42;title='Improve the welcome screen';state='building now'});notes=@();done=''}
     $Fixture | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $JsonFile
     $Tabs.SelectedTab=$NowTab; Update-View
-    Save-Preview 'overview.png'
+    # The dashboard picture in the guide comes from app\PreviewDocs.ps1, which renders a busier, more representative
+    # state; this test only renders the two screens it is responsible for testing.
     $Tabs.SelectedTab=$ProjectTab
     Edit-LaneProject $Profile
     if ($PreviewDirectory) {
