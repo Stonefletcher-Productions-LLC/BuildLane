@@ -1,6 +1,10 @@
-﻿# BuildLane
+﻿<p align="center">
+  <img src="docs/images/logo.png" width="112" alt="BuildLane">
+</p>
 
-**Watch the build, land the changes, ship the release — from one window.**
+<h1 align="center">BuildLane</h1>
+
+<p align="center"><strong>Watch the build, land the changes, ship the release — from one window.</strong></p>
 
 BuildLane is a small Windows app for a self-hosted build lane. It shows what the PC is building right now, which
 changes are waiting, and which release is next, so you do not have to keep a PowerShell window open or watch GitHub

@@ -10,9 +10,13 @@ $ErrorActionPreference = 'Stop'
 $Config = Get-Content -LiteralPath $Profile -Raw -Encoding UTF8 | ConvertFrom-Json
 if (-not $Config.name -or $Config.repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Profile requires a name and owner/repository.' }
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+# The launcher embeds the icon, so the stamp covers both: replacing app\BuildLane.ico alone has to recompile the exe,
+# otherwise the taskbar and Start menu keep the old picture forever.
 $LauncherHash = (Get-FileHash (Join-Path $PSScriptRoot 'BuildLaneLauncher.cs')).Hash
+$IconHash = (Get-FileHash (Join-Path $PSScriptRoot 'BuildLane.ico')).Hash
+$Stamp = "$LauncherHash $IconHash"
 $Receipt = Join-Path $Destination 'launcher.sha256'
-$NeedsCompile = -not (Test-Path (Join-Path $Destination 'Buildlane.exe')) -or -not (Test-Path $Receipt) -or (Get-Content $Receipt -ErrorAction SilentlyContinue) -ne $LauncherHash
+$NeedsCompile = -not (Test-Path (Join-Path $Destination 'Buildlane.exe')) -or -not (Test-Path $Receipt) -or (Get-Content $Receipt -Raw -ErrorAction SilentlyContinue).Trim() -ne $Stamp
 foreach ($Name in @('LaneApp.ps1', 'LaneProfiles.ps1', 'LaneGitHub.ps1', 'LaneRefresh.ps1','LaneMoves.ps1', 'LaneProjectsUi.ps1', 'LaneTheme.ps1', 'BuildLane.ico', 'BuildLaneLauncher.cs', 'LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs')) {
     $Source = Join-Path $PSScriptRoot $Name
     $Target = Join-Path $Destination $Name
@@ -25,7 +29,7 @@ $Exe = Join-Path $Destination 'Buildlane.exe'
 if ($NeedsCompile) {
 & $Compiler /nologo /target:winexe /reference:System.Windows.Forms.dll "/win32icon:$Destination\BuildLane.ico" "/out:$Exe" (Join-Path $Destination 'BuildLaneLauncher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Buildlane launcher compilation failed.' }
-Set-Content -LiteralPath $Receipt -Value $LauncherHash
+Set-Content -LiteralPath $Receipt -Value $Stamp
 }
 if (-not $NoShortcut) {
     $Link = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $Desktop "$ShortcutName.lnk"))
@@ -39,3 +43,4 @@ if (-not $NoShortcut) {
     [LaneTaskbar]::ConfigureShortcut((Join-Path $Desktop "$ShortcutName.lnk"))
 }
 Write-Output $Exe
+
