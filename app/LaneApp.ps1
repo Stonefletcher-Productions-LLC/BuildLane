@@ -84,18 +84,6 @@ function Reset-LaneCredential {
 }
 Reset-LaneCredential
 function Get-Token { if (-not $SmokeTest) { $script:Token } }
-function Invoke-Gh([string]$Method, [string]$Path, $Body = $null) {
-    if ($Config.setupRequired) { throw "Save your project settings first." }
-    if ($Method -ne "GET") { $script:DataRevision++ }
-    $T = Get-Token
-    if (-not $T) { throw "Connect GitHub first (the button at the top right)." }
-    $Req = @{ Method = $Method; Uri = "https://api.github.com/repos/$Repo$Path"; TimeoutSec = 20
-              Headers = @{ Authorization = "Bearer $T"; Accept = "application/vnd.github+json"; "User-Agent" = "Buildlane-Desktop" } }
-    if ($null -ne $Body) { $Req.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Compress -Depth 5)); $Req.ContentType = "application/json; charset=utf-8" }
-    Invoke-RestMethod @Req
-}
-# Windows PowerShell hands a JSON array back as one object; this lists its items.
-function Get-GhList([string]$Path) { $R = Invoke-Gh GET $Path; @($R | ForEach-Object { $_ }) }
 function Start-Lane([string]$Kind="lane") { try { Start-LaneCommand -Kind $Kind -Path "/actions/workflows/$Workflow/dispatches" -Body @{ ref = $Config.branch; inputs = @{ task = "lane" } } } catch { Show-Error "The lane could not be started. The local pause state is shown above." $_ } }
 function Show-Error([string]$What, $Err) { [void][Windows.Forms.MessageBox]::Show("$What`n`n$($Err.Exception.Message)", "Buildlane", "OK", "Warning") }
 
@@ -176,6 +164,7 @@ $JobBar = Add-Row (New-Bar)
 $StepLabel = Add-Row (New-Label "")
 $StepBar = Add-Row (New-Bar)
 $Time = Add-Row (New-Label "" $FontSmall $Grey)
+$Waiting = Add-Row (New-Label "" $FontBody $Blue)
 
 # The steps, ticked off.
 $StepsHead = Add-Row (New-Label "Steps" $FontHead) 12
@@ -276,17 +265,13 @@ function Show-Connect {
     $Forget = New-Object Windows.Forms.Button
     $Forget.Text = "Disconnect"; $Forget.Location = New-Object Drawing.Point(430, 240); $Forget.AutoSize = $true
     $Ok.Add_Click({
-        $T = $Box.Text.Trim()
-        if (-not $T) { return }
-        $Old = $script:Token; Stop-LaneRefresh; $script:NextRefresh=[datetime]::MinValue; $script:Token = $T
+        $T=$Box.Text.Trim(); if (-not $T) { return }
         try {
-            Invoke-Gh GET "" | Out-Null
-            New-Item -ItemType Directory -Force (Split-Path $TokenFile) | Out-Null
-            ConvertTo-SecureString $T -AsPlainText -Force | ConvertFrom-SecureString | Set-Content $TokenFile
-            $D.Close()
-        }
-        catch { $script:Token = $Old; Show-Error "That token does not open $Repo." $_ }
+            Start-LaneAction connect -Token $T -Context @{Dialog=$D;Ok=$Ok;Forget=$Forget;Box=$Box;Label=$L}
+            if ($script:ActionJob) { $Ok.Enabled=$false; $Forget.Enabled=$false; $Box.Enabled=$false; $L.Text='Checking repository access...' }
+        } catch { $L.Text='Connection check could not start. Check the project settings.' }
     })
+    $D.Add_FormClosing({ if ($script:ActionJob -and $script:ActionJob.Request.Operation -eq 'connect') { $_.Cancel=$true; $L.Text='Checking repository access. Wait for the result before closing.' } })
     $Forget.Add_Click({ Stop-LaneRefresh; Remove-Item $TokenFile -ErrorAction SilentlyContinue; $script:Token = $null; $script:NextRefresh=[datetime]::MinValue; $D.Close() })
     $D.Controls.AddRange(@($L, $Link, $Box, $Ok, $Forget))
     $D.AcceptButton = $Ok
@@ -322,7 +307,7 @@ function Set-Bar($Bar, [double]$Fraction) {
 $script:State = $null
 function Update-View {
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob)
+    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
@@ -337,6 +322,8 @@ function Update-View {
     }
     else { $script:State = $null }
     $S = $script:State
+    Initialize-LaneHistory
+    $Waiting.Text=Get-LaneWaitingText $S (Test-Path $PauseFile)
     $Notes.Text = ''; $Sub.ForeColor = $Grey
     $Paused = Test-Path $PauseFile
     $PauseButton.Text = if ($Paused) { "Resume builds" } else { "Pause builds" }
@@ -383,7 +370,7 @@ function Update-View {
                 $Sub.Text = "This build waits at the start while the lane is paused. Press Resume (top left) to let it go on."; $Sub.ForeColor = $Orange
             }
             if ($S.progress -and [int]$S.progress.total -gt 0) { Set-Bar $StepBar $Frac } else { Set-Bar $StepBar -1 }
-            $Time.Text = "Running for $(Format-Span ((Get-Date) - $Started)) (started $($Started.ToString('HH:mm')), your time)"
+            $Time.Text = "Run elapsed: $(Format-Span ((Get-Date) - $Started)) (started $($Started.ToString('HH:mm')), your time)"
         }
         $Identity = if ($S.runId) { "Run #$($S.runId)" } else { 'Run ID not reported' }
         $Sub.Text += "`nLatest local report: $Identity. This result applies only to $($S.what), not other builds or releases."
@@ -551,11 +538,6 @@ function Format-RelState($M, [string]$St) {
     return $St
 }
 function Get-VerKey($M) { $N = @([regex]::Matches("$($M.title)", '\d+') | ForEach-Object { [int]$_.Value }) + @(0, 0, 0); ($N[0] * 1000000) + ($N[1] * 1000) + $N[2] }
-function Set-RelState($M, [string]$St) {
-    $Rest = ("$($M.description)" -replace '(?m)^lane:.*$', '').Trim()
-    $Desc = "lane: $St$(if ($Rest) { "`n`n$Rest" })"
-    Invoke-Gh PATCH "/milestones/$($M.number)" @{ description = $Desc } | Out-Null
-}
 function Get-SelectedRelease {
     if (-not $RelList.SelectedItems.Count) { [void][Windows.Forms.MessageBox]::Show("Pick a release in the list first.", "Releases"); return $null }
     $N = $RelList.SelectedItems[0].Tag
@@ -614,36 +596,23 @@ function Set-ReleaseView($Snapshot) {
     $Next = if ($script:Milestones.Count) { $K = Get-VerKey $script:Milestones[-1]; "v$([math]::Floor($K / 1000000)).$([math]::Floor($K / 1000) % 1000 + 1).0" } else { "v0.2.0" }
     $T = [Microsoft.VisualBasic.Interaction]::InputBox("Name of the new release, e.g. v0.3.0", "New release", $Next)
     if (-not $T.Trim()) { return }
-    try { Invoke-Gh POST "/milestones" @{ title = $T.Trim(); description = "lane: open" } | Out-Null; Update-Releases }
+    try { Start-LaneAction create -Title $T.Trim() }
     catch { Show-Error "Could not make the release $T." $_ }
 } $RelButtons)
 [void](New-Button "▶ Queue release build" {
     $M = Get-SelectedRelease; if (-not $M) { return }
-    # Ready PRs with no release would wait behind this one and go in the next release: offer to add them first.
-    try { $Loose = @(Get-GhList "/pulls?state=open&base=$Branch&per_page=100" | Where-Object { -not $_.milestone -and -not $_.draft -and @($_.labels | Where-Object { $_.name -in @("ready", "fix-main") }).Count }) }
-    catch { Show-Error "Could not read the pull requests." $_; return }
-    if ($Loose.Count) {
-        $L = ($Loose | ForEach-Object { "#$($_.number) $($_.title)" }) -join "`n"
-        $A = [Windows.Forms.MessageBox]::Show("These ready PRs are in no release yet:`n`n$L`n`nPut them in $($M.title) too?`n`nYes puts them in $($M.title). No leaves them out: they wait until $($M.title) is packaged and go in the next release.", "Queue release build", "YesNoCancel", "Question")
-        if ($A -eq "Cancel") { return }
-        if ($A -eq "Yes") {
-            foreach ($P in $Loose) { try { Invoke-Gh PATCH "/issues/$($P.number)" @{ milestone = $M.number } | Out-Null } catch { Show-Error "Could not put #$($P.number) in $($M.title)." $_; return } }
-        }
-    }
-    $Q = [Windows.Forms.MessageBox]::Show("Queue the $($M.title) release build?`n`n1. The lane lands $($M.title)'s ready PRs first. Everything else waits, and a batch building other PRs is stopped.`n2. Then it runs the package build on main: full tests, then the package, with nothing else on the PC.`n3. When it passes, the release closes and the next release's PRs go in.`n`nPRs in $($M.title) that are not ready are left out.", "Queue release build", "OKCancel", "Question")
-    if ($Q -ne "OK") { return }
-    try { Set-RelState $M "queued"; Start-Lane; Update-Releases } catch { Show-Error "Could not queue $($M.title)." $_ }
+    try { Start-LaneAction prepareQueue -Milestone $M } catch { Show-Error 'Could not prepare the release queue.' $_ }
 } $RelButtons)
 [void](New-Button "Unqueue" {
     $M = Get-SelectedRelease; if (-not $M) { return }
     if ((Get-RelState $M) -eq "packaging") { [void][Windows.Forms.MessageBox]::Show("$($M.title)'s package build is running. Stop it with Pause everything (Yes to stop the running build), then Unqueue.", "Unqueue"); return }
-    try { Set-RelState $M "open"; Start-Lane; Update-Releases } catch { Show-Error "Could not unqueue $($M.title)." $_ }
+    try { Start-LaneAction unqueue -Milestone $M } catch { Show-Error "Could not unqueue $($M.title)." $_ }
 } $RelButtons)
 [void](New-Button "Close release" {
     $M = Get-SelectedRelease; if (-not $M) { return }
     $Q = [Windows.Forms.MessageBox]::Show("Close $($M.title)? Its open PRs keep their release name; move them to another release first if they should go in later.", "Close release", "OKCancel", "Question")
     if ($Q -ne "OK") { return }
-    try { Invoke-Gh PATCH "/milestones/$($M.number)" @{ state = "closed" } | Out-Null; Start-Lane; Update-Releases } catch { Show-Error "Could not close $($M.title)." $_ }
+    try { Start-LaneAction close -Milestone $M } catch { Show-Error "Could not close $($M.title)." $_ }
 } $RelButtons)
 [void](New-Button "Refresh" { Update-Releases } $RelButtons)
 
@@ -665,13 +634,15 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneRefresh.ps1')
 . (Join-Path $PSScriptRoot 'LaneMoves.ps1')
 . (Join-Path $PSScriptRoot 'LaneFeedback.ps1')
+. (Join-Path $PSScriptRoot 'LaneActions.ps1')
+. (Join-Path $PSScriptRoot 'LaneHistory.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
-$Form.Add_FormClosing({ if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
-$Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases } })
+$Form.Add_FormClosing({ if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
+$Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })
 $RefreshTimer=New-Object Windows.Forms.Timer
 $RefreshTimer.Interval=150
-$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth })
+$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth; Complete-LaneAction })
 
 $script:Ticks = 0
 $Timer = New-Object Windows.Forms.Timer
@@ -679,6 +650,7 @@ $Timer.Interval = 1000
 $Timer.Add_Tick({
     Update-View
     Start-LaneControllerRead
+    Start-LaneHistory
     $script:Ticks++
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 15 -eq 0) { Update-Releases }
 })

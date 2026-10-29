@@ -1,5 +1,5 @@
 # Runs in an isolated PowerShell runspace. Never touches Windows Forms controls.
-param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue)
+param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue, [string]$RunId)
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
@@ -25,6 +25,47 @@ try {
     if (-not $AccessToken) { throw 'Connect GitHub to view releases.' }
     if ($Kind -eq 'auth') { return @{ Token = $AccessToken } }
     $Headers = @{ Authorization="Bearer $AccessToken"; Accept='application/vnd.github+json'; 'User-Agent'='Buildlane-Desktop' }
+    if ($Kind -eq 'history') {
+        if ($RunId -notmatch '^\d+$') { throw 'A numeric run ID is required.' }
+        function Read-Json([string]$Path) { (Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$Repository$Path" -Headers $Headers -TimeoutSec 15).Content | ConvertFrom-Json }
+        function Seconds($Start,$End) {
+            $A=[DateTimeOffset]::MinValue; $B=[DateTimeOffset]::MinValue
+            if ([DateTimeOffset]::TryParse([string]$Start,[ref]$A) -and [DateTimeOffset]::TryParse([string]$End,[ref]$B) -and $B -ge $A -and $A.Year -gt 2000) { return [math]::Round(($B-$A).TotalSeconds,1) }
+            return $null
+        }
+        $Run=Read-Json "/actions/runs/$RunId"
+        if ([string]$Run.id -ne $RunId -or [int]$Run.run_attempt -lt 1) { throw 'Run identity did not match.' }
+        $Jobs=@()
+        for ($Page=1;$Page -le 10;$Page++) {
+            $Batch=@((Read-Json "/actions/runs/$RunId/attempts/$($Run.run_attempt)/jobs?per_page=100&page=$Page").jobs)
+            if (@($Batch | Where-Object { [string]$_.run_id -ne $RunId }).Count) { throw 'Job identity did not match.' }
+            $Jobs+=@($Batch)
+            if ($Batch.Count -lt 100) { break }
+            if ($Page -eq 10) { throw 'Too many jobs to display safely.' }
+        }
+        $First=@($Jobs | Where-Object started_at | Sort-Object started_at | Select-Object -First 1)
+        $Last=@($Jobs | Where-Object completed_at | Sort-Object completed_at -Descending | Select-Object -First 1)
+        $StoredJobs=@(); $StepCount=0
+        foreach ($J in $Jobs) {
+            $Steps=@()
+            foreach ($S in $J.steps) {
+                if (++$StepCount -gt 300) { throw 'Too many steps to retain safely.' }
+                $Step=@{name=$S.name;result=$(if ($S.conclusion) { $S.conclusion } else { $S.status });seconds=$null}
+                if ($S.conclusion -ne 'skipped') { $Duration=Seconds $S.started_at $S.completed_at; if ($null -ne $Duration) { $Step.seconds=[double]$Duration } }
+                $Steps+=@($Step)
+            }
+            $StoredJob=@{name=$J.name;result=$(if ($J.conclusion) { $J.conclusion } else { $J.status });seconds=$null;steps=$Steps}
+            if ($J.conclusion -ne 'skipped') { $Duration=Seconds $J.started_at $J.completed_at; if ($null -ne $Duration) { $StoredJob.seconds=[double]$Duration } }
+            $StoredJobs+=@($StoredJob)
+        }
+        $History=@{id=[string]$Run.id;attempt=[int]$Run.run_attempt;repo=$Repository;sha=$Run.head_sha;status=$Run.status;conclusion=$Run.conclusion;what='';jobs=$StoredJobs;beforeJobsSeconds=$null;jobSpanSeconds=$null}
+        # A rerun keeps the original created_at; do not count time between attempts as queue wait.
+        $Origin=if ([int]$Run.run_attempt -eq 1) { $Run.created_at } else { $Run.run_started_at }
+        $History.beforeJobsBasis=if ([int]$Run.run_attempt -eq 1) { 'run creation' } else { 'GitHub run start for this attempt' }
+        if ($First.Count) { $Duration=Seconds $Origin $First[0].started_at; if ($null -ne $Duration) { $History.beforeJobsSeconds=[double]$Duration } }
+        if ($Run.status -eq 'completed' -and $First.Count -and $Last.Count) { $Duration=Seconds $First[0].started_at $Last[0].completed_at; if ($null -ne $Duration) { $History.jobSpanSeconds=[double]$Duration } }
+        return @{History=$History}
+    }
     if ($Kind -eq 'controller') {
         $Uri="https://api.github.com/repos/$Repository/actions/workflows/$([uri]::EscapeDataString($Workflow))/runs?event=workflow_dispatch&branch=$([uri]::EscapeDataString($BaseBranch))&per_page=30"
         $Response=Invoke-WebRequest -UseBasicParsing -Uri $Uri -Headers $Headers -TimeoutSec 15

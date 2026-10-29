@@ -14,7 +14,7 @@ $script:CommandWorker={
     @{AcceptedAtUtc=[datetime]::UtcNow}
 }
 function Start-LaneCommand([string]$Kind='lane',[string]$Path,[hashtable]$Body,[scriptblock]$Worker) {
-    if ($script:CommandJob -or $script:MoveJob) { return }
+    if ($script:CommandJob -or $script:MoveJob -or $script:ActionJob) { return }
     if (-not $Worker -and ($SmokeTest -or -not $script:Token)) { throw 'Connect GitHub before sending a lane request.' }
     Stop-LaneRefresh
     $script:DataRevision++

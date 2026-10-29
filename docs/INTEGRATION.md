@@ -35,6 +35,21 @@ Your runner writes the configured `statusFile`. Use ISO 8601 timestamps, and rep
 
 The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “completed or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
 
+Optional `waitingReason` explains the current wait, `waitingSince` is its ISO 8601 start time, and
+`blockingRunId` identifies the reported blocker. These fields are displayed only for unfinished work. Without
+these fields, phase zero uses the existing `detail`/`step` as preparation information, or explicitly says the
+reason has not been reported. Clear waiting fields when work proceeds; the app does not infer blockers from
+unrelated PR results or milestone states.
+
+Timing history reads `GET /actions/runs/{runId}` and that exact attempt's paginated jobs, recording source SHA,
+job/step conclusions and timestamp differences. It retains up to 20 completed attempts per profile, including
+cancelled and failed attempts, and keeps in-progress timings in memory. Skipped or missing durations stay
+unreported. Before-first-job time is measured from run creation for attempt one, and from GitHub's run-start
+timestamp for reruns to exclude time between attempts. Job span covers the earliest start through latest job
+completion; overlapping jobs are not summed. Local status remains the authority for the Overview. A successful
+history entry does not certify another run or a skipped Package step. No pipeline changes are needed to load
+history; the token must be allowed to read Actions runs and jobs.
+
 ## Pause and resume
 
 The app creates the configured `pauseFile` to request a pause, and removes it to resume. The parent folder must exist and be writable. Your runner must check that marker before starting work. On resume, the app dispatches the lane workflow. BuildLane cannot enforce a pause on a backend that ignores this file.

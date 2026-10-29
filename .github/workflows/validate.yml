@@ -22,6 +22,12 @@ jobs:
       - name: Responsive command and machine-health checks
         timeout-minutes: 4
         run: ./app/TestLaneFeedback.ps1
+      - name: Responsive release actions and connection checks
+        timeout-minutes: 4
+        run: ./app/TestLaneActions.ps1
+      - name: Waiting reasons and timing history checks
+        timeout-minutes: 4
+        run: ./app/TestLaneHistory.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1

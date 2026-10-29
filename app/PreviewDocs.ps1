@@ -76,6 +76,25 @@ try {
     $Tabs.SelectedTab = $RelTab
     Save-Shot 'releases.png'
 
+    # Waiting and history use reported reasons and exact attempt records, never live GitHub data.
+    $OriginalStatus=Get-Content -LiteralPath $StatusPath -Raw
+    $WaitingStatus=$OriginalStatus | ConvertFrom-Json
+    $WaitingStatus.phase=0; $WaitingStatus.step='Waiting for the runner'
+    $WaitingStatus | Add-Member NoteProperty waitingReason 'A release package owns the runner' -Force
+    $WaitingStatus | Add-Member NoteProperty blockingRunId '40931784000' -Force
+    $WaitingStatus | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StatusPath
+    $Tabs.SelectedTab=$NowTab; Update-View; Save-Shot 'waiting.png'
+    Set-Content -LiteralPath $StatusPath -Value $OriginalStatus; Update-View
+    $HistoryFixture=@{id='40931784541';attempt=2;repo=$Repo;sha=('a'*40);what='';status='completed';conclusion='cancelled';beforeJobsSeconds=12;beforeJobsBasis='GitHub run start for this attempt';jobSpanSeconds=132;jobs=@(
+        @{name='Windows build';result='cancelled';seconds=132;steps=@(
+            @{name='Compile';result='success';seconds=62},
+            @{name='Animation tests';result='cancelled';seconds=70},
+            @{name='Package';result='skipped';seconds=$null}
+        )}
+    )}
+    Set-LaneHistoryResult @{RunId='40931784541';What='batch #473, #478';Report='fixture'} @{History=$HistoryFixture}
+    $Tabs.SelectedTab=$HistoryTab; Save-Shot 'timings.png'
+
     # The same overview in dark mode, for the appearance setting. Light is the app's default, so the guide's images
     # are light; this one shows what the toggle does.
     Set-LaneTheme $true

@@ -94,6 +94,7 @@ function Update-ProjectPicker {
     foreach ($Button in $ProjectActions.Controls) { if ($Button.Text -in @('Edit selected','Use selected')) { $Button.Enabled=($ProjectPicker.Items.Count -gt 0) } }
 }
 function Use-LaneProject([string]$Path) {
+    if ($script:ActionJob) { throw 'Wait for the release or connection request to finish before switching projects.' }
     if ($script:CommandJob) { throw 'Wait for the lane request to finish before switching projects.' }
     if ($script:MoveJob) { throw 'Wait for the current move to finish before switching projects.' }
     $Value=Read-LaneProfile $Path
