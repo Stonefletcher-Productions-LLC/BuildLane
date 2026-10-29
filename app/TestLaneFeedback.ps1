@@ -64,9 +64,20 @@ try {
     Start-Sleep -Milliseconds 400; Complete-LaneRefresh; Complete-LaneHealth
     Assert (-not $script:CachedMachine -and -not $script:CommandState) 'Stale project state survived a generation change.'
     Assert ($Timer.Interval -eq 1000) 'Local report polling is slower than one second.'
+    Assert (-not $script:RetiredJobs.Count -and -not $script:RefreshJob -and -not $script:HealthJob -and -not $script:CommandJob) 'A background worker survived completion.'
     Assert (-not $script:UiErrors.Count) 'A UI handler threw.'
     "PASS: immediate command feedback ${StartMs}ms; render during slow health ${HealthMs}ms; duplicate guards, uncertain writes, controller/runner distinction and stale-result isolation."
 } finally {
+    # Also dispose workers when an assertion fails before the normal drain completes.
+    $Jobs=@($script:CommandJob,$script:HealthJob,$script:RefreshJob)+@($script:RetiredJobs)
+    foreach ($Job in $Jobs) {
+        if ($Job -and $Job.Shell) {
+            try { if (-not $Job.Handle.IsCompleted) { $Job.Shell.Stop() } }
+            finally { $Job.Shell.Dispose() }
+        }
+    }
+    $script:CommandJob=$null; $script:HealthJob=$null; $script:RefreshJob=$null
+    if ($script:RetiredJobs) { $script:RetiredJobs.Clear() }
     if ($Form) { $Form.Dispose() }; if ($Timer) { $Timer.Dispose() }; if ($RefreshTimer) { $RefreshTimer.Dispose() }
     Remove-Item -LiteralPath $FixtureRoot -Recurse -Force
 }
