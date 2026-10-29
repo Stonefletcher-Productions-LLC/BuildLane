@@ -49,6 +49,28 @@ images. Review the results for clipping and accidental personal data before comm
 | `app/BuildLaneLauncher.cs` | Console-free Windows launcher |
 | `app/InstallLaneApp.ps1`, `app/BuildLaneInstaller.ps1` | Local installation and MSI packaging |
 | `app/PreviewDocs.ps1` | Renders the documentation screenshots from the real interface with fixture data |
+| `app/BuildLogo.ps1` | Draws the logo and writes `app/BuildLane.ico` plus the README and social-preview images |
 | `docs/`, `examples/` | User guides and sample integrations |
+
+## Logo
+
+The mark is a "B" for BuildLane over a lane stripe that runs from cyan to green, on a deep navy tile. It deliberately
+shares no shape or colour with the LifeShare icon (a coral house with a teal gear): one product built the other, but
+they are separate things.
+
+`app/BuildLogo.ps1` draws every size with the same geometry and writes all of the places the icon lives:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\BuildLogo.ps1
+```
+
+| Output | Used by |
+| --- | --- |
+| `app/BuildLane.ico` (16–256 px) | Window and taskbar icon, desktop shortcut, compiled launcher |
+| `docs/images/logo.png` (512 px) | The top of this README |
+| `docs/images/social-preview.png` (1280×640) | GitHub's social preview (Settings → Social preview → Upload) |
+
+The launcher embeds the icon at compile time, so `InstallLaneApp.ps1` recompiles it when either
+`BuildLaneLauncher.cs` or `BuildLane.ico` changes.
 
 Update the README and relevant guide when behavior changes. Do not add credentials, personal profiles, generated binaries, or game assets. Signing and production release validation are separate from regression tests.
