@@ -134,12 +134,20 @@ $NowSplit = New-Object Windows.Forms.SplitContainer
 $NowSplit.Dock = "Fill"; $NowSplit.Orientation = "Horizontal"; $NowSplit.SplitterWidth = 6
 $NowSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
 $NowSplit.Panel1MinSize = 300; $NowSplit.Panel2MinSize = 120
-$NowSplit.Panel1.Controls.Add($Root)
+$LogSplit = New-Object Windows.Forms.SplitContainer
+$LogSplit.Dock = 'Fill'; $LogSplit.Orientation = 'Horizontal'; $LogSplit.SplitterWidth = 6
+$LogSplit.Size = New-Object Drawing.Size(900, 500)
+$LogSplit.Panel1MinSize = 200; $LogSplit.Panel2MinSize = 90
+$LogSplit.Panel1.Controls.Add($Root); $LogSplit.Panel2Collapsed = $true
+$NowSplit.Panel1.Controls.Add($LogSplit)
 $NowSplit.Panel2.Controls.Add($QueuePanel)
 $NowTab.Controls.Add($NowSplit)
 function Add-Row($Control, [int]$Top = 4, $Panel = $Root) {
     $Control.Margin = New-Object Windows.Forms.Padding(0, $Top, 0, 4)
     $Control.Dock = "Top"
+    if ($Panel -eq $Root) {
+        [void]$Panel.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))
+    }
     [void]$Panel.Controls.Add($Control)
     $Control
 }
@@ -279,9 +287,19 @@ function Show-Connect {
 }
 [void](New-Button "Open live log" { if ($script:State.runUrl) { Start-Process $script:State.runUrl } })
 [void](New-Button "Open status page" { if ($script:State.issueUrl) { Start-Process $script:State.issueUrl } })
-$LogButton = New-Button "Show step log" { $LogBox.Visible = -not $LogBox.Visible; $LogButton.Text = if ($LogBox.Visible) { "Hide step log" } else { "Show step log" }; Update-View }
-$LogBox = Add-Row (New-Object Windows.Forms.TextBox)
-$LogBox.Multiline = $true; $LogBox.ReadOnly = $true; $LogBox.ScrollBars = "Vertical"; $LogBox.Height = 260; $LogBox.Font = $FontMono; $LogBox.Visible = $false; $LogBox.WordWrap = $false
+$LogButton = New-Button "Show step log" {
+    if (-not $LogSplit.Panel2Collapsed) {
+        $script:LaneLayout['log'] = $LogSplit.Height - $LogSplit.SplitterWidth - $LogSplit.SplitterDistance
+    }
+    $LogSplit.Panel2Collapsed = -not $LogSplit.Panel2Collapsed
+    $LogButton.Text = if ($LogSplit.Panel2Collapsed) { "Show step log" } else { "Hide step log" }
+    if (-not $LogSplit.Panel2Collapsed) { Set-PaneHeights 'log' }
+    Update-View
+}
+$LogBox = New-Object Windows.Forms.TextBox
+$LogBox.Dock = 'Fill'; $LogBox.Multiline = $true; $LogBox.ReadOnly = $true
+$LogBox.ScrollBars = 'Both'; $LogBox.Font = $FontMono; $LogBox.WordWrap = $false
+$LogSplit.Panel2.Controls.Add($LogBox)
 
 function Format-Span([TimeSpan]$T) {
     if ($T.TotalMinutes -lt 1) { return "under a minute" }
@@ -442,7 +460,7 @@ function Update-View {
     $Health.ForeColor = if ($Paused) { $Orange } else { $Ink }
 
     # The running step's log, from the runner's live page.
-    if ($LogBox.Visible) {
+    if (-not $LogSplit.Panel2Collapsed) {
         $Page = Get-ChildItem (Join-Path $Runner "_diag\pages") -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         $LogBox.Text = if ($Page -and $Page.LastWriteTime -gt (Get-Date).AddMinutes(-30)) {
             (Get-Content $Page.FullName -Tail 40 -ErrorAction SilentlyContinue | ForEach-Object { $_ -replace '^\S+Z ', '' }) -join "`r`n"
@@ -665,23 +683,31 @@ $LayoutFile = Join-Path $ProfileDirectory 'layout.txt'
 $script:LaneLayout = @{}
 if (Test-Path -LiteralPath $LayoutFile) {
     Get-Content -LiteralPath $LayoutFile -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_ -match '^(queue|prs)=(\d+)$') { $script:LaneLayout[$Matches[1]] = [int]$Matches[2] }
+        if ($_ -match '^(queue|prs|log)=(\d+)$') { $script:LaneLayout[$Matches[1]] = [int]$Matches[2] }
     }
 }
-# Both dividers store the size of the *lower* pane, so the remembered size survives a different window height.
+# Dividers store the size of the *lower* pane, so the remembered size survives a different window height.
 $script:Panes = @(
     [pscustomobject]@{ Split = $NowSplit; Key = 'queue'; Share = 0.36 }
     [pscustomobject]@{ Split = $RelSplit; Key = 'prs'; Share = 0.52 }
+    [pscustomobject]@{ Split = $LogSplit; Key = 'log'; Share = 0.40 }
 )
-function Set-PaneHeights {
+function Set-PaneHeights([string]$Only = '') {
     foreach ($Pane in $script:Panes) {
+        if ($Only -and $Pane.Key -ne $Only) { continue }
         $Split = $Pane.Split
+        if ($Split.Panel2Collapsed) { continue }
         # Pane sizes are cosmetic: a splitter that refuses a distance on a small screen (or before it is laid out) must
         # not throw inside the Shown handler, where a throw means an error dialog or, in a test, a hang.
         try {
             $Room = $Split.Height - $Split.SplitterWidth
             if ($Room -lt ($Split.Panel1MinSize + $Split.Panel2MinSize)) { continue }
             $Fallback = [int]($Room * [double]$Pane.Share)
+            if ($Pane.Key -eq 'queue') {
+                # Start the queue immediately below the overview content, while preserving room to scroll on small screens.
+                $Preferred = $Root.GetPreferredSize((New-Object Drawing.Size($Root.ClientSize.Width, 0))).Height
+                $Fallback = $Room - $Preferred
+            }
             $Lower = if ($script:LaneLayout.ContainsKey($Pane.Key)) { [int]$script:LaneLayout[$Pane.Key] } else { $Fallback }
             $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
             if ($Lower -gt 0) { $Split.SplitterDistance = $Room - $Lower }
@@ -691,6 +717,7 @@ function Set-PaneHeights {
 function Save-PaneHeights {
     try {
         foreach ($Pane in $script:Panes) {
+            if ($Pane.Split.Panel2Collapsed) { continue }
             $script:LaneLayout[$Pane.Key] = $Pane.Split.Height - $Pane.Split.SplitterWidth - $Pane.Split.SplitterDistance
         }
         New-Item -ItemType Directory -Force (Split-Path $LayoutFile) | Out-Null
