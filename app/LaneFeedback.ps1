@@ -57,12 +57,14 @@ function Update-LaneCommandFeedback {
     if ($C.Phase -eq 'error') { $PauseState.Text="$Word notification not confirmed. Check GitHub before retrying."; $PauseState.ForeColor=$Orange; return }
     $S=$script:State
     if ($S -and $S.updated) {
-        $ReportAt=[DateTimeOffset]::Parse($S.updated).UtcDateTime
-        $NewRun=$S.runId -and $S.runId -ne $C.BaselineRunId -and $S.started -and [DateTimeOffset]::Parse($S.started).UtcDateTime -ge $C.RequestedAtUtc.AddSeconds(-1)
+        $ReportAt=[DateTimeOffset]::MinValue; $StartedAt=[DateTimeOffset]::MinValue
+        $ValidReport=[DateTimeOffset]::TryParse([string]$S.updated,[ref]$ReportAt)
+        $ValidStart=[DateTimeOffset]::TryParse([string]$S.started,[ref]$StartedAt)
+        $NewRun=$S.runId -and $S.runId -ne $C.BaselineRunId -and $ValidStart -and $StartedAt.UtcDateTime -ge $C.RequestedAtUtc.AddSeconds(-1)
         $Cancelled=$C.Kind -eq 'cancel' -and $S.runId -eq $C.BaselineRunId -and $S.done
         $Resumed=$S.runId -eq $C.BaselineRunId -and [int]$C.BaselinePhase -eq 0 -and [int]$S.phase -gt 0
-        if ($ReportAt -ge $C.RequestedAtUtc -and ($NewRun -or $Resumed -or $Cancelled)) {
-            $C.Phase='runner'; $C.RunnerReportedAtUtc=$ReportAt
+        if ($ValidReport -and $ReportAt.UtcDateTime -ge $C.RequestedAtUtc -and ($NewRun -or $Resumed -or $Cancelled)) {
+            $C.Phase='runner'; $C.RunnerReportedAtUtc=$ReportAt.UtcDateTime
             # The main status panel now carries the authoritative runner phase.
             return
         }

@@ -33,7 +33,7 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
         [void]$Shell.AddScript([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LaneGitHub.ps1')))
         [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue }))
     }
-    $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision }
+    $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision; Command=$script:CommandState }
     if ($Kind -eq 'releases') {
         $RelMsg.Text = 'Refreshing GitHub...'; $RelMsg.ForeColor = $Grey
         $RelButtons.Enabled = $false; $MoveBar.Enabled = $false
@@ -55,6 +55,7 @@ function Complete-LaneRefresh {
     finally { $Job.Shell.Dispose() }
     if ($Job.Generation -ne $script:ProjectGeneration) { return }
     if ($Job.Kind -eq 'controller') {
+        if (-not [object]::ReferenceEquals($Job.Command,$script:CommandState)) { return }
         if ($script:CommandState) {
             $script:CommandState.ObservationError=$Result.Error
             if ($Result.Error) { $script:NextControllerPoll=[datetime]::UtcNow.AddSeconds([math]::Max(5,[int]$Result.RetrySeconds)) }

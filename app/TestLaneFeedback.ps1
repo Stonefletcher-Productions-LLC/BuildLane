@@ -35,6 +35,21 @@ try {
     Start-LaneCommand -Worker { throw 'Fixture timeout after POST' }
     Drain-Command
     Assert ($PauseState.Text -match 'not confirmed') 'Ambiguous failure invited unsafe automatic retry.'
+    $script:CommandState.Phase='accepted'
+    $script:State=@{updated='malformed';started='also malformed';runId=123;phase=1}
+    Update-LaneCommandFeedback
+    Assert ($script:CommandState.Phase -eq 'accepted') 'Invalid timestamps implied runner progress.'
+    $script:State=$null
+    Start-LaneRefresh -Kind controller -Worker { Start-Sleep -Milliseconds 200; @{Controller=@{id=99;status='completed';conclusion='success'}} }
+    $OldRead=$script:RefreshJob
+    Start-LaneCommand -Worker { @{AcceptedAtUtc=[datetime]::UtcNow} }
+    Assert (-not $script:RefreshJob -and $OldRead.Generation -ne $script:ProjectGeneration) 'New command did not retire the old read.'
+    Drain-Command
+    # Even a same-generation result must belong to the exact command that launched it.
+    Start-LaneRefresh -Kind controller -Worker { Start-Sleep -Milliseconds 200; @{Controller=@{id=99;status='completed';conclusion='success'}} }
+    $script:CommandState=@{Kind='resume';Phase='accepted';RequestedAtUtc=[datetime]::UtcNow}
+    Start-Sleep -Milliseconds 300; Complete-LaneRefresh
+    Assert (-not $script:CommandState.Controller -and $script:CommandState.Phase -eq 'accepted') 'Prior command response overwrote newer feedback.'
     $Watch.Restart()
     Start-LaneHealth -Worker { param($Request) Start-Sleep -Milliseconds 900; @{Health=@('fixture healthy');FreeGB=20;TotalGB=100;UsedFraction=0.8} }
     Update-View
