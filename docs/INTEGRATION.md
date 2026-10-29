@@ -36,9 +36,12 @@ Your runner writes the configured `statusFile`. Use ISO 8601 timestamps, and rep
 The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “completed or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
 
 Optional `waitingReason` explains the current wait, `waitingSince` is its ISO 8601 start time, and
-`blockingRunId` identifies the reported blocker. These fields are displayed only for unfinished work. Without
+`blockingRunId` identifies the reported blocker. These fields are displayed only for unfinished work in
+phase zero by default. For waits inside later phases, set `waiting: true` and `waitingPhase` to the current
+phase index. A mismatched waitingPhase is stale and is ignored, including during phase zero. Clear waiting
+fields when work proceeds. Without
 these fields, phase zero uses the existing `detail`/`step` as preparation information, or explicitly says the
-reason has not been reported. Clear waiting fields when work proceeds; the app does not infer blockers from
+reason has not been reported. The app does not infer blockers from
 unrelated PR results or milestone states.
 
 Timing history reads `GET /actions/runs/{runId}` and that exact attempt's paginated jobs, recording source SHA,
@@ -57,6 +60,12 @@ The app creates the configured `pauseFile` to request a pause, and removes it to
 Pausing also cancels the run that is already in progress, and a queue or release action cancels a batch that is no longer wanted. A cancelled step does not cancel the processes it started: on Windows an editor or commandlet outlives the run, keeps the workspace's output files open, and the next job on that runner fails to write them. Your backend has to end the job's process tree on cancellation, and check before starting that nothing else already has the workspace. [Cancelled builds and leftover processes](CANCELLATION.md) describes the requirement and ships a reference script.
 
 ## GitHub workflow and releases
+
+Release queue preparation is read-only until the user confirms. Before moving each selected PR the client
+rechecks that it is open, ready, not a draft, and still unassigned. A change stops remaining moves and queuing,
+while confirmed earlier moves remain visible. GitHub does not provide an atomic transaction across this read
+and milestone assignment: another client can still change a PR between GET and PATCH. Coordinate release
+ownership; these checks reduce stale writes but do not replace backend serialization.
 
 The configured workflow must accept `workflow_dispatch` with `inputs.task = lane` on the configured branch. It must implement the queue/release semantics expected by the app:
 

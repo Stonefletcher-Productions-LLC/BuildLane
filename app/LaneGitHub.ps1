@@ -43,6 +43,8 @@ try {
             if ($Batch.Count -lt 100) { break }
             if ($Page -eq 10) { throw 'Too many jobs to display safely.' }
         }
+        $After=Read-Json "/actions/runs/$RunId"
+        if ([string]$After.id -ne $RunId -or [int]$After.run_attempt -ne [int]$Run.run_attempt -or $After.head_sha -ne $Run.head_sha) { throw 'The run attempt changed while timings were loading. Refresh to load the new attempt.' }
         $First=@($Jobs | Where-Object started_at | Sort-Object started_at | Select-Object -First 1)
         $Last=@($Jobs | Where-Object completed_at | Sort-Object completed_at -Descending | Select-Object -First 1)
         $StoredJobs=@(); $StepCount=0

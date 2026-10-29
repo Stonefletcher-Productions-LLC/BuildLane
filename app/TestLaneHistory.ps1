@@ -3,11 +3,11 @@ $FixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('lane-history-'+[guid]::NewGu
 [void][IO.Directory]::CreateDirectory($FixtureRoot)
 function Assert($Ok,$Message) { if (-not $Ok) { throw $Message } }
 try {
-    $global:LaneHistoryWrongJob=$false; $global:LaneHistoryCalls=New-Object Collections.ArrayList
+    $global:LaneHistoryWrongJob=$false; $global:LaneHistoryCalls=New-Object Collections.ArrayList; $global:LaneHistoryRerun=$false
     function Invoke-WebRequest {
         param($Uri,$Headers,$TimeoutSec,[switch]$UseBasicParsing)
         [void]$global:LaneHistoryCalls.Add($Uri)
-        if ($Uri -match '/runs/42$') { $Data=@{id=42;run_attempt=2;head_sha=('a'*40);status='completed';conclusion='cancelled';created_at='2026-10-28T12:00:00Z';run_started_at='2026-10-29T12:00:10Z'} }
+        if ($Uri -match '/runs/42$') { $Data=@{id=42;run_attempt=$(if ($global:LaneHistoryRerun -and @($global:LaneHistoryCalls | Where-Object { $_ -match '/jobs\?' }).Count) { 3 } else { 2 });head_sha=('a'*40);status='completed';conclusion='cancelled';created_at='2026-10-28T12:00:00Z';run_started_at='2026-10-29T12:00:10Z'} }
         elseif ($Uri -match '/runs/42/attempts/2/jobs\?per_page=100&page=1$') {
             $Data=@{jobs=@(@{run_id=$(if ($global:LaneHistoryWrongJob) { 999 } else { 42 });name='Build';conclusion='cancelled';started_at='2026-10-29T12:00:30Z';completed_at='2026-10-29T12:02:00Z';steps=@(
                 @{name='Compile';conclusion='success';started_at='2026-10-29T12:00:30Z';completed_at='2026-10-29T12:01:00Z'},
@@ -31,6 +31,9 @@ try {
     $global:LaneHistoryWrongJob=$true
     $Bad=& "$PSScriptRoot/LaneGitHub.ps1" -Repository example/history -AccessToken fixture -Kind history -RunId 42
     Assert ($Bad.Error -and -not $Bad.History) 'Wrong-run job contaminated history.'
+    $global:LaneHistoryWrongJob=$false; $global:LaneHistoryCalls.Clear(); $global:LaneHistoryRerun=$true
+    $Bad=& "$PSScriptRoot/LaneGitHub.ps1" -Repository example/history -AccessToken fixture -Kind history -RunId 42
+    Assert ($Bad.Error -match 'attempt changed' -and -not $Bad.History) 'A rerun race was stored as the current attempt.'
     Remove-Item Function:\Invoke-WebRequest
     $FixtureProfile=Join-Path $FixtureRoot 'project.json'
     @{name='History fixture';repo='example/history';branch='main';workflow='lane.yml';statusFile="$FixtureRoot/status.json";pauseFile="$FixtureRoot/PAUSED";runnerPath=$FixtureRoot;drive='C';serviceFilter='*fixture*';cachePort=0;minimumFreeGB=1;cleanBelowGB=2} | ConvertTo-Json | Set-Content $FixtureProfile
@@ -71,6 +74,8 @@ try {
     Assert ((Get-LaneWaitingText @{phase=0} $false) -match 'has not reported a reason') 'Unknown waiting reason was invented.'
     Assert ((Get-LaneWaitingText @{phase=0;waitingReason='Waiting for packaging';blockingRunId=99;waitingSince='2026-10-29T12:00:00Z'} $false) -match 'blocking run #99') 'Explicit blocker identity was lost.'
     Assert ((Get-LaneWaitingText @{phase=2;step='Compile'} $false) -eq '') 'Active work was labeled waiting.'
+    Assert ((Get-LaneWaitingText @{phase=2;step='Compile';waitingReason='Stale package wait';waitingPhase=0;waiting=$true} $false) -eq '') 'Stale wait fields survived phase advancement.'
+    Assert ((Get-LaneWaitingText @{phase=4;waiting=$true;waitingPhase=4;waitingReason='Waiting for multiplayer clients'} $false) -match 'multiplayer clients') 'Explicit current wait inside a later phase was hidden.'
     Assert ((Get-LaneWaitingText $null $true) -match 'paused locally') 'Local pause reason missing.'
     Assert (-not $script:UiErrors.Count) 'A UI event threw.'
     'PASS: exact run/attempt reader, real step times, cancelled/skipped results, bounded persistent history, project isolation and truthful waiting reasons.'

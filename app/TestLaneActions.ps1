@@ -7,14 +7,21 @@ try {
     @{name='Action fixture';repo='example/actions';branch='develop';workflow='lane.yml';statusFile="$FixtureRoot/status.json";pauseFile="$FixtureRoot/PAUSED";runnerPath=$FixtureRoot;drive='C';serviceFilter='*fixture*';cachePort=0;minimumFreeGB=1;cleanBelowGB=2} | ConvertTo-Json | Set-Content $FixtureProfile
     . "$PSScriptRoot/LaneApp.ps1" -Profile $FixtureProfile -ProfileDirectory $FixtureRoot -SmokeTest -NoShow
     function Assert($Ok,$Message) { if (-not $Ok) { throw $Message } }
-    $script:Calls=New-Object Collections.ArrayList; $script:Failure=''; $script:Packaging=$false
+    $script:Calls=New-Object Collections.ArrayList; $script:Failure=''; $script:Packaging=$false; $script:ChangedPr=''
     function Invoke-RestMethod {
         param($Method,$Uri,$Headers,$TimeoutSec,$ContentType,$Body)
         $Data=if ($Body) { [Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json }
         [void]$script:Calls.Add(@{Method=$Method;Uri=$Uri;Data=$Data})
         if ($script:Failure -and $Uri -like $script:Failure -and $Method -ne 'GET') { throw 'Fixture uncertain response' }
         if ($Method -eq 'GET' -and $Uri -like '*/milestones/*') { return @{number=7;title='v1';state='open';description=$(if ($script:Packaging) { 'lane: packaging' } else { "lane: open`n`nlane-deadline: 2026-11-01T10:00:00Z`nKeep this note" })} }
-        if ($Uri -like '*/pulls?*') {
+        if ($Uri -match '/pulls/\d+$') {
+            $Pr=@{state='open';draft=$false;milestone=$null;labels=@(@{name='ready'})}
+            if ($Uri -match '/pulls/2$') {
+                switch ($script:ChangedPr) { 'assignment' { $Pr.milestone=@{number=99} }; 'draft' { $Pr.draft=$true }; 'ready' { $Pr.labels=@() }; 'closed' { $Pr.state='closed' } }
+            }
+            return $Pr
+        }
+        if ($Uri -match '/pulls\?') {
             if ($Uri -match 'page=1$') { return @(1..100 | ForEach-Object { @{number=$_;draft=$true} }) }
             return @(@{number=101;title='Ready';draft=$false;labels=@(@{name='ready'})})
         }
@@ -29,6 +36,14 @@ try {
     $R=& $script:ActionWorker $Request $Progress
     Assert ($R.Error -and ($R.Moved -join ',') -eq '1' -and -not $R.Saved) 'Partial moves were lost or release queued after failure.'
     Assert (-not @($script:Calls | Where-Object Method -eq POST).Count) 'Failed moves dispatched the lane.'
+    $script:Failure=''
+    foreach ($Changed in @('assignment','draft','ready','closed')) {
+        $script:ChangedPr=$Changed; $script:Calls.Clear()
+        $R=& $script:ActionWorker $Request $Progress
+        Assert ($R.Error -match 'changed after queue preparation' -and ($R.Moved -join ',') -eq '1') "Changed $Changed state did not stop after preserving the first move."
+        Assert (-not @($script:Calls | Where-Object { ($_.Method -eq 'PATCH' -and $_.Uri -match '/issues/2$') -or $_.Method -eq 'POST' }).Count) "Changed $Changed PR was moved or queued."
+    }
+    $script:ChangedPr=''
     $script:Calls.Clear(); $script:Failure='*/dispatches'; $Request.Numbers=@()
     $R=& $script:ActionWorker $Request $Progress
     Assert ($R.Error -and $R.Saved -and -not $R.Notified) 'Dispatch failure lost the confirmed milestone write.'

@@ -34,6 +34,11 @@ $script:ActionWorker={
         }
         foreach ($Number in $Request.Numbers) {
             $Progress.Message="Moving PR #$Number before queuing..."; $Result.Stage="move PR #$Number"
+            $Pr=Call GET "/pulls/$Number"
+            if ($Pr.state -ne 'open' -or $Pr.draft -or $Pr.milestone -or -not @($Pr.labels | Where-Object name -in @('ready','fix-main')).Count) {
+                $Result.Error="PR #$Number changed after queue preparation. Remaining moves and queuing were stopped. Refresh before retrying."
+                return $Result
+            }
             Call PATCH "/issues/$Number" @{milestone=$Request.Number} | Out-Null
             $Result.Moved+=@($Number)
         }

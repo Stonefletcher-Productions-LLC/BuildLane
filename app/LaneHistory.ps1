@@ -110,7 +110,9 @@ function Get-LaneWaitingText($S,[bool]$Paused) {
     if ($Paused) { return 'Waiting: builds are paused locally. Resume allows new work.' }
     if (-not $S) { return 'Waiting: no runner report has arrived. Check the configured status path.' }
     if ($S.done) { return '' }
-    if ($S.waitingReason) {
+    $MatchingPhase=[string]$S.waitingPhase -match '^\d+$' -and [string]$S.waitingPhase -eq [string]$S.phase
+    $CurrentWait=([int]$S.phase -eq 0 -and ($null -eq $S.waitingPhase -or $MatchingPhase)) -or ($S.waiting -eq $true -and $MatchingPhase)
+    if ($S.waitingReason -and $CurrentWait) {
         $Text="Waiting: $($S.waitingReason)"
         if ([string]$S.blockingRunId -match '^\d+$') { $Text+=" (blocking run #$($S.blockingRunId))" }
         $Since=[DateTimeOffset]::MinValue
