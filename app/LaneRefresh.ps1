@@ -20,10 +20,10 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
-    if ($script:MoveJob -or $script:CommandJob) { return }
+    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
-    if ($Kind -ne 'controller' -and [datetime]::UtcNow -lt $script:NextRefresh) {
+    if ($Kind -notin @('controller','history') -and [datetime]::UtcNow -lt $script:NextRefresh) {
         $RelMsg.Text = "Retry available at $($script:NextRefresh.ToLocalTime().ToString('HH:mm:ss')). Showing previous results."
         return
     }
@@ -31,9 +31,9 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
     if ($Worker) { [void]$Shell.AddScript($Worker.ToString()) }
     else {
         [void]$Shell.AddScript([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LaneGitHub.ps1')))
-        [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue }))
+        [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue })).AddArgument([string]$script:State.runId)
     }
-    $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision; Command=$script:CommandState }
+    $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision; Command=$script:CommandState; RunId=$script:State.runId; What=$script:State.what; Report="$($script:State.runId)|$($script:State.started)|$($script:State.done)" }
     if ($Kind -eq 'releases') {
         $RelMsg.Text = 'Refreshing GitHub...'; $RelMsg.ForeColor = $Grey
         $RelButtons.Enabled = $false; $MoveBar.Enabled = $false
@@ -54,6 +54,7 @@ function Complete-LaneRefresh {
     } catch { $Result = @{ Error=$_.Exception.Message; RetrySeconds=60 } }
     finally { $Job.Shell.Dispose() }
     if ($Job.Generation -ne $script:ProjectGeneration) { return }
+    if ($Job.Kind -eq 'history') { Set-LaneHistoryResult $Job $Result; return }
     if ($Job.Kind -eq 'controller') {
         if (-not [object]::ReferenceEquals($Job.Command,$script:CommandState)) { return }
         if ($script:CommandState) {

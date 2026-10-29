@@ -89,6 +89,7 @@ reported yet* — that is a path problem, not a crash.
 |---|---|
 | **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
 | **Releases** | Milestones become releases. Queue a release build, unqueue or close it, and see which pull requests are in it. Tick pull requests and move them to another release in one go. |
+| **Timing history** | Job and step times for reported runs, with source commit, attempt and result. Failed and cancelled attempts stay visible. |
 | **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
 | **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |
 
@@ -112,8 +113,19 @@ automatically resent. Project switching and overlapping writes are blocked while
 
 Local reports refresh every second, releases every 15 seconds while their tab is open, and machine health is checked
 in the background every 30 seconds. GitHub reads are coalesced and respect retry delays. The app cannot show a phase
-before the runner writes it; the report timestamp and run identity remain visible. Release creation and milestone
-changes still wait for their GitHub response; this change covers lane dispatch/stop and recurring status rendering.
+before the runner writes it; the report timestamp and run identity remain visible. Release creation, queue preparation, milestone changes, and connection verification also run in the background.
+Confirmed partial writes remain visible after a failure; uncertain writes are never automatically retried.
+
+The Overview shows the runner's waiting reason, detail, and blocking run when reported. If the backend has not
+provided a reason, the app says so. It does not infer that a package or another PR is blocking the current run.
+
+**Timing history** loads GitHub jobs and step durations for run IDs reported by this project. It retains the last
+20 completed attempts locally, including failures and cancellations, with source commit and attempt identity.
+Select a run to inspect individual steps; skipped steps have no execution duration. Parallel job durations are not
+summed into wall time. History is collected as runs are encountered, rather than backfilling the repository; a
+successful entry does not certify another build or release. A rerun's waiting time excludes the gap since the
+original run was created. Reads share one background worker and respect retry delays; timings refresh no more than
+once every 30 seconds. No build is launched by viewing history.
 
 ## Where your settings live
 
@@ -121,6 +133,7 @@ changes still wait for their GitHub response; this change covers lane dispatch/s
 |---|---|
 | The app | `%LOCALAPPDATA%\Programs\Buildlane` |
 | Projects and window layout | `%APPDATA%\Buildlane\Projects` (`default.json`, `current.txt`, `layout.txt`) |
+| Timing history | `%APPDATA%\Buildlane\Projects\timings-<project-key>.json` (20 completed attempts per profile) |
 | GitHub token (DPAPI-encrypted) | `%APPDATA%\Buildlane\<owner_repo>\github.token` |
 | Runner helpers | `%LOCALAPPDATA%\Buildlane\Runner` |
 
@@ -149,6 +162,9 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneApp.p
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHub.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneFeedback.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActions.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneHistory.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneResources.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneProcesses.ps1
 ```
@@ -175,8 +191,8 @@ installation command above is the supported route. See [packaging](docs/PACKAGIN
 - **Not a CI system.** It reads and drives a lane you already run. The local status and pause controls need the
   [backend contract](docs/INTEGRATION.md); a GitHub connection alone does not make an arbitrary workflow compatible.
 - **Not a universal adapter.** Each build system needs a small adapter.
-- **Not finished.** GitHub Enterprise Server endpoints are not configurable yet, and a few GitHub writes (such as
-  queuing a release) can briefly block the window.
+- **Not finished.** GitHub Enterprise Server endpoints are not configurable yet. Waiting detail depends on the
+  backend, and timing history requires GitHub access to the reported run.
 
 Related reading: [shared build resources and reservations](docs/RESERVATIONS.md),
 [cancelled builds and leftover processes](docs/CANCELLATION.md).
