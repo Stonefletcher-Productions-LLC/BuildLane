@@ -307,7 +307,7 @@ function Set-Bar($Bar, [double]$Fraction) {
 $script:State = $null
 function Update-View {
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob)
+    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob -and -not $script:PlanJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob -and -not $script:PlanJob)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
@@ -323,6 +323,7 @@ function Update-View {
     else { $script:State = $null }
     $S = $script:State
     Initialize-LaneHistory
+    Initialize-LanePlanning
     $Waiting.Text=Get-LaneWaitingText $S (Test-Path $PauseFile)
     $Notes.Text = ''; $Sub.ForeColor = $Grey
     $Paused = Test-Path $PauseFile
@@ -636,13 +637,14 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneFeedback.ps1')
 . (Join-Path $PSScriptRoot 'LaneActions.ps1')
 . (Join-Path $PSScriptRoot 'LaneHistory.ps1')
+. (Join-Path $PSScriptRoot 'LanePlanning.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
-$Form.Add_FormClosing({ if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
+$Form.Add_FormClosing({ if ($script:PlanJob -and $script:PlanJob.Kind -eq "dispatch") { $_.Cancel=$true; $PlanStatus.Text="Wait for the preview request response before closing." }; if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })
 $RefreshTimer=New-Object Windows.Forms.Timer
 $RefreshTimer.Interval=150
-$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth; Complete-LaneAction })
+$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth; Complete-LaneAction; Complete-LanePlan })
 
 $script:Ticks = 0
 $Timer = New-Object Windows.Forms.Timer
@@ -651,6 +653,7 @@ $Timer.Add_Tick({
     Update-View
     Start-LaneControllerRead
     Start-LaneHistory
+    Start-LanePlanRead
     $script:Ticks++
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 15 -eq 0) { Update-Releases }
 })
@@ -755,7 +758,7 @@ $Form.Add_Shown({
     } catch { Write-Warning "Could not size the window: $($_.Exception.Message) [$($_.InvocationInfo.PositionMessage -replace "`r?`n", ' ')]" }
 })
 $Form.Add_Shown({ try { Resize-Content; Set-PaneHeights } catch { Write-Warning "Could not lay out the window: $($_.Exception.Message)" } })
-$Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
+$Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LanePlanning; Stop-LaneRefresh })
 . (Join-Path $PSScriptRoot 'LaneTheme.ps1')
 if ($NoShow) { return }
 if ($SmokeTest) {

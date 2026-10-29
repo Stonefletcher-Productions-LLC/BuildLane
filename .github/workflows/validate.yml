@@ -28,6 +28,9 @@ jobs:
       - name: Waiting reasons and timing history checks
         timeout-minutes: 4
         run: ./app/TestLaneHistory.ps1
+      - name: Advisory build choices and request correlation
+        timeout-minutes: 4
+        run: ./app/TestLanePlanning.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1

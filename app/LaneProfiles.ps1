@@ -3,6 +3,7 @@ function Test-LaneProfile($Value) {
     foreach ($Key in @('name','repo','branch','workflow','statusFile','pauseFile','runnerPath','drive','serviceFilter')) {
         if ([string]::IsNullOrWhiteSpace([string]$Value.$Key)) { throw "Enter a value for $Key." }
     }
+    if ($Value.planWorkflow -and [string]$Value.planWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Planning workflow must be a YAML filename, for example build-plan-shadow.yml.' }
     if ($Value.repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Repository must be owner/repository.' }
     if ($Value.drive -notmatch '^[A-Za-z]$') { throw 'Drive must be one letter, for example E.' }
     foreach ($Key in @('statusFile','pauseFile','runnerPath')) {
@@ -32,7 +33,7 @@ function Save-LaneProfile([string]$Path, $Value, [string]$ExpectedHash) {
     $Temporary = Join-Path $Folder ([guid]::NewGuid().ToString() + '.tmp')
     try {
         [IO.File]::WriteAllText($Temporary, ($Value | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, $null) }
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, [NullString]::Value) }
         else { [IO.File]::Move($Temporary, $Path) }
     } finally { if (Test-Path -LiteralPath $Temporary) { Remove-Item -LiteralPath $Temporary -Force } }
 }
@@ -47,5 +48,5 @@ function ConvertTo-LaneRepository([string]$Text) {
 }
 function New-LaneProjectDefaults {
     $Folder=Join-Path $env:LOCALAPPDATA 'Buildlane\Runner'
-    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
+    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';planWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
 }

@@ -3,6 +3,7 @@
   "repo": "Stonefletcher-Productions-LLC/LifeShare",
   "branch": "main",
   "workflow": "lane.yml",
+  "planWorkflow": "build-plan-shadow.yml",
   "statusFile": "E:\\GitHubRunner\\status.json",
   "pauseFile": "E:\\GitHubRunner\\PAUSED",
   "runnerPath": "E:\\GitHubRunner\\LifeShare",

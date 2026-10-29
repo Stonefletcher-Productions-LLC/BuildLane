@@ -59,7 +59,7 @@ $script:ActionWorker={
     $Result
 }
 function Start-LaneAction([ValidateSet('create','prepareQueue','queue','unqueue','close','connect')][string]$Operation,$Milestone,[Alias('Title')][string]$ReleaseTitle,[int[]]$Numbers=@(),[string]$Token,[scriptblock]$Worker,$Context) {
-    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob) { return }
+    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob -or $script:PlanJob) { return }
     if ($Config.setupRequired) { throw 'Save your project first.' }
     if (-not $Token) { $Token=$script:Token }
     if (-not $Worker -and ($SmokeTest -or -not $Token)) { throw 'Connect GitHub before changing releases.' }
