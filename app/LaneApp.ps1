@@ -435,6 +435,28 @@ $RelMsg = Add-Row (New-Label "" $FontSmall $Grey) 8 $RelRoot
 
 $script:Milestones = @()
 function Get-RelState($M) { if ("$($M.description)" -match '(?m)^lane:\s*(\w+)') { $Matches[1].ToLower() } else { "open" } }
+# A queued release is a cut with an end: the lane writes "lane-deadline: <ISO 8601>" into the milestone description and
+# packages whatever landed by then. Read it so the only visible symptom is not a release that never finishes.
+function Get-CutDeadline($M) {
+    if ("$($M.description)" -match '(?im)^lane-deadline:\s*(\S+)\s*$') {
+        $Parsed = [datetimeoffset]::MinValue
+        if ([datetimeoffset]::TryParse($Matches[1], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$Parsed)) {
+            return $Parsed.LocalDateTime
+        }
+    }
+    return $null
+}
+function Format-RelState($M, [string]$St) {
+    if ($St -eq "closed") { return "✓ closed" }
+    if ($St -eq "queued") {
+        $Cut = Get-CutDeadline $M
+        if ($Cut) {
+            return $(if ($Cut -le (Get-Date)) { "▶ queued: cut reached, packaging next" } else { "▶ queued: ships by $($Cut.ToString('HH:mm'))" })
+        }
+    }
+    if ($StateWords[$St]) { return $StateWords[$St] }
+    return $St
+}
 function Get-VerKey($M) { $N = @([regex]::Matches("$($M.title)", '\d+') | ForEach-Object { [int]$_.Value }) + @(0, 0, 0); ($N[0] * 1000000) + ($N[1] * 1000) + $N[2] }
 function Set-RelState($M, [string]$St) {
     $Rest = ("$($M.description)" -replace '(?m)^lane:.*$', '').Trim()
@@ -461,7 +483,7 @@ function Set-ReleaseView($Snapshot) {
         $Mine = @($Prs | Where-Object { $_.milestone -and $_.milestone.number -eq $M.number })
         $Ready = @($Mine | Where-Object { -not $_.draft -and @($_.labels | Where-Object { $_.name -in @("ready", "fix-main") }).Count })
         $It = New-Object Windows.Forms.ListViewItem([string]$M.title)
-        [void]$It.SubItems.Add($(if ($StateWords[$St]) { $StateWords[$St] } elseif ($St -eq "closed") { "✓ closed" } else { $St }))
+        [void]$It.SubItems.Add((Format-RelState $M $St))
         [void]$It.SubItems.Add($(if ($M.state -eq "closed") { "" } else { "$($Ready.Count) ready of $($Mine.Count)" }))
         [void]$It.SubItems.Add($(if ($M.due_on) { "due $(([datetime]$M.due_on).ToString('yyyy-MM-dd'))" } elseif ($M.state -eq "closed") { "closed $(([datetime]$M.closed_at).ToString('yyyy-MM-dd'))" } else { "" }))
         $It.Tag = $M.number

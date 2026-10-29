@@ -17,6 +17,7 @@ Built by Stonefletcher Productions LLC. Choose a project, see what is building, 
 - **Know which build passed:** the overview names the latest reported build and run ID. A successful test run does not turn an unreported Package phase green or certify another release.
 - **Understand waits:** release-priority waits use neutral gray and “Waiting for … to finish”; real blockers stay highlighted.
 - **Manage releases:** view milestones and pull requests, move PRs, and queue a compatible release workflow.
+- **Know when a queued release ships:** the release row shows the cut time the backend set, so a release cannot look busy forever without saying when it ends.
 - **Switch projects:** create, import, edit, and export profiles in the app.
 - **Stay responsive:** GitHub reads and bulk PR moves happen in the background. Moves show progress, keep unconfirmed items selected, and notify the lane once.
 - **Start simply:** first-run setup, repository URL pasting, path pickers, and expandable advanced settings.
