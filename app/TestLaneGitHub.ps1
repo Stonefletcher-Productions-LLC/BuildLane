@@ -37,3 +37,19 @@ foreach ($Milestone in $Result.Open) { [void][datetime]::Parse($Milestone.due_on
 foreach ($Milestone in $Result.Closed) { [void][datetime]::Parse($Milestone.closed_at) }
 if ($global:LaneGitHubTestPages.Count -ne 4) { throw 'Pagination did not request exactly the required pages.' }
 'PASS: paginated GitHub arrays contain individual milestones and PRs with scalar dates.'
+
+# Workflow dispatch returns no run ID. Observe only recent controllers in this workflow/branch;
+# never treat an older successful controller as evidence for the new request.
+function Invoke-WebRequest {
+    param($Uri,$Headers,$TimeoutSec,[switch]$UseBasicParsing)
+    if ($Uri -notmatch '/workflows/lane.yml/runs\?event=workflow_dispatch&branch=develop&per_page=30$') { throw 'Controller query lost workflow/branch filtering.' }
+    @{Content=(@{workflow_runs=@(
+        @{id=1;created_at='2026-10-29T12:00:00Z';status='completed';conclusion='success'},
+        @{id=2;created_at='2026-10-29T12:01:02Z';status='queued'}
+    )} | ConvertTo-Json -Depth 5)}
+}
+$Result=& "$PSScriptRoot\LaneGitHub.ps1" -Repository 'example/test' -BaseBranch 'develop' -AccessToken 'test-only' -Kind controller -Workflow lane.yml -RequestedAfterUtc ([datetime]'2026-10-29T12:01:00Z')
+if ($Result.Error -or $Result.Controller.id -ne 2) { throw 'Controller observation selected an old run.' }
+$Result=& "$PSScriptRoot\LaneGitHub.ps1" -Repository 'example/test' -BaseBranch 'develop' -AccessToken 'test-only' -Kind controller -Workflow lane.yml -RequestedAfterUtc ([datetime]'2026-10-29T12:02:00Z')
+if ($Result.Error -or $Result.Controller) { throw 'Missing recent controller was replaced by old success.' }
+'PASS: controller observation filters workflow, branch and request time without claiming build completion.'

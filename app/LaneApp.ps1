@@ -96,7 +96,7 @@ function Invoke-Gh([string]$Method, [string]$Path, $Body = $null) {
 }
 # Windows PowerShell hands a JSON array back as one object; this lists its items.
 function Get-GhList([string]$Path) { $R = Invoke-Gh GET $Path; @($R | ForEach-Object { $_ }) }
-function Start-Lane { try { Invoke-Gh POST "/actions/workflows/$Workflow/dispatches" @{ ref = $Config.branch; inputs = @{ task = "lane" } } | Out-Null } catch { Show-Error "The lane could not be started. The local pause state is shown above." $_ } }
+function Start-Lane([string]$Kind="lane") { try { Start-LaneCommand -Kind $Kind -Path "/actions/workflows/$Workflow/dispatches" -Body @{ ref = $Config.branch; inputs = @{ task = "lane" } } } catch { Show-Error "The lane could not be started. The local pause state is shown above." $_ } }
 function Show-Error([string]$What, $Err) { [void][Windows.Forms.MessageBox]::Show("$What`n`n$($Err.Exception.Message)", "Buildlane", "OK", "Warning") }
 
 # Top bar (every tab): pause everything, and the GitHub connection.
@@ -233,17 +233,21 @@ $Brand.Margin = New-Object Windows.Forms.Padding(0, 10, 24, 0)
 $PauseButton = New-Button "Pause builds" {
     if ($Config.setupRequired) { return }
     if (Test-Path $PauseFile) {
-        Remove-Item $PauseFile -ErrorAction SilentlyContinue
-        Start-Lane
+        try { Remove-Item $PauseFile -ErrorAction Stop }
+        catch { Show-Error "Could not resume (removing $PauseFile)." $_; return }
+        Update-View
+        Start-Lane -Kind resume
     }
     else {
         try { Set-Content $PauseFile "Paused $(Get-Date -Format s) by $env:USERNAME from the Build Lane app" -ErrorAction Stop }
         catch { Show-Error "Could not pause (writing $PauseFile)." $_; return }
+        $script:CommandState=$null
+        Update-View
         $S = $script:State
         if ($S -and -not $S.done -and $S.runId) {
             $A = [Windows.Forms.MessageBox]::Show("Paused: nothing new will start.`n`nA build is running now ($($S.what)). Stop it too?`n`nYes stops it now. No lets it finish.", "Pause everything", "YesNo", "Question")
             if ($A -eq "Yes") {
-                try { Invoke-Gh POST "/actions/runs/$($S.runId)/cancel" | Out-Null } catch { Show-Error "Paused, but the running build could not be stopped." $_ }
+                try { Start-LaneCommand -Kind cancel -Path "/actions/runs/$($S.runId)/cancel" } catch { Show-Error "Paused, but the running build could not be stopped." $_ }
             }
         }
     }
@@ -318,7 +322,7 @@ function Set-Bar($Bar, [double]$Fraction) {
 $script:State = $null
 function Update-View {
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=$Ready; $GhButton.Enabled=($Ready -and -not $script:MoveJob)
+    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
@@ -336,8 +340,9 @@ function Update-View {
     $Notes.Text = ''; $Sub.ForeColor = $Grey
     $Paused = Test-Path $PauseFile
     $PauseButton.Text = if ($Paused) { "Resume builds" } else { "Pause builds" }
-    $PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Running normally" }
+    $PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Builds allowed" }
     $PauseState.ForeColor = if ($Paused) { $Orange } else { $Grey }
+    Update-LaneCommandFeedback
     $GhButton.Text = if (Get-Token) { "✓ GitHub connected" } else { "Connect GitHub" }
     # A status written by something other than the lane (a PR's quick checks share the same runner and file) can carry a
     # one-entry phase list. That is not a job shape: showing "Step 1 of 1" for a running batch is worse than falling
@@ -363,7 +368,7 @@ function Update-View {
             $Time.Text = ""
         }
         else {
-            $Title.Text = "▶ Building $($S.what -replace '^batch ', 'batch ')"; $Title.ForeColor = $Blue
+            $Title.Text = if ($Phase -eq 0) { "Waiting to build $($S.what)" } else { "▶ Building $($S.what -replace '^batch ', 'batch ')" }; $Title.ForeColor = $Blue
             $Quiet = (Get-Date) - $Updated
             $Sub.Text = if ($Quiet.TotalMinutes -ge 10) { "⚠ No update from the build for $(Format-Span $Quiet). Check the live log for activity." } else { "Updated $($Updated.ToString('HH:mm:ss'))" }
             $Sub.ForeColor = if ($Quiet.TotalMinutes -ge 10) { $Orange } else { $Grey }
@@ -441,27 +446,19 @@ function Update-View {
     }
     $QueueHead.Text = "Queue ($(@(if ($S) { $S.queue }).Count))"
 
-    # This PC.
-    try {
-        $D = Get-PSDrive $Drive -ErrorAction Stop
-        $FreeGB = [math]::Round($D.Free / 1GB, 1); $TotalGB = [math]::Round(($D.Free + $D.Used) / 1GB)
-        Set-Bar $DiskBar (1 - $D.Free / ($D.Free + $D.Used))
-        $DiskLabel.Text = if ($FreeGB -lt $Config.minimumFreeGB) { "⚠ Drive ${Drive}: $FreeGB GB free of $TotalGB GB. Below the configured $($Config.minimumFreeGB) GB minimum." }
-                          elseif ($FreeGB -lt $Config.cleanBelowGB) { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB (below the configured cleanup threshold)" }
-                          else { "Drive ${Drive}: $FreeGB GB free of $TotalGB GB" }
-        $DiskLabel.ForeColor = if ($FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
-    } catch { $DiskLabel.Text = "Drive ${Drive}: not found" }
-    if (-not $script:HealthChecked -or $script:HealthProfile -ne $Profile -or ((Get-Date) - $script:HealthChecked).TotalSeconds -ge 30) {
-    $Svc = @(Get-Service "actions.runner.*" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $Config.serviceFilter } |
-        ForEach-Object { "$(if ($_.Status -eq 'Running') { '✓' } else { '✗' }) $($_.DisplayName) runner $($_.Status.ToString().ToLower())" })
-    if (-not $Svc.Count) { $Svc = @("✗ No matching runner services found for $ProductName") }
-    $Zen = if (-not $Config.cachePort) { "" } elseif (Get-NetTCPConnection -LocalPort $Config.cachePort -State Listen -ErrorAction SilentlyContinue) { "✓ Cache endpoint listening" } else { "○ Cache endpoint not listening" }
-    $script:CachedHealth=@($Svc)+@($Zen)
-    $script:HealthChecked=Get-Date; $script:HealthProfile=$Profile
-    }
-    $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Not paused" }
-    $Health.Text = (@($script:CachedHealth) + @($P)) -join "`n"
-    $Health.ForeColor = if ($Paused) { $Orange } else { $Ink }
+    # Render the last machine snapshot; system queries run outside the Forms thread.
+    Start-LaneHealth
+    $Machine=$script:CachedMachine
+    if ($Machine -and -not $Machine.DiskError) {
+        Set-Bar $DiskBar $Machine.UsedFraction
+        $DiskLabel.Text="Drive ${Drive}: $($Machine.FreeGB) GB free of $($Machine.TotalGB) GB"
+        if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $DiskLabel.Text+=". Below the configured $($Config.minimumFreeGB) GB minimum." }
+        elseif ($Machine.FreeGB -lt $Config.cleanBelowGB) { $DiskLabel.Text+=' (below the configured cleanup threshold)' }
+        $DiskLabel.ForeColor=if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
+    } else { $DiskLabel.Text=if ($Machine) { $Machine.DiskError } else { 'Checking machine health...' } }
+    $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Builds allowed" }
+    $Health.Text=(@(if ($Machine) { $Machine.Health } else { 'Checking machine health...' })+@($P)) -join "`n"
+    $Health.ForeColor=if ($Paused) { $Orange } else { $Ink }
 
     # The running step's log, from the runner's live page.
     if (-not $LogSplit.Panel2Collapsed) {
@@ -667,21 +664,23 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 } $MoveBar)
 . (Join-Path $PSScriptRoot 'LaneRefresh.ps1')
 . (Join-Path $PSScriptRoot 'LaneMoves.ps1')
+. (Join-Path $PSScriptRoot 'LaneFeedback.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
-$Form.Add_FormClosing({ if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
+$Form.Add_FormClosing({ if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases } })
 $RefreshTimer=New-Object Windows.Forms.Timer
 $RefreshTimer.Interval=150
-$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh })
+$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth })
 
 $script:Ticks = 0
 $Timer = New-Object Windows.Forms.Timer
-$Timer.Interval = 3000
+$Timer.Interval = 1000
 $Timer.Add_Tick({
     Update-View
+    Start-LaneControllerRead
     $script:Ticks++
-    if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 20 -eq 0) { Update-Releases }
+    if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 15 -eq 0) { Update-Releases }
 })
 $Form.Add_Shown({ Update-View; Start-LaneRefresh "auth"; $Timer.Start(); $RefreshTimer.Start() })
 # Draw a visible grip in each divider; WinForms supplies mouse and keyboard resizing.

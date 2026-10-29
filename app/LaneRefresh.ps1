@@ -1,4 +1,4 @@
-﻿# One background read at a time; results are applied only on the UI thread.
+# One background read at a time; results are applied only on the UI thread.
 $script:RefreshJob = $null
 $script:RetiredJobs = New-Object Collections.ArrayList
 $script:ProjectGeneration = 0
@@ -6,6 +6,13 @@ $script:DataRevision = 0
 $script:NextRefresh = [datetime]::MinValue
 function Stop-LaneRefresh {
     $script:ProjectGeneration++
+    $script:CommandState=$null
+    $script:CachedMachine=$null; $script:HealthChecked=$null
+    if ($script:HealthJob) {
+        [void]$script:HealthJob.Shell.BeginStop($null,$null)
+        [void]$script:RetiredJobs.Add($script:HealthJob)
+        $script:HealthJob=$null
+    }
     if ($script:RefreshJob) {
         [void]$script:RefreshJob.Shell.BeginStop($null, $null)
         [void]$script:RetiredJobs.Add($script:RefreshJob)
@@ -13,10 +20,10 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
-    if ($script:MoveJob) { return }
+    if ($script:MoveJob -or $script:CommandJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
-    if ([datetime]::UtcNow -lt $script:NextRefresh) {
+    if ($Kind -ne 'controller' -and [datetime]::UtcNow -lt $script:NextRefresh) {
         $RelMsg.Text = "Retry available at $($script:NextRefresh.ToLocalTime().ToString('HH:mm:ss')). Showing previous results."
         return
     }
@@ -24,7 +31,7 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
     if ($Worker) { [void]$Shell.AddScript($Worker.ToString()) }
     else {
         [void]$Shell.AddScript([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LaneGitHub.ps1')))
-        [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind)
+        [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue }))
     }
     $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision }
     if ($Kind -eq 'releases') {
@@ -47,7 +54,16 @@ function Complete-LaneRefresh {
     } catch { $Result = @{ Error=$_.Exception.Message; RetrySeconds=60 } }
     finally { $Job.Shell.Dispose() }
     if ($Job.Generation -ne $script:ProjectGeneration) { return }
-    $RelButtons.Enabled = $true; $MoveBar.Enabled = $true
+    if ($Job.Kind -eq 'controller') {
+        if ($script:CommandState) {
+            $script:CommandState.ObservationError=$Result.Error
+            if ($Result.Error) { $script:NextControllerPoll=[datetime]::UtcNow.AddSeconds([math]::Max(5,[int]$Result.RetrySeconds)) }
+            elseif ($Result.Controller) { $script:CommandState.Controller=$Result.Controller; $script:CommandState.Phase='controller' }
+            Update-View
+        }
+        return
+    }
+    $RelButtons.Enabled = -not $script:CommandJob; $MoveBar.Enabled = -not $script:CommandJob
     if ($Job.Revision -ne $script:DataRevision) { Start-LaneRefresh; return }
     if ($Result.Error) {
         $script:NextRefresh = [datetime]::UtcNow.AddSeconds([math]::Max(1, [int]$Result.RetrySeconds))

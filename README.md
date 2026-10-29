@@ -105,6 +105,16 @@ reported yet* — that is a path problem, not a crash.
 | Switch project | Projects → **Use selected**. |
 | Change the look | **Use dark mode** / **Use light mode** in the top bar. |
 
+Resume and stop requests show pending feedback immediately while GitHub responds in the background. A request
+accepted by GitHub does not mean a build has started: the app shows the latest observed lane controller separately
+from the runner's status report. An uncertain response asks you to check GitHub before retrying; commands are never
+automatically resent. Project switching and overlapping writes are blocked while a lane request is in flight.
+
+Local reports refresh every second, releases every 15 seconds while their tab is open, and machine health is checked
+in the background every 30 seconds. GitHub reads are coalesced and respect retry delays. The app cannot show a phase
+before the runner writes it; the report timestamp and run identity remain visible. Release creation and milestone
+changes still wait for their GitHub response; this change covers lane dispatch/stop and recurring status rendering.
+
 ## Where your settings live
 
 | What | Where |

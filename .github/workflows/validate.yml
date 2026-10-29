@@ -19,6 +19,9 @@ jobs:
       - name: Dashboard and profile regression checks
         timeout-minutes: 4
         run: ./app/TestLaneApp.ps1
+      - name: Responsive command and machine-health checks
+        timeout-minutes: 4
+        run: ./app/TestLaneFeedback.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1
