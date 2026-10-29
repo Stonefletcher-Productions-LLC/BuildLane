@@ -5,6 +5,7 @@ $script:ProjectGeneration = 0
 $script:DataRevision = 0
 $script:NextRefresh = [datetime]::MinValue
 function Stop-LaneRefresh {
+    Stop-LaneActivity
     $script:ProjectGeneration++
     $script:CommandState=$null
     $script:CachedMachine=$null; $script:HealthChecked=$null
@@ -20,7 +21,7 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
-    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob) { return }
+    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:ActivityJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
     if ($Kind -notin @('controller','history') -and [datetime]::UtcNow -lt $script:NextRefresh) {

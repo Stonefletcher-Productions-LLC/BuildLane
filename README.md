@@ -127,6 +127,14 @@ successful entry does not certify another build or release. A rerun's waiting ti
 original run was created. Reads share one background worker and respect retry delays; timings refresh no more than
 once every 30 seconds. No build is launched by viewing history.
 
+Projects can configure **Active build jobs** as exact workflow/job pairs, for example
+`ci.yml|Build and test;compile-preview.yml|Compile only (not release validation)`. The app then observes those GitHub
+jobs automatically, independently of local button clicks, every 15 seconds. It shows queued/preparing work before
+the next runner report arrives and keeps the prior local result separately. Quick-check-only workflows are excluded.
+Queue length stays unknown until the current run reports it; a previous run's zero is not reused. Live-log links
+follow the displayed run and attempt. API errors or old observations are labeled unconfirmed, and newer runner
+reports take precedence over older GitHub evidence. Old profiles without the optional setting retain local reporting.
+
 ## Where your settings live
 
 | What | Where |
@@ -165,6 +173,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneFeedback.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActions.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneHistory.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActivity.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneResources.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneProcesses.ps1
 ```
