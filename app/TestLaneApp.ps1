@@ -186,6 +186,18 @@ try {
     Save-PaneHeights
     Assert ((Get-Content $LayoutFile -Raw) -match 'queue=17[4-8]') 'Queue pane height was not remembered.'
 
+    Assert ($LogBox.Dock -eq 'Fill' -and $LogBox.Parent -eq $LogSplit.Panel2 -and $LogSplit.Panel2Collapsed) 'Step log is not in its own hidden pane.'
+    $LogButton.PerformClick()
+    Assert (-not $LogSplit.Panel2Collapsed -and -not $LogSplit.IsSplitterFixed) 'Step log divider is unavailable.'
+    $script:LaneLayout['log'] = 100
+    Set-PaneHeights 'log'
+    Assert ([math]::Abs(($LogSplit.Height - $LogSplit.SplitterWidth - $LogSplit.SplitterDistance) - 100) -le 2) 'Step log pane height was not applied.'
+    $LogButton.PerformClick()
+    Save-PaneHeights
+    Assert ((Get-Content $LayoutFile -Raw) -match 'log=9[8-9]|log=10[0-2]') 'Hidden step log height was not remembered.'
+    $LogButton.PerformClick()
+    Assert ([math]::Abs(($LogSplit.Height - $LogSplit.SplitterWidth - $LogSplit.SplitterDistance) - 100) -le 2) 'Step log height was not restored.'
+
     # Nothing changed, nothing rebuilt: the 3-second refresh must not recreate the same labels.
     $script:StepsKey = $null
     Update-View
