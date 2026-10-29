@@ -62,6 +62,16 @@ $RelaunchCommand = if (Test-Path -LiteralPath $Launcher) { '"' + $Launcher + '"'
     '"' + (Join-Path $PSHOME 'powershell.exe') + '" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
 }
 $Form.Add_HandleCreated({ [LaneTaskbar]::ConfigureWindow($Form.Handle, $RelaunchCommand, $IcoFile) })
+# Without a handler, an exception raised inside a WinForms event (a timer tick, a paint, a watcher) puts up the .NET
+# unhandled-error dialog and waits for a click. In the app nobody sees which handler failed; in a test or on a headless
+# CI runner that dialog is a hang with no output. Record it instead, so the screen checks can assert there were none.
+$script:UiErrors = New-Object System.Collections.ArrayList
+[Windows.Forms.Application]::add_ThreadException({
+    param($Sender, $EventArgs)
+    [void]$script:UiErrors.Add($EventArgs.Exception)
+    if ($SmokeTest) { Write-Warning "UI error: $($EventArgs.Exception.Message)" }
+    else { [void][Windows.Forms.MessageBox]::Show("The window hit a problem and kept going:`n`n$($EventArgs.Exception.Message)", "Buildlane", "OK", "Warning") }
+})
 
 # GitHub, for the buttons that change things: a token kept for this Windows user (DPAPI), or the gh CLI's.
 function Reset-LaneCredential {
@@ -666,12 +676,16 @@ $script:Panes = @(
 function Set-PaneHeights {
     foreach ($Pane in $script:Panes) {
         $Split = $Pane.Split
-        $Room = $Split.Height - $Split.SplitterWidth
-        if ($Room -lt ($Split.Panel1MinSize + $Split.Panel2MinSize)) { continue }
-        $Fallback = [int]($Room * [double]$Pane.Share)
-        $Lower = if ($script:LaneLayout.ContainsKey($Pane.Key)) { [int]$script:LaneLayout[$Pane.Key] } else { $Fallback }
-        $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
-        $Split.SplitterDistance = $Room - $Lower
+        # Pane sizes are cosmetic: a splitter that refuses a distance on a small screen (or before it is laid out) must
+        # not throw inside the Shown handler, where a throw means an error dialog or, in a test, a hang.
+        try {
+            $Room = $Split.Height - $Split.SplitterWidth
+            if ($Room -lt ($Split.Panel1MinSize + $Split.Panel2MinSize)) { continue }
+            $Fallback = [int]($Room * [double]$Pane.Share)
+            $Lower = if ($script:LaneLayout.ContainsKey($Pane.Key)) { [int]$script:LaneLayout[$Pane.Key] } else { $Fallback }
+            $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
+            if ($Lower -gt 0) { $Split.SplitterDistance = $Room - $Lower }
+        } catch { Write-Warning "Could not size the $($Pane.Key) pane: $($_.Exception.Message)" }
     }
 }
 function Save-PaneHeights {
@@ -702,16 +716,26 @@ $Form.Add_Resize({ Resize-Content })
 # The tab content now nests two splitters, which can talk the form into opening at its minimum width. Give it a
 # deliberate starting size (and keep it inside the monitor's working area) before the panes are measured.
 $Form.Add_Shown({
-    $Work = [Windows.Forms.Screen]::FromControl($Form).WorkingArea
-    $WantedW = [math]::Min(1040, $Work.Width - 40)
-    $WantedH = [math]::Min(840, $Work.Height - 40)
-    if ($Form.Width -lt 940) { $Form.Width = [math]::Max($WantedW, $Form.MinimumSize.Width) }
-    if ($Form.Height -lt 700 -or $Form.Height -gt $Work.Height - 20) { $Form.Height = [math]::Max($WantedH, $Form.MinimumSize.Height) }
-    $Form.Location = New-Object Drawing.Point(
-        [int](($Work.Width - $Form.Width) / 2) + $Work.X,
-        [int](($Work.Height - $Form.Height) / 2) + $Work.Y)
+    try {
+        # A headless session (a CI runner, a Windows service) can report no usable screen; fall back to the metrics
+        # Windows provides instead of throwing here.
+        $Screen = [Windows.Forms.Screen]::FromControl($Form)
+        $Work = if ($Screen) { $Screen.WorkingArea } else { [Windows.Forms.SystemInformation]::WorkingArea }
+        if ($Work.Width -lt 640 -or $Work.Height -lt 480) { $Work = [Windows.Forms.SystemInformation]::WorkingArea }
+        $WantedW = [math]::Max($Form.MinimumSize.Width, [math]::Min(1040, $Work.Width - 40))
+        $WantedH = [math]::Max($Form.MinimumSize.Height, [math]::Min(840, $Work.Height - 40))
+        if ($Form.Width -lt 940) { $Form.Width = $WantedW }
+        if ($Form.Height -lt 700 -or $Form.Height -gt $Work.Height - 20) { $Form.Height = $WantedH }
+        if ($Form.WindowState -eq 'Normal') {
+            # Built as two values first: `New-Object Drawing.Point(a + x, b + y)` over several lines binds the
+            # additions inside the argument array and throws "[System.Object[]] does not contain op_Addition".
+            $X = [int](($Work.Width - $Form.Width) / 2) + $Work.X
+            $Y = [int](($Work.Height - $Form.Height) / 2) + $Work.Y
+            $Form.Location = New-Object Drawing.Point($X, $Y)
+        }
+    } catch { Write-Warning "Could not size the window: $($_.Exception.Message) [$($_.InvocationInfo.PositionMessage -replace "`r?`n", ' ')]" }
 })
-$Form.Add_Shown({ Resize-Content; Set-PaneHeights })
+$Form.Add_Shown({ try { Resize-Content; Set-PaneHeights } catch { Write-Warning "Could not lay out the window: $($_.Exception.Message)" } })
 $Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
 . (Join-Path $PSScriptRoot 'LaneTheme.ps1')
 if ($NoShow) { return }

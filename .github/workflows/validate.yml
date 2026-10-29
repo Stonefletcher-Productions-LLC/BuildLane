@@ -17,16 +17,22 @@ jobs:
         with:
           persist-credentials: false
       - name: Dashboard and profile regression checks
+        timeout-minutes: 4
         run: ./app/TestLaneApp.ps1
       - name: GitHub pagination regression checks
+        timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1
       - name: First-run onboarding checks
+        timeout-minutes: 4
         run: ./app/TestLaneOnboarding.ps1
       - name: Responsive bulk move checks
+        timeout-minutes: 4
         run: ./app/TestLaneMoves.ps1
       - name: Shared resource and process cleanup checks
+        timeout-minutes: 6
         run: ./app/TestLaneResources.ps1
       - name: Cancelled-job process cleanup checks
+        timeout-minutes: 6
         run: ./app/TestLaneProcesses.ps1
       - name: PowerShell 7 resource cleanup checks
         shell: pwsh

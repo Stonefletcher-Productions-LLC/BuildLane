@@ -1,8 +1,36 @@
 ﻿# Run with Windows PowerShell -STA. No GitHub calls, queue changes or service changes.
 $ErrorActionPreference = 'Stop'
+# A thrown exception inside a WinForms event handler becomes a modal dialog that waits for a click. On a CI runner that
+# is a hang until the job timeout, with no output at all: the run says nothing about where it stopped. This watchdog
+# prints the step in progress and exits instead. `Mark` also prints each step, so a slow run shows its progress.
+Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+public static class LaneTestWatchdog {
+    public static volatile string At = "start";
+    public static void Mark(string step) {
+        At = step;
+        Console.Out.WriteLine("  ... " + step);
+        Console.Out.Flush();
+    }
+    public static void Arm(int seconds) {
+        var until = DateTime.UtcNow.AddSeconds(seconds);
+        var t = new Thread(() => {
+            while (DateTime.UtcNow < until) { Thread.Sleep(200); }
+            Console.Error.WriteLine("HUNG: no progress past \"" + At + "\" after " + seconds + "s (a modal dialog?).");
+            Environment.Exit(86);
+        });
+        t.IsBackground = true;
+        t.Start();
+    }
+}
+'@
+function Mark([string]$Step) { [LaneTestWatchdog]::Mark($Step) }
+[LaneTestWatchdog]::Arm(300)
 $FixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('buildlane-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory $FixtureRoot | Out-Null
 try {
+    Mark 'load the app against the fixture profile'
     $FixtureProfile = Join-Path $FixtureRoot 'project.json'
     $FixtureStatus = Join-Path $FixtureRoot 'status.json'
     @{
@@ -12,6 +40,7 @@ try {
     } | ConvertTo-Json | Set-Content $FixtureProfile
     . "$PSScriptRoot\LaneApp.ps1" -Profile $FixtureProfile -ProfileDirectory $FixtureRoot -SmokeTest -NoShow
     function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
+    Mark 'window branding and taskbar identity'
     Update-View
     Assert ($Form.Text -eq 'Buildlane | Another Product') 'Project branding leaked.'
     Assert ($Form.Icon -and $Form.ShowIcon -and $Form.ShowInTaskbar) 'Window branding is missing.'
@@ -77,9 +106,11 @@ try {
     Assert ($StepsBox.Controls[5].ForeColor -eq $Grey -and $StepsBox.Controls[5].Text -match 'not reported') 'Successful tests falsely certify packaging.'
     Assert ($StepsBox.Controls[3].ForeColor -eq $Grey) 'Skipped content import inferred as successful.'
     Set-Content $PauseFile 'test fixture only'
+    Mark 'pause state, machine health; status, steps and colours'
     Update-View
     Assert ($PauseButton.Text -eq 'Resume builds') 'Pause state is incorrect.'
     Assert ($SystemTab.Controls.Contains($SystemRoot)) 'Machine health tab is missing.'
+    Mark 'profiles: round trip, conflict, validation'
     $SavedPath=Join-Path $FixtureRoot 'saved.json'
     $Other=Read-LaneProfile $FixtureProfile
     $Other.name='Saved project'; $Other.repo='example/saved'
@@ -93,6 +124,7 @@ try {
     Assert $Rejected 'Invalid port was accepted.'
     $Other.cachePort=0
     # Keep the real UI message loop moving while a deliberately slow refresh runs.
+    Mark 'show the window: background refresh, coalescing, backoff'
     $Form.Show(); $Timer.Stop(); $RefreshTimer.Stop()
     $Watch=[Diagnostics.Stopwatch]::StartNew()
     Start-LaneRefresh -Worker { Start-Sleep -Milliseconds 500; @{Open=@();Closed=@();Prs=@()} }
@@ -122,6 +154,7 @@ try {
     Assert ($script:ProjectFields['repo'].Text -eq 'example/saved') 'Project editor did not load settings.'
 
     # A queued release must show when it ships, and a broken or absent deadline must never fabricate a time.
+    Mark 'release deadlines and queue wording'
     Assert ($null -eq (Get-CutDeadline @{ description = 'lane: queued' })) 'A release without a deadline reported one.'
     $Future = (Get-Date).ToUniversalTime().AddHours(2).ToString('yyyy-MM-ddTHH:mm:ssZ')
     $Cut = Get-CutDeadline @{ description = "lane: queued`nlane-deadline: $Future" }
@@ -136,6 +169,7 @@ try {
 
     # A rogue producer (a PR's quick checks share the runner and the status file) can write a one-phase status.
     # Presenting that as "Step 1 of 1" for a running batch is worse than showing the standard phases.
+    Mark 'one-phase status guard, resizable panes, render on change'
     @{ updated = (Get-Date).ToString('o'); started = (Get-Date).AddMinutes(-3).ToString('o'); phase = 0
        phases = @('Quick checks'); what = 'quick checks'; step = 'UI text and save fields'; done = '' } |
         ConvertTo-Json -Depth 5 | Set-Content $FixtureStatus
@@ -159,6 +193,10 @@ try {
     Update-View
     Assert ([object]::ReferenceEquals($FirstStep, $StepsBox.Controls[0])) 'Step labels are rebuilt even when the phase did not change.'
 
+    # An exception inside a WinForms event handler is recorded by the app's ThreadException handler instead of turning
+    # into a modal dialog (which would be a hang here). Any recorded error is a real failure of this screen test.
+    Mark 'close; no UI handler threw'
+    Assert ($script:UiErrors.Count -eq 0) "A UI event handler threw: $(@($script:UiErrors | ForEach-Object { $_.Message }) -join '; ')"
     $Form.Close()
     Write-Output 'PASS: status, profile validation/persistence/conflicts, responsive background refresh, coalescing, backoff and stale-project isolation.'
 } finally {
