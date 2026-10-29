@@ -87,7 +87,7 @@ reported yet* — that is a path problem, not a crash.
 
 | Tab | What you do there |
 |---|---|
-| **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the dividers to resize the queue and step log; their sizes are remembered. |
+| **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
 | **Releases** | Milestones become releases. Queue a release build, unqueue or close it, and see which pull requests are in it. Tick pull requests and move them to another release in one go. |
 | **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
 | **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |

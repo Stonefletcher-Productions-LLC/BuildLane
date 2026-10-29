@@ -131,17 +131,21 @@ $QueuePanel.Padding = New-Object Windows.Forms.Padding(24, 4, 24, 8)
 [void]$QueuePanel.RowStyles.Add((New-Object Windows.Forms.RowStyle("Percent", 100)))
 [void]$QueuePanel.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
 $NowSplit = New-Object Windows.Forms.SplitContainer
-$NowSplit.Dock = "Fill"; $NowSplit.Orientation = "Horizontal"; $NowSplit.SplitterWidth = 6
+$NowSplit.Dock = "Fill"; $NowSplit.Orientation = "Horizontal"; $NowSplit.SplitterWidth = 12
 $NowSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
 $NowSplit.Panel1MinSize = 300; $NowSplit.Panel2MinSize = 120
 $LogSplit = New-Object Windows.Forms.SplitContainer
-$LogSplit.Dock = 'Fill'; $LogSplit.Orientation = 'Horizontal'; $LogSplit.SplitterWidth = 6
+$LogSplit.Dock = 'Fill'; $LogSplit.Orientation = 'Horizontal'; $LogSplit.SplitterWidth = 12
 $LogSplit.Size = New-Object Drawing.Size(900, 500)
 $LogSplit.Panel1MinSize = 200; $LogSplit.Panel2MinSize = 90
 $LogSplit.Panel1.Controls.Add($Root); $LogSplit.Panel2Collapsed = $true
 $NowSplit.Panel1.Controls.Add($LogSplit)
 $NowSplit.Panel2.Controls.Add($QueuePanel)
 $NowTab.Controls.Add($NowSplit)
+$NowSplit.AccessibleName = 'Overview and queue divider'; $NowSplit.AccessibleDescription = 'Drag up or down to resize the queue.'
+$NowSplit.Panel1.AccessibleName = 'Build overview'; $NowSplit.Panel2.AccessibleName = 'Queue'
+$LogSplit.AccessibleName = 'Step log divider'; $LogSplit.AccessibleDescription = 'Drag up or down to resize the step log.'
+$LogSplit.Panel1.AccessibleName = 'Build overview'; $LogSplit.Panel2.AccessibleName = 'Step log'
 function Add-Row($Control, [int]$Top = 4, $Panel = $Root) {
     $Control.Margin = New-Object Windows.Forms.Padding(0, $Top, 0, 4)
     $Control.Dock = "Top"
@@ -196,7 +200,7 @@ $Queue.Add_DoubleClick({
         if ($Base) { Start-Process "$Base/pull/$N" }
     }
 })
-$QueueHint = New-Label "Double-click a PR to open it." $FontSmall $Grey
+$QueueHint = New-Label "Drag the divider above to resize the queue. Double-click a PR to open it." $FontSmall $Grey
 $QueueHint.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 0)
 [void]$QueuePanel.Controls.Add($QueueHint, 0, 2)
 
@@ -486,12 +490,14 @@ $PrRoot.Dock = "Fill"; $PrRoot.Padding = New-Object Windows.Forms.Padding(16, 4,
 [void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("Percent", 100)))
 [void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
 $RelSplit = New-Object Windows.Forms.SplitContainer
-$RelSplit.Dock = "Fill"; $RelSplit.Orientation = "Horizontal"; $RelSplit.SplitterWidth = 6
+$RelSplit.Dock = "Fill"; $RelSplit.Orientation = "Horizontal"; $RelSplit.SplitterWidth = 12
 $RelSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
-$RelSplit.Panel1MinSize = 150; $RelSplit.Panel2MinSize = 170
+$RelSplit.Panel1MinSize = 230; $RelSplit.Panel2MinSize = 150
 $RelSplit.Panel1.Controls.Add($RelRoot)
 $RelSplit.Panel2.Controls.Add($PrRoot)
 $RelTab.Controls.Add($RelSplit)
+$RelSplit.AccessibleName = 'Releases and pull requests divider'; $RelSplit.AccessibleDescription = 'Drag up or down to resize the lists.'
+$RelSplit.Panel1.AccessibleName = 'Releases'; $RelSplit.Panel2.AccessibleName = 'Pull requests'
 $RelTitle = New-Label "Releases" $FontHead
 $RelTitle.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 4)
 [void]$RelRoot.Controls.Add($RelTitle, 0, 0)
@@ -678,6 +684,21 @@ $Timer.Add_Tick({
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 20 -eq 0) { Update-Releases }
 })
 $Form.Add_Shown({ Update-View; Start-LaneRefresh "auth"; $Timer.Start(); $RefreshTimer.Start() })
+# Draw a visible grip in each divider; WinForms supplies mouse and keyboard resizing.
+foreach ($Split in @($NowSplit, $LogSplit, $RelSplit)) {
+    $Split.Add_Paint({
+        param($Sender, $EventArgs)
+        $R = $Sender.SplitterRectangle
+        if ($R.Width -le 0 -or $R.Height -le 0) { return }
+        $Pen = New-Object Drawing.Pen($script:Grey, 1)
+        try {
+            $MidX = [int]($R.Left + $R.Width / 2)
+            $MidY = [int]($R.Top + $R.Height / 2)
+            $EventArgs.Graphics.DrawLine($Pen, $MidX - 18, $MidY - 2, $MidX + 18, $MidY - 2)
+            $EventArgs.Graphics.DrawLine($Pen, $MidX - 18, $MidY + 2, $MidX + 18, $MidY + 2)
+        } finally { $Pen.Dispose() }
+    })
+}
 # Pane sizes are screen space, not project data: remembered per Windows user, next to the profiles.
 $LayoutFile = Join-Path $ProfileDirectory 'layout.txt'
 $script:LaneLayout = @{}

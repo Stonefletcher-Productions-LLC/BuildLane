@@ -198,6 +198,33 @@ try {
     $LogButton.PerformClick()
     Assert ([math]::Abs(($LogSplit.Height - $LogSplit.SplitterWidth - $LogSplit.SplitterDistance) - 100) -le 2) 'Step log height was not restored.'
 
+    # Exercise divider limits after window resizing with fixture data only.
+    $Tabs.SelectedTab = $NowTab
+    foreach ($Size in @(@(780,640), @(1200,900))) {
+        $Form.Size = New-Object Drawing.Size($Size[0], $Size[1])
+        [Windows.Forms.Application]::DoEvents(); Resize-Content; Set-PaneHeights
+        Assert ($NowSplit.SplitterWidth -ge 10 -and $NowSplit.AccessibleName -and $NowSplit.AccessibleDescription) 'Queue divider is not discoverable.'
+        Assert ($RelSplit.AccessibleName -and $LogSplit.AccessibleName) 'A divider has no accessible name.'
+        Assert ($NowSplit.SplitterDistance -ge $NowSplit.Panel1MinSize -and ($NowSplit.Height - $NowSplit.SplitterWidth - $NowSplit.SplitterDistance) -ge $NowSplit.Panel2MinSize) 'Queue pane is outside its limits.'
+        if ($env:BUILDLANE_TEST_PREVIEW_DIR) {
+            $Bitmap = New-Object Drawing.Bitmap($Form.Width, $Form.Height)
+            $Form.DrawToBitmap($Bitmap, (New-Object Drawing.Rectangle(0, 0, $Form.Width, $Form.Height)))
+            $Bitmap.Save((Join-Path $env:BUILDLANE_TEST_PREVIEW_DIR ("overview-{0}x{1}.png" -f $Size[0], $Size[1]))); $Bitmap.Dispose()
+        }
+    }
+
+    $Form.Size = New-Object Drawing.Size(780, 640)
+    $Tabs.SelectedTab = $RelTab; Set-LaneTheme $true
+    [Windows.Forms.Application]::DoEvents(); Resize-Content; Set-PaneHeights
+    Assert ($RelSplit.SplitterDistance -ge $RelSplit.Panel1MinSize -and ($RelSplit.Height - $RelSplit.SplitterWidth - $RelSplit.SplitterDistance) -ge $RelSplit.Panel2MinSize) 'Release lists are outside their limits.'
+    Assert ($RelList.Height -ge 30 -and $RelList.Bottom -le $RelButtons.Top -and $PrList.Height -ge 30) 'Compact release controls overlap or hide a list.'
+    if ($env:BUILDLANE_TEST_PREVIEW_DIR) {
+        $Bitmap = New-Object Drawing.Bitmap($Form.Width, $Form.Height)
+        $Form.DrawToBitmap($Bitmap, (New-Object Drawing.Rectangle(0, 0, $Form.Width, $Form.Height)))
+        $Bitmap.Save((Join-Path $env:BUILDLANE_TEST_PREVIEW_DIR 'releases-780x640-dark.png')); $Bitmap.Dispose()
+    }
+    Set-LaneTheme $false; $Tabs.SelectedTab = $NowTab
+
     # Nothing changed, nothing rebuilt: the 3-second refresh must not recreate the same labels.
     $script:StepsKey = $null
     Update-View
