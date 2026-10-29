@@ -90,3 +90,23 @@ A runner service that is running is not the same as a runner that can build: a c
 See [the neutral template](../app/BuildLane.profile.json) for field names. `Read-LaneProfile` expands Windows environment variables in the three path fields. The bundled template has `setupRequired: true` to prevent actions before configuration. Profiles saved through the editor omit that setup marker.
 
 Existing profiles without `setupRequired` continue to work. The client currently supports GitHub.com URLs only. Tokens must never be embedded in profiles.
+
+## Automatic active-job observation
+
+Optional `activeJobs` is a semicolon-separated allowlist of `workflow.yml|Exact job display name` entries (at most
+eight). It is also editable under Projects > Advanced settings. Include native jobs only, not controllers or quick
+checks. The LifeShare example includes `ci.yml|Build and test`, `ci.yml|focused` and the compile-preview native job.
+Future workflows must be explicitly added after their job contract is reviewed.
+
+The client reads repository runs in queued/in-progress/waiting states across branches, then fetches jobs for the
+exact run attempt and rechecks attempt/source metadata. Only named noncompleted native jobs are eligible; skipped
+native jobs in quick-check-only runs do not create active build status. Reads are coalesced with existing GitHub
+refresh work, bounded, and back off on failures. More active jobs/pages than can be classified safely produces
+unknown status instead of an idle claim. This observer never dispatches, cancels or writes a run/status file.
+
+While a current job is queued/checking out, its identity and observed step supersede an older completed local
+report. The earlier result is retained separately. Phase progress is indeterminate and queue count unknown until
+that run's local report arrives. Optional local `runAttempt` binds the producer attempt; timestamp freshness also
+prevents an earlier attempt's report from being treated as current. A newer local report can supersede an older
+API observation. Errors retain last-observed evidence with an explicit unconfirmed label. Run links include the
+observed attempt, so a later rerun cannot silently change which evidence opens.

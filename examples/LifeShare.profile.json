@@ -3,6 +3,7 @@
   "repo": "Stonefletcher-Productions-LLC/LifeShare",
   "branch": "main",
   "workflow": "lane.yml",
+  "activeJobs": "ci.yml|Build and test;ci.yml|focused;compile-preview.yml|Compile only (not release validation)",
   "statusFile": "E:\\GitHubRunner\\status.json",
   "pauseFile": "E:\\GitHubRunner\\PAUSED",
   "runnerPath": "E:\\GitHubRunner\\LifeShare",

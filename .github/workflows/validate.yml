@@ -28,6 +28,9 @@ jobs:
       - name: Waiting reasons and timing history checks
         timeout-minutes: 4
         run: ./app/TestLaneHistory.ps1
+      - name: Automatic native-job handoff and stale status checks
+        timeout-minutes: 4
+        run: ./app/TestLaneActivity.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1
