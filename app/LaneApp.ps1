@@ -112,7 +112,21 @@ $SystemTab.Controls.Add($SystemRoot)
 
 $Root = New-Object Windows.Forms.TableLayoutPanel
 $Root.Dock = "Fill"; $Root.Padding = New-Object Windows.Forms.Padding(24); $Root.ColumnCount = 1; $Root.AutoScroll = $true
-$NowTab.Controls.Add($Root)
+# The queue is the one part of the overview that grows with the project, so it gets its own resizable pane instead of a
+# fixed 180 px box: drag the divider, and the height is remembered for this Windows user.
+$QueuePanel = New-Object Windows.Forms.TableLayoutPanel
+$QueuePanel.Dock = "Fill"; $QueuePanel.ColumnCount = 1; $QueuePanel.RowCount = 3
+$QueuePanel.Padding = New-Object Windows.Forms.Padding(24, 4, 24, 8)
+[void]$QueuePanel.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$QueuePanel.RowStyles.Add((New-Object Windows.Forms.RowStyle("Percent", 100)))
+[void]$QueuePanel.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+$NowSplit = New-Object Windows.Forms.SplitContainer
+$NowSplit.Dock = "Fill"; $NowSplit.Orientation = "Horizontal"; $NowSplit.SplitterWidth = 6
+$NowSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
+$NowSplit.Panel1MinSize = 240; $NowSplit.Panel2MinSize = 120
+$NowSplit.Panel1.Controls.Add($Root)
+$NowSplit.Panel2.Controls.Add($QueuePanel)
+$NowTab.Controls.Add($NowSplit)
 function Add-Row($Control, [int]$Top = 4, $Panel = $Root) {
     $Control.Margin = New-Object Windows.Forms.Padding(0, $Top, 0, 4)
     $Control.Dock = "Top"
@@ -148,11 +162,15 @@ $StepsBox.AutoSize = $true; $StepsBox.FlowDirection = "LeftToRight"; $StepsBox.W
 
 $Notes = Add-Row (New-Label "" $FontSmall $Orange)
 
-# The queue.
-$QueueHead = Add-Row (New-Label "Queue" $FontHead) 12
-$Queue = Add-Row (New-Object Windows.Forms.ListView)
-$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.Height = 180; $Queue.HeaderStyle = "Nonclickable"; $Queue.Font = $FontSmall
+# The queue. Its head and hint sit outside the scroller so the list itself can fill whichever height the divider gives it.
+$QueueHead = New-Label "Queue" $FontHead
+$QueueHead.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 4)
+[void]$QueuePanel.Controls.Add($QueueHead, 0, 0)
+$Queue = New-Object Windows.Forms.ListView
+$Queue.Dock = "Fill"; $Queue.Margin = New-Object Windows.Forms.Padding(0)
+$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Nonclickable"; $Queue.Font = $FontSmall
 [void]$Queue.Columns.Add("PR", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
+[void]$QueuePanel.Controls.Add($Queue, 0, 1)
 $Queue.Add_DoubleClick({
     if ($Queue.SelectedItems.Count -and $Queue.SelectedItems[0].Tag) {
         $N = $Queue.SelectedItems[0].Tag
@@ -160,7 +178,9 @@ $Queue.Add_DoubleClick({
         if ($Base) { Start-Process "$Base/pull/$N" }
     }
 })
-$QueueHint = Add-Row (New-Label "Double-click a PR to open it." $FontSmall $Grey) 0
+$QueueHint = New-Label "Double-click a PR to open it." $FontSmall $Grey
+$QueueHint.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 0)
+[void]$QueuePanel.Controls.Add($QueueHint, 0, 2)
 
 # The PC.
 $PcHead = Add-Row (New-Label "Machine health" $FontTitle) 0 $SystemRoot
@@ -287,7 +307,10 @@ function Update-View {
     $PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Running normally" }
     $PauseState.ForeColor = if ($Paused) { $Orange } else { $Grey }
     $GhButton.Text = if (Get-Token) { "✓ GitHub connected" } else { "Connect GitHub" }
-    $Phases = if ($S -and $S.phases) { @($S.phases) } else { @("Wait for the PC", "Quick checks", "Compile", "Content imports", "Tests", "Package") }
+    # A status written by something other than the lane (a PR's quick checks share the same runner and file) can carry a
+    # one-entry phase list. That is not a job shape: showing "Step 1 of 1" for a running batch is worse than falling
+    # back to the standard phases, so require a real multi-phase list.
+    $Phases = if ($S -and $S.phases -and @($S.phases).Count -ge 2) { @($S.phases) } else { @("Wait for the PC", "Quick checks", "Compile", "Content imports", "Tests", "Package") }
 
     if (-not $S) {
         $Title.Text = "No build has reported yet"; $Title.ForeColor = $Grey
@@ -332,49 +355,58 @@ function Update-View {
 
     if ($ReadWarning) { $Sub.Text = $ReadWarning; $Sub.ForeColor = $Orange }
 
-    # Steps, ticked off.
-    $StepsBox.SuspendLayout(); while ($StepsBox.Controls.Count) { $StepsBox.Controls[0].Dispose() }
-    for ($i = 0; $i -lt $Phases.Count; $i++) {
-        $Cur = if ($S) { [int]$S.phase } else { -1 }
-        # A phase index is a cursor, not a receipt: earlier steps may have been skipped.
-        # Legacy producers report no per-phase conclusions. Never turn them all green.
-        $Glyph, $Color = if ($i -eq $Cur -and $S.done -eq "success") { "✓", $Green }
-                         elseif ($i -eq $Cur -and $S.done -eq "failure") { "✗", $Orange }
-                         elseif ($i -eq $Cur -and -not $S.done) { "▶", $Blue }
-                         else { "○", $Grey }
-        $PhaseNote = if ($i -eq $Cur -and $S.done -eq 'cancelled') { ' (cancelled)' }
-                     elseif ($S.done -and $i -gt $Cur) { ' (not reported)' }
-                     elseif ($i -lt $Cur) { ' (completed or skipped)' }
-                     else { '' }
-        $L = New-Label "$Glyph $($Phases[$i])$PhaseNote   " $FontBody $Color
-        [void]$StepsBox.Controls.Add($L)
-    }
-    $StepsBox.ResumeLayout()
-
-    # Queue.
-    $SelectedPr = if ($Queue.SelectedItems.Count) { $Queue.SelectedItems[0].Tag } else { $null }
-    $Queue.BeginUpdate(); $Queue.Items.Clear()
-    foreach ($Q in @(if ($S) { $S.queue })) {
-        $It = New-Object Windows.Forms.ListViewItem("#$($Q.number)")
-        $QueueState = [string]$Q.state
-        $ReleaseWait = $false
-        if ($QueueState -match '^held: (.+?) is being packaged first(?<suffix>;.*)?$') {
-            $QueueState = "Waiting for $($Matches[1]) to finish$($Matches['suffix'])"
-            $ReleaseWait = $true
-        } elseif ($QueueState -match '^held: after the (.+) freeze$') {
-            $QueueState = "Waiting for the $($Matches[1]) release freeze to end"
-            $ReleaseWait = $true
+    # Steps, ticked off. Only rebuilt when the phase cursor or its result actually moves: this used to dispose and
+    # recreate every label on each 3-second tick, which flickered and burned CPU while nothing changed.
+    $StepsKey = "$(if ($S) { "$($S.phase)|$($S.done)" } else { 'none' })|$($Phases -join '|')"
+    if ($StepsKey -ne $script:StepsKey) {
+        $script:StepsKey = $StepsKey
+        $StepsBox.SuspendLayout(); while ($StepsBox.Controls.Count) { $StepsBox.Controls[0].Dispose() }
+        for ($i = 0; $i -lt $Phases.Count; $i++) {
+            $Cur = if ($S) { [int]$S.phase } else { -1 }
+            # A phase index is a cursor, not a receipt: earlier steps may have been skipped.
+            # Legacy producers report no per-phase conclusions. Never turn them all green.
+            $Glyph, $Color = if ($i -eq $Cur -and $S.done -eq "success") { "✓", $Green }
+                             elseif ($i -eq $Cur -and $S.done -eq "failure") { "✗", $Orange }
+                             elseif ($i -eq $Cur -and -not $S.done) { "▶", $Blue }
+                             else { "○", $Grey }
+            $PhaseNote = if ($i -eq $Cur -and $S.done -eq 'cancelled') { ' (cancelled)' }
+                         elseif ($S.done -and $i -gt $Cur) { ' (not reported)' }
+                         elseif ($i -lt $Cur) { ' (completed or skipped)' }
+                         else { '' }
+            $L = New-Label "$Glyph $($Phases[$i])$PhaseNote   " $FontBody $Color
+            [void]$StepsBox.Controls.Add($L)
         }
-        [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add($QueueState); $It.Tag = $Q.number
-        if ($ReleaseWait) { $It.ForeColor = $Grey; $It.Text = "○ #$($Q.number)" }
-        elseif ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
-        elseif ($Q.state -match 'held|conflict') { $It.ForeColor = $Orange }
-        elseif ($Q.state -match '^waiting') { $It.ForeColor = $Grey }
-        [void]$Queue.Items.Add($It)
-        if ($SelectedPr -eq $Q.number) { $It.Selected = $true }
+        $StepsBox.ResumeLayout()
     }
-    if (-not $Queue.Items.Count) { [void]$Queue.Items.Add((New-Object Windows.Forms.ListViewItem("Nothing waiting."))) }
-    $Queue.EndUpdate()
+
+    # Queue. Same rule: rebuild only when the list itself changes, so hovering or scrolling is not interrupted.
+    $QueueKey = (@($(if ($S) { $S.queue })) | ForEach-Object { "$($_.number)|$($_.state)|$($_.title)" }) -join "`n"
+    if ($QueueKey -ne $script:QueueKey) {
+        $script:QueueKey = $QueueKey
+        $SelectedPr = if ($Queue.SelectedItems.Count) { $Queue.SelectedItems[0].Tag } else { $null }
+        $Queue.BeginUpdate(); $Queue.Items.Clear()
+        foreach ($Q in @(if ($S) { $S.queue })) {
+            $It = New-Object Windows.Forms.ListViewItem("#$($Q.number)")
+            $QueueState = [string]$Q.state
+            $ReleaseWait = $false
+            if ($QueueState -match '^held: (.+?) is being packaged first(?<suffix>;.*)?$') {
+                $QueueState = "Waiting for $($Matches[1]) to finish$($Matches['suffix'])"
+                $ReleaseWait = $true
+            } elseif ($QueueState -match '^held: after the (.+) freeze$') {
+                $QueueState = "Waiting for the $($Matches[1]) release freeze to end"
+                $ReleaseWait = $true
+            }
+            [void]$It.SubItems.Add([string]$Q.title); [void]$It.SubItems.Add($QueueState); $It.Tag = $Q.number
+            if ($ReleaseWait) { $It.ForeColor = $Grey; $It.Text = "○ #$($Q.number)" }
+            elseif ($Q.state -match 'building now|in the batch') { $It.ForeColor = $Blue; $It.Text = "▶ #$($Q.number)" }
+            elseif ($Q.state -match 'held|conflict') { $It.ForeColor = $Orange }
+            elseif ($Q.state -match '^waiting') { $It.ForeColor = $Grey }
+            [void]$Queue.Items.Add($It)
+            if ($SelectedPr -eq $Q.number) { $It.Selected = $true }
+        }
+        if (-not $Queue.Items.Count) { [void]$Queue.Items.Add((New-Object Windows.Forms.ListViewItem("Nothing waiting."))) }
+        $Queue.EndUpdate()
+    }
     $QueueHead.Text = "Queue ($(@(if ($S) { $S.queue }).Count))"
 
     # This PC.
@@ -411,27 +443,57 @@ function Update-View {
 
 # Releases: GitHub milestones. The line "lane: <state>" in a milestone's description is what the lane reads (open,
 # queued, packaging, packaged, failed); the rest of the description is left alone.
+# Two panes, because both lists grow: drag the divider to give the PRs or the releases more room.
 $RelRoot = New-Object Windows.Forms.TableLayoutPanel
-$RelRoot.Dock = "Fill"; $RelRoot.Padding = New-Object Windows.Forms.Padding(16); $RelRoot.ColumnCount = 1; $RelRoot.AutoScroll = $true
-$RelTab.Controls.Add($RelRoot)
-[void](Add-Row (New-Label "Releases" $FontHead) 0 $RelRoot)
-[void](Add-Row (New-Label "Group changes into a release, then queue its build. Other releases wait while it packages." $FontSmall $Grey) 0 $RelRoot)
-$RelList = Add-Row (New-Object Windows.Forms.ListView) 4 $RelRoot
-$RelList.View = "Details"; $RelList.FullRowSelect = $true; $RelList.MultiSelect = $false; $RelList.HideSelection = $false; $RelList.Height = 150; $RelList.HeaderStyle = "Nonclickable"
+$RelRoot.Dock = "Fill"; $RelRoot.Padding = New-Object Windows.Forms.Padding(16); $RelRoot.ColumnCount = 1; $RelRoot.RowCount = 5
+[void]$RelRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$RelRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$RelRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("Percent", 100)))
+[void]$RelRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$RelRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+$PrRoot = New-Object Windows.Forms.TableLayoutPanel
+$PrRoot.Dock = "Fill"; $PrRoot.Padding = New-Object Windows.Forms.Padding(16, 4, 16, 16); $PrRoot.ColumnCount = 1; $PrRoot.RowCount = 4
+[void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+[void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("Percent", 100)))
+[void]$PrRoot.RowStyles.Add((New-Object Windows.Forms.RowStyle("AutoSize")))
+$RelSplit = New-Object Windows.Forms.SplitContainer
+$RelSplit.Dock = "Fill"; $RelSplit.Orientation = "Horizontal"; $RelSplit.SplitterWidth = 6
+$RelSplit.Size = New-Object Drawing.Size(900, 620)   # a real size before the minimums, which are checked against it
+$RelSplit.Panel1MinSize = 150; $RelSplit.Panel2MinSize = 170
+$RelSplit.Panel1.Controls.Add($RelRoot)
+$RelSplit.Panel2.Controls.Add($PrRoot)
+$RelTab.Controls.Add($RelSplit)
+$RelTitle = New-Label "Releases" $FontHead
+$RelTitle.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 4)
+[void]$RelRoot.Controls.Add($RelTitle, 0, 0)
+[void]$RelRoot.Controls.Add((New-Label "Group changes into a release, then queue its build. Other releases wait while it packages." $FontSmall $Grey), 0, 1)
+$RelList = New-Object Windows.Forms.ListView
+$RelList.Dock = "Fill"; $RelList.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 4)
+$RelList.View = "Details"; $RelList.FullRowSelect = $true; $RelList.MultiSelect = $false; $RelList.HideSelection = $false; $RelList.HeaderStyle = "Nonclickable"
 [void]$RelList.Columns.Add("Release", 110); [void]$RelList.Columns.Add("State", 230); [void]$RelList.Columns.Add("PRs", 140); [void]$RelList.Columns.Add("Notes", 200)
-$RelButtons = Add-Row (New-Object Windows.Forms.FlowLayoutPanel) 4 $RelRoot
-$RelButtons.AutoSize = $true
-$PrHead = Add-Row (New-Label "Pull requests" $FontHead) 14 $RelRoot
-[void](Add-Row (New-Label "Tick PRs, pick a release, press Move. Double-click a PR to open it." $FontSmall $Grey) 0 $RelRoot)
-$PrList = Add-Row (New-Object Windows.Forms.ListView) 4 $RelRoot
-$PrList.View = "Details"; $PrList.FullRowSelect = $true; $PrList.CheckBoxes = $true; $PrList.Height = 300; $PrList.HeaderStyle = "Nonclickable"; $PrList.Font = $FontSmall
+[void]$RelRoot.Controls.Add($RelList, 0, 2)
+$RelButtons = New-Object Windows.Forms.FlowLayoutPanel
+$RelButtons.AutoSize = $true; $RelButtons.Dock = "Top"
+[void]$RelRoot.Controls.Add($RelButtons, 0, 3)
+$RelMsg = New-Label "" $FontSmall $Grey
+$RelMsg.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 0)
+[void]$RelRoot.Controls.Add($RelMsg, 0, 4)
+$PrHead = New-Label "Pull requests" $FontHead
+$PrHead.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 2)
+[void]$PrRoot.Controls.Add($PrHead, 0, 0)
+[void]$PrRoot.Controls.Add((New-Label "Tick PRs, pick a release, press Move. Double-click a PR to open it." $FontSmall $Grey), 0, 1)
+$PrList = New-Object Windows.Forms.ListView
+$PrList.Dock = "Fill"; $PrList.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 4)
+$PrList.View = "Details"; $PrList.FullRowSelect = $true; $PrList.CheckBoxes = $true; $PrList.HeaderStyle = "Nonclickable"; $PrList.Font = $FontSmall
 [void]$PrList.Columns.Add("PR", 70); [void]$PrList.Columns.Add("Title", 380); [void]$PrList.Columns.Add("Release", 90); [void]$PrList.Columns.Add("Lane", 120)
+[void]$PrRoot.Controls.Add($PrList, 0, 2)
 $PrList.Add_DoubleClick({ if ($PrList.SelectedItems.Count) { Start-Process "https://github.com/$Repo/pull/$($PrList.SelectedItems[0].Tag)" } })
-$MoveBar = Add-Row (New-Object Windows.Forms.FlowLayoutPanel) 4 $RelRoot
-$MoveBar.AutoSize = $true
+$MoveBar = New-Object Windows.Forms.FlowLayoutPanel
+$MoveBar.AutoSize = $true; $MoveBar.Dock = "Top"
+[void]$PrRoot.Controls.Add($MoveBar, 0, 3)
 $MoveTo = New-Object Windows.Forms.ComboBox
 $MoveTo.DropDownStyle = "DropDownList"; $MoveTo.Width = 160; $MoveTo.Margin = New-Object Windows.Forms.Padding(0, 6, 8, 0)
-$RelMsg = Add-Row (New-Label "" $FontSmall $Grey) 8 $RelRoot
 
 $script:Milestones = @()
 function Get-RelState($M) { if ("$($M.description)" -match '(?m)^lane:\s*(\w+)') { $Matches[1].ToLower() } else { "open" } }
@@ -588,6 +650,36 @@ $Timer.Add_Tick({
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 20 -eq 0) { Update-Releases }
 })
 $Form.Add_Shown({ Update-View; Start-LaneRefresh "auth"; $Timer.Start(); $RefreshTimer.Start() })
+# Pane sizes are screen space, not project data: remembered per Windows user, next to the profiles.
+$LayoutFile = Join-Path $ProfileDirectory 'layout.txt'
+$script:LaneLayout = @{}
+if (Test-Path -LiteralPath $LayoutFile) {
+    Get-Content -LiteralPath $LayoutFile -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_ -match '^(queue|prs)=(\d+)$') { $script:LaneLayout[$Matches[1]] = [int]$Matches[2] }
+    }
+}
+# Both dividers store the size of the *lower* pane, so the remembered size survives a different window height.
+function Set-PaneHeights {
+    foreach ($Pair in @(@($NowSplit, 'queue', 240), @($RelSplit, 'prs', 320))) {
+        $Split = $Pair[0]; $Key = $Pair[1]; $Default = $Pair[2]
+        $Room = $Split.Height - $Split.SplitterWidth
+        if ($Room -lt ($Split.Panel1MinSize + $Split.Panel2MinSize)) { continue }
+        $Lower = if ($script:LaneLayout.ContainsKey($Key)) { [int]$script:LaneLayout[$Key] } else { $Default }
+        $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
+        $Split.SplitterDistance = $Room - $Lower
+    }
+}
+function Save-PaneHeights {
+    try {
+        foreach ($Pair in @(@($NowSplit, 'queue'), @($RelSplit, 'prs'))) {
+            $Split = $Pair[0]
+            $script:LaneLayout[$Pair[1]] = $Split.Height - $Split.SplitterWidth - $Split.SplitterDistance
+        }
+        New-Item -ItemType Directory -Force (Split-Path $LayoutFile) | Out-Null
+        ($script:LaneLayout.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) |
+            Set-Content -LiteralPath $LayoutFile -Encoding ASCII
+    } catch {}
+}
 # Keep columns and text aligned with the available width, including DPI scaling.
 function Resize-Content {
     foreach ($List in @($Queue, $RelList, $PrList)) {
@@ -596,15 +688,15 @@ function Resize-Content {
         if ($List -eq $Queue) { $List.Columns[0].Width = 80; $List.Columns[2].Width = [int]($Width * .30); $List.Columns[1].Width = [math]::Max(120, $Width - 80 - $List.Columns[2].Width) }
         else { foreach ($Column in $List.Columns) { $Column.Width = [int]($Width / $List.Columns.Count) } }
     }
-    foreach ($Panel in @($Root, $RelRoot, $SystemRoot, $ProjectRoot)) {
+    foreach ($Panel in @($Root, $RelRoot, $PrRoot, $SystemRoot, $ProjectRoot)) {
         foreach ($Control in $Panel.Controls) {
             if ($Control -is [Windows.Forms.Label]) { $Control.MaximumSize = New-Object Drawing.Size([math]::Max(240, $Panel.ClientSize.Width - 64), 0) }
         }
     }
 }
 $Form.Add_Resize({ Resize-Content })
-$Form.Add_Shown({ Resize-Content })
-$Form.Add_FormClosed({ $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
+$Form.Add_Shown({ Resize-Content; Set-PaneHeights })
+$Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneRefresh })
 . (Join-Path $PSScriptRoot 'LaneTheme.ps1')
 if ($NoShow) { return }
 if ($SmokeTest) {
