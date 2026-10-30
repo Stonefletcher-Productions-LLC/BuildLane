@@ -1,4 +1,4 @@
-# Buildlane desktop client. Project configuration is supplied by -Profile.
+﻿# Buildlane desktop client. Project configuration is supplied by -Profile.
 # InstallLaneApp.ps1 builds the console-free GUI launcher and a desktop shortcut.
 # Compatible status producers and release workflow contract: ../README.md.
 param(
