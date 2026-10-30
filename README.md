@@ -14,7 +14,7 @@ in a browser tab.
 
 Made by Stonefletcher Productions LLC. The source is available in this repository.
 
-**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The four tabs](#the-four-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
+**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The tabs](#the-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
 
 ## What it does
 
@@ -36,12 +36,13 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 ## See it
 
 <p>
-  <img src="docs/images/releases.png" width="48%" alt="The Releases tab: a queued release with the time it ships by, an open release, a packaged one, and the pull request list with move controls">
+  <img src="docs/images/staging-release.png" width="48%" alt="The staging Releases tab with an illustrative verified full-test and package result">
   <img src="docs/images/overview-dark.png" width="48%" alt="The same dashboard in dark mode">
 </p>
 
-Left: **Releases** — a queued release says when it has to ship, and pull requests can be moved in bulk. Right: the same
-dashboard in **dark mode**.
+Left: **Releases in staging mode** — a versioned request with separate Full tests and Package results. Right: the
+Overview in **dark mode**. These are real app screens with synthetic fixture data, not live project results.
+See [screenshot provenance](docs/images/README.md). The [milestone release screen](docs/images/releases.png) remains available in validation-first mode.
 
 BuildLane is a front end for a build system you already have. It does not create a runner, and it does not supply a
 CI pipeline: your runner writes a small status file and the app draws it. See
@@ -87,12 +88,13 @@ The setup screen walks the same three steps the app shows at the top:
 Press **Refresh** on Releases and the tab fills in. If the status file is missing, Overview says *No build has
 reported yet* — that is a path problem, not a crash.
 
-## The four tabs
+## The tabs
 
 | Tab | What you do there |
 |---|---|
 | **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
-| **Releases** | Milestones become releases. Queue a release build, unqueue or close it, and see which pull requests are in it. Tick pull requests and move them to another release in one go. |
+| **Releases** | In staging mode, enter a version, refresh eligibility, then queue full tests and a package of the frozen staging revision. In validation-first mode, manage milestone releases and their pull requests. |
+| **Integration** | Read the confirmed server mode, change it when eligible, or request a staging checkpoint. A checkpoint is separate from a packaged release. |
 | **Timing history** | Job and step times for reported runs, with source commit, attempt and result. Failed and cancelled attempts stay visible. |
 | **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
 | **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |
@@ -102,13 +104,17 @@ reported yet* — that is a path problem, not a crash.
 | I want to… | Do this |
 |---|---|
 | Stop new builds starting | **Pause builds**. If something is building, it asks whether to stop that too. |
-| Let builds run again | **Resume builds** — the same button. |
-| Ship a release | Releases → pick it → **▶ Queue release build**. It lands that release's ready pull requests first, then packages. |
-| See when a queued release ships | The release row shows `queued: ships by HH:MM`. |
-| Move changes to another release | Tick them in the pull request list, pick a release, press **Move**. |
+| Let builds run again | **Resume builds** permits new work; it does not request a checkpoint or package. |
+| Package staging | Releases → enter a version → **Refresh release eligibility** → **Queue full tests and package**. Follow the selected request through separate Full tests and Package results. |
+| Validate a staging checkpoint | Integration → **Refresh backend eligibility** → **Request checkpoint**. This does not replace a release's full tests and package. |
+| Ship a milestone release in validation-first mode | Releases → pick it → **▶ Queue release build**. The configured backend handles that release's ready pull requests and packaging. |
+| See when a milestone release ships | In validation-first mode, the release row shows `queued: ships by HH:MM`. |
+| Move changes to another milestone release | In validation-first mode, tick them in the pull request list, pick a release, press **Move**. |
 | Check why a build failed | Overview → **Open live log** (GitHub) or **Show step log** (the step's log in the window). |
 | Switch project | Projects → **Use selected**. |
 | Change the look | **Use dark mode** / **Use light mode** in the top bar. |
+
+For the complete staging flow and how to find the resulting package, see [Build and release from staging](docs/RELEASING.md).
 
 Resume and stop requests show pending feedback immediately while GitHub responds in the background. A request
 accepted by GitHub does not mean a build has started: the app shows the latest observed lane controller separately

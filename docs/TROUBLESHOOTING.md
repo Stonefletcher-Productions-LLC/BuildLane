@@ -9,6 +9,9 @@
 | Retry available at a later time | GitHub returned an error/rate limit. Previous results remain visible; wait until the stated time. |
 | No matching runner services | Check the service filter. A runner started manually may not be installed as a Windows service. |
 | Could not pause | The pause file's parent folder must exist and be writable. The runner must observe that marker. |
+| Resumed but no package starts | Resume only permits work. In staging mode, open Releases, refresh eligibility, then queue full tests and a package. See [the release guide](RELEASING.md). |
+| Request accepted, but result is unverified | Follow the selected request's exact build. Acceptance is not a test or package pass; do not resend an uncertain request automatically. |
+| Old build report is shown | Check the observed job and its timestamp. A completed report describes that run, not the current queue. Unconfirmed GitHub state needs a fresh observation. |
 | Next build fails to link or write into the workspace | A cancelled run left a process holding the files. See [Cancelled builds and leftover processes](CANCELLATION.md): list what holds the workspace, then clear it or restart the runner service. |
 | This profile changed on disk | Reopen the saved profile before editing again; another process changed it. |
 | Drive not found | Change the **Build drive** in advanced settings for this computer. |
