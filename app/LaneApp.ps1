@@ -186,10 +186,53 @@ $QueueHead.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 4)
 [void]$QueuePanel.Controls.Add($QueueHead, 0, 0)
 $Queue = New-Object Windows.Forms.ListView
 $Queue.Dock = "Fill"; $Queue.Margin = New-Object Windows.Forms.Padding(0)
-$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Nonclickable"; $Queue.Font = $FontSmall
+$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Clickable"; $Queue.Font = $FontSmall
 $Queue.ShowItemToolTips=$true
-[void]$Queue.Columns.Add("PR", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
+[void]$Queue.Columns.Add("PR #", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
 [void]$QueuePanel.Controls.Add($Queue, 0, 1)
+
+# Compare PR identities numerically; the displayed number can also contain a status glyph.
+if (-not ('LaneQueueComparer' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
+using System;
+using System.Collections;
+using System.Windows.Forms;
+public sealed class LaneQueueComparer : IComparer {
+    public int Column;
+    public bool Descending;
+    private static long Number(ListViewItem item) {
+        long number;
+        return Int64.TryParse(Convert.ToString(item.Tag), out number) ? number : Int64.MaxValue;
+    }
+    public int Compare(object x, object y) {
+        var a = (ListViewItem)x;
+        var b = (ListViewItem)y;
+        int result = Column == 0 ? Number(a).CompareTo(Number(b)) :
+            StringComparer.OrdinalIgnoreCase.Compare(a.SubItems.Count > Column ? a.SubItems[Column].Text : "",
+                                                    b.SubItems.Count > Column ? b.SubItems[Column].Text : "");
+        if (result == 0) result = Number(a).CompareTo(Number(b));
+        return Descending ? -result : result;
+    }
+}
+"@
+}
+$script:QueueSortColumn = -1
+$script:QueueSortDescending = $false
+function Set-LaneQueueSort([int]$Column) {
+    if ($Column -lt 0 -or $Column -ge $Queue.Columns.Count) { return }
+    $script:QueueSortDescending = if ($script:QueueSortColumn -eq $Column) { -not $script:QueueSortDescending } else { $false }
+    $script:QueueSortColumn = $Column
+    $Comparer = New-Object LaneQueueComparer
+    $Comparer.Column = $Column; $Comparer.Descending = $script:QueueSortDescending
+    $Queue.ListViewItemSorter = $Comparer
+    $Queue.Sort()
+    $Names = @('PR #', 'Title', 'State')
+    for ($i = 0; $i -lt $Names.Count; $i++) {
+        $Queue.Columns[$i].Text = $Names[$i] + $(if ($i -eq $Column) { if ($script:QueueSortDescending) { ' ↓' } else { ' ↑' } } else { '' })
+    }
+}
+$Queue.Add_ColumnClick({ param($Sender, $EventArgs) Set-LaneQueueSort $EventArgs.Column })
+
 $Queue.Add_DoubleClick({
     if ($Queue.SelectedItems.Count -and $Queue.SelectedItems[0].Tag) {
         $N = $Queue.SelectedItems[0].Tag

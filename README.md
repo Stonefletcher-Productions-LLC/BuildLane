@@ -23,6 +23,7 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 - **Updates without flashing** — unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
 - **Keeps open PRs visible after builds finish** — independently reads paginated GitHub PRs and recent merges to the integration branch. Shows drafts, review requirements, failed checks, conflicts and operator-ready changes; a ready row does not claim automatic merging. Results refresh every 30 seconds and retain clearly marked last-known evidence on errors.
 - **Merges reviewed changes through the controller** — select a PR, refresh merge eligibility, then merge now or queue that exact head until checks pass. Cancel queued merge removes that request without cancelling a build. Missing review, stale data and unsupported backends keep controls disabled.
+- **Sorts the queue by PR #, Title, or State** - click a column header to sort ascending, then click again for descending. The arrow shows the direction, and the display keeps its order as PRs refresh.
 - **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
 - **Pauses builds on this PC** — including the option to stop the build already running. The hosted merge queue has separate **Pause merges / Resume merges** controls with confirmed server state.

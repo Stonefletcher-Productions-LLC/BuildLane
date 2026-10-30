@@ -77,3 +77,7 @@ Exports contain project settings, not BuildLane's separately stored token. Revie
 - Encrypted app credentials: `%APPDATA%\Buildlane\<owner_repo>\github.token`
 
 Reinstalling the app preserves saved profiles. Back up the profile folder before changing machines; encrypted tokens must be reconnected on the new machine.
+
+### Sorting the queue
+
+Click the **PR #**, **Title**, or **State** column header to sort the queue. The first click sorts ascending; another click on the same header sorts descending. An arrow marks the active column and direction. PR numbers sort numerically, and your chosen order and selected PR survive queue refreshes. Sorting changes the display only; it does not change which PR the controller merges next.
