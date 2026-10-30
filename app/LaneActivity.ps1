@@ -1,4 +1,4 @@
-﻿# Observe actual configured jobs independently of local button clicks and status-file handoffs.
+Ã¯Â»Â¿# Observe actual configured jobs independently of local button clicks and status-file handoffs.
 $script:ActivityJob=$null; $script:ActivitySnapshot=$null; $script:ActivityError=''
 $script:ActivityIdentity=''; $script:NextActivityRead=[datetime]::MinValue
 $script:ActivityWorker={
@@ -21,7 +21,7 @@ $script:ActivityWorker={
         }
         $Runs=@($Runs | Sort-Object @{Expression={[long]$_.id}} -Unique)
         if ($Runs.Count -gt 6) { throw 'Too many matching workflows to classify safely.' }
-        $Candidates=@()
+        $Candidates=@(); $CompletedReport=$null
         foreach ($Run in $Runs) {
             if ([string]$Run.id -notmatch '^\d+$' -or [string]$Run.run_attempt -notmatch '^[1-9]\d*$') { throw 'Missing run identity.' }
             $Path=([string]$Run.path -split '@',2)[0]
@@ -44,7 +44,12 @@ $script:ActivityWorker={
             foreach ($Job in $Native) { $Candidates+=@(@{Run=$After;Job=$Job}) }
         }
         $Active=$Candidates | Sort-Object @{Expression={if ($_.Job.status -eq 'in_progress') { 0 } else { 1 }}},@{Expression={$_.Job.started_at};Descending=$true},@{Expression={[long]$_.Run.id};Descending=$true} | Select-Object -First 1
-        @{AtUtc=[datetime]::UtcNow;Active=$Active;Count=$Candidates.Count;Repo=$Request.Repo}
+        if ([string]$Request.ReportRunId -match '^[1-9]\d*$' -and [string]$Request.ReportAttempt -match '^[1-9]\d*$') {
+            $Report=Read "/actions/runs/$($Request.ReportRunId)/attempts/$($Request.ReportAttempt)"
+            if ([string]$Report.id -ne [string]$Request.ReportRunId -or [string]$Report.run_attempt -ne [string]$Request.ReportAttempt) { throw 'Local report run attempt mismatch.' }
+            if ($Report.status -eq 'completed' -and $Report.conclusion) { $CompletedReport=$Report }
+        }
+        @{AtUtc=[datetime]::UtcNow;Active=$Active;CompletedReport=$CompletedReport;Count=$Candidates.Count;Repo=$Request.Repo}
     } catch {
         $Delay=60
         if ($_.Exception.Response) { $Retry=0; if ([int]::TryParse([string]$_.Exception.Response.Headers['Retry-After'],[ref]$Retry)) { $Delay=[math]::Max(60,$Retry) } }
@@ -62,7 +67,7 @@ function Start-LaneActivity([scriptblock]$Worker) {
     Initialize-LaneActivity
     if ($Config.setupRequired -or -not $Config.activeJobs -or $script:ActivityJob -or $script:RefreshJob -or $script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:IntegrationJob -or [datetime]::UtcNow -lt $script:NextActivityRead) { return }
     if (-not $Worker -and ($SmokeTest -or -not $script:Token)) { return }
-    $Request=@{Repo=$Repo;Token=$script:Token;Targets=@(Get-LaneActivityTargets $Config.activeJobs)}
+    $Request=@{Repo=$Repo;Token=$script:Token;Targets=@(Get-LaneActivityTargets $Config.activeJobs);ReportRunId=$script:State.runId;ReportAttempt=$script:State.runAttempt}
     $Shell=[PowerShell]::Create()
     try {
         if (-not $Worker) { $Worker=$script:ActivityWorker }
@@ -90,7 +95,7 @@ function Update-LaneActivityView($S,$View) {
     $View.StepsHead.Visible=$true; $View.StepsBox.Visible=$true; $View.Queue.Visible=$true
     $View.QueueHint.Text='Drag the divider above to resize the queue. Double-click a PR to open it.'
     $View.PreviousResult.Text=''; $View.PreviousResult.Visible=$false; $View.ActivityNote.Text=''
-    $script:DisplayedActivity=$null
+    $script:DisplayedActivity=$null; $script:LocalReportInactive=$false
     if (-not $Config.activeJobs) { return }
     $Snapshot=$script:ActivitySnapshot
     $Fresh=$Snapshot -and -not $script:ActivityError -and ([datetime]::UtcNow-$Snapshot.AtUtc).TotalSeconds -le 60
@@ -98,7 +103,7 @@ function Update-LaneActivityView($S,$View) {
     $View.ActivityNote.Text=if ($script:ActivityError) { $script:ActivityError } elseif (-not $Snapshot) { 'Checking live build jobs. The local report below may describe an earlier run.' } else { "GitHub jobs observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss'))." }
     $Active=if ($Snapshot) { $Snapshot.Active }
     $ReportAt=[DateTimeOffset]::MinValue; $HasReport=$S -and [DateTimeOffset]::TryParse([string]$S.updated,[ref]$ReportAt)
-    if ($Active -and $HasReport -and $ReportAt.UtcDateTime -gt $Snapshot.AtUtc -and ($S.done -or [string]$S.runId -ne [string]$Active.Run.id)) { $Active=$null }
+    if ($Active -and -not $Fresh -and $HasReport -and $ReportAt.UtcDateTime -gt $Snapshot.AtUtc -and ($S.done -or [string]$S.runId -ne [string]$Active.Run.id)) { $Active=$null }
     if ($Active) {
         $Started=[DateTimeOffset]::MinValue
         $HasStart=[DateTimeOffset]::TryParse([string]$Active.Job.started_at,[ref]$Started) -and $Started.Year -gt 2000
@@ -124,6 +129,19 @@ function Update-LaneActivityView($S,$View) {
         $View.StepsHead.Visible=$false; $View.StepsBox.Visible=$false
         $View.QueueHead.Text='Queue: unknown for this run'; $View.Queue.Visible=$false
         $View.QueueHint.Text='Waiting for this run to publish its queue. The previous report does not establish the current queue.'
+    } elseif ($S -and -not $S.done -and $Fresh -and $HasReport -and $ReportAt.UtcDateTime -le $Snapshot.AtUtc) {
+        $script:LocalReportInactive=$true
+        $Completed=$Snapshot.CompletedReport
+        $Confirmed=$Completed -and [string]$Completed.id -eq [string]$S.runId -and [string]$Completed.run_attempt -eq [string]$S.runAttempt
+        $View.Title.Text=if ($Confirmed) { "Run finished: $($S.what) ($($Completed.conclusion))" } else { 'No active build observed' }
+        $View.Title.ForeColor=$Grey
+        $View.Sub.Text=if ($Confirmed) { "GitHub confirms run #$($Completed.id), attempt $($Completed.run_attempt), completed. This does not certify native tests or packaging." } else { "The unfinished local report for run #$($S.runId) is stale; its outcome is unconfirmed." }
+        $View.JobLabel.Text=if ($Confirmed) { "Run ended: $($Completed.conclusion)" } else { 'Previous run: outcome unconfirmed' }
+        $View.StepLabel.Text='No configured active build job was observed.'
+        $View.Time.Text=''; $View.Waiting.Text=''; Set-Bar $JobBar 0 $View; Set-Bar $StepBar 0 $View
+        $View.StepsHead.Visible=$false; $View.StepsBox.Visible=$false
+        $View.QueueHead.Text='Queue: awaiting current evidence'; $View.Queue.Visible=$false
+        $View.QueueHint.Text='An unfinished local report does not establish the current queue.'
     } elseif ($S -and $S.done) {
         $View.Title.Text="Last reported: $($S.what) ($($S.done))"
         $View.QueueHead.Text='Queue: unknown from a completed report'; $View.Queue.Visible=$false
@@ -136,6 +154,7 @@ function Get-LaneDisplayedRunUrl {
     $script:State.runUrl
 }
 function Get-LaneCurrentRunForControl {
+    if ($script:LocalReportInactive) { return $null }
     if ($script:DisplayedActivity) {
         if ($script:ActivityError -or -not $script:ActivitySnapshot -or ([datetime]::UtcNow-$script:ActivitySnapshot.AtUtc).TotalSeconds -gt 60) { return $null }
         return @{runId=$script:DisplayedActivity.Run.id;what=$script:DisplayedActivity.Run.display_title;done=''}

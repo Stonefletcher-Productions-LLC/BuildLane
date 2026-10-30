@@ -4,7 +4,7 @@
 
 <h1 align="center">BuildLane</h1>
 
-<p align="center"><strong>Watch the build, land the changes, ship the release — from one window.</strong></p>
+<p align="center"><strong>Watch the build, land the changes, ship the release â€” from one window.</strong></p>
 
 BuildLane is a small Windows app for a self-hosted build lane. It shows what the PC is building right now, which
 changes are waiting, and which release is next, so you do not have to keep a PowerShell window open or watch GitHub
@@ -14,24 +14,24 @@ in a browser tab.
 
 Made by Stonefletcher Productions LLC. The source is available in this repository.
 
-**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The four tabs](#the-four-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
+**Jump to:** [Install](#install) Â· [First five minutes](#first-five-minutes) Â· [The four tabs](#the-four-tabs) Â· [Everyday tasks](#everyday-tasks) Â· [Where settings live](#where-your-settings-live) Â· [Something looks wrong](#if-something-looks-wrong) Â· [Developers](#for-developers)
 
 ## What it does
 
-- **Shows the truth about the current build** — which step, how far through, how long it has been running, and the
+- **Shows the truth about the current build** â€” which step, how far through, how long it has been running, and the
   exact run it belongs to. A green test run never makes an unreported Package step look finished.
-- **Updates without flashing** — unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
-- **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
+- **Updates without flashing** â€” unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
+- **Shows the queue in human words** â€” "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
-- **Pauses everything** — including the option to stop the build that is already running.
-- **Handles releases** — validation-first projects keep milestone release queues. Staging projects queue an exact
+- **Pauses everything** â€” including the option to stop the build that is already running.
+- **Handles releases** â€” validation-first projects keep milestone release queues. Staging projects queue an exact
   version and frozen source through the controller, with separate full-test and package results tied to a build attempt.
 - **Moves pull requests in bulk**, in the background, and keeps the ones that failed selected so you can retry.
-- **Reports the server's integration mode** — validation before merge or reviewed merges to Test-Staging followed by
+- **Reports the server's integration mode** â€” validation before merge or reviewed merges to Test-Staging followed by
   explicit build checkpoints. Mode changes require fresh backend eligibility and confirmed server readback.
   Full release tests and packaging remain mandatory in both modes.
-- **Keeps several projects apart** — each with its own repository, runner paths and credentials.
-- **Remembers how you left it** — window size, divider positions, light or dark, last project.
+- **Keeps several projects apart** â€” each with its own repository, runner paths and credentials.
+- **Remembers how you left it** â€” window size, divider positions, light or dark, last project.
 
 ## See it
 
@@ -40,7 +40,7 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
   <img src="docs/images/overview-dark.png" width="48%" alt="The same dashboard in dark mode">
 </p>
 
-Left: **Releases** — a queued release says when it has to ship, and pull requests can be moved in bulk. Right: the same
+Left: **Releases** â€” a queued release says when it has to ship, and pull requests can be moved in bulk. Right: the same
 dashboard in **dark mode**.
 
 BuildLane is a front end for a build system you already have. It does not create a runner, and it does not supply a
@@ -50,9 +50,9 @@ CI pipeline: your runner writes a small status file and the app draws it. See
 ## Install
 
 **You need:** Windows 10 or 11, Windows PowerShell 5.1 (already installed), and the .NET Framework compiler that ships
-with Windows. GitHub CLI is optional — the app also accepts a GitHub token.
+with Windows. GitHub CLI is optional â€” the app also accepts a GitHub token.
 
-1. **Get the code.** Clone the repository, or use **Code → Download ZIP** and extract it.
+1. **Get the code.** Clone the repository, or use **Code â†’ Download ZIP** and extract it.
 2. **Open Windows PowerShell in that folder.** In Explorer, shift-right-click the folder and choose *Open PowerShell
    window here*, or `cd` into it.
 3. **Run the installer:**
@@ -75,17 +75,17 @@ The [illustrated setup guide](docs/GETTING-STARTED.md) explains every field, swi
 
 The setup screen walks the same three steps the app shows at the top:
 
-1. **Choose a repository.** Paste the GitHub URL — `https://github.com/acme/desktop` — not the `git@` clone URL. The
+1. **Choose a repository.** Paste the GitHub URL â€” `https://github.com/acme/desktop` â€” not the `git@` clone URL. The
    app stores `acme/desktop`.
 2. **Point to your runner.** Three paths, all on the machine that builds:
-   - *Status file* — what the runner writes while it works, e.g. `C:\BuildRunner\Acme\status.json`
-   - *Pause file* — the app creates this file when you press **Pause builds**, e.g. `C:\BuildRunner\Acme\PAUSED`
-   - *Runner folder* — the lane's working folder, used for disk checks and the log helpers
+   - *Status file* â€” what the runner writes while it works, e.g. `C:\BuildRunner\Acme\status.json`
+   - *Pause file* â€” the app creates this file when you press **Pause builds**, e.g. `C:\BuildRunner\Acme\PAUSED`
+   - *Runner folder* â€” the lane's working folder, used for disk checks and the log helpers
 3. **Save and use**, then **Connect GitHub**. The app uses your `gh` CLI login if it has one, otherwise paste a token.
    The token is encrypted with Windows DPAPI and stored for your Windows user only.
 
 Press **Refresh** on Releases and the tab fills in. If the status file is missing, Overview says *No build has
-reported yet* — that is a path problem, not a crash.
+reported yet* â€” that is a path problem, not a crash.
 
 ## The four tabs
 
@@ -99,15 +99,15 @@ reported yet* — that is a path problem, not a crash.
 
 ## Everyday tasks
 
-| I want to… | Do this |
+| I want toâ€¦ | Do this |
 |---|---|
 | Stop new builds starting | **Pause builds**. If something is building, it asks whether to stop that too. |
-| Let builds run again | **Resume builds** — the same button. |
-| Ship a release | Releases → pick it → **▶ Queue release build**. It lands that release's ready pull requests first, then packages. |
+| Let builds run again | **Resume builds** â€” the same button. |
+| Ship a release | Releases â†’ pick it â†’ **â–¶ Queue release build**. It lands that release's ready pull requests first, then packages. |
 | See when a queued release ships | The release row shows `queued: ships by HH:MM`. |
 | Move changes to another release | Tick them in the pull request list, pick a release, press **Move**. |
-| Check why a build failed | Overview → **Open live log** (GitHub) or **Show step log** (the step's log in the window). |
-| Switch project | Projects → **Use selected**. |
+| Check why a build failed | Overview â†’ **Open live log** (GitHub) or **Show step log** (the step's log in the window). |
+| Switch project | Projects â†’ **Use selected**. |
 | Change the look | **Use dark mode** / **Use light mode** in the top bar. |
 
 Resume and stop requests show pending feedback immediately while GitHub responds in the background. A request
@@ -154,14 +154,14 @@ keeps your projects.
 
 ## If something looks wrong
 
-- **"No build has reported yet"** — the status file path does not match what your runner writes. Check the path in
+- **"No build has reported yet"** â€” the status file path does not match what your runner writes. Check the path in
   Projects.
-- **"No update from the build for 10 min"** — the app has the file but nothing has touched it. The build may be stuck;
+- **"No update from the build for 10 min"** â€” the app has the file but nothing has touched it. The build may be stuck;
   open the live log.
-- **"Step 1 of 1" while a build is running** — something other than the lane wrote the status file (a pull request's
+- **"Step 1 of 1" while a build is running** â€” something other than the lane wrote the status file (a pull request's
   quick checks, for example). The app falls back to the standard six steps rather than showing a fake one-step job.
-- **A field is greyed out** — Overview, Releases and System are disabled until a project is saved.
-- **The window opened small** — it remembers its size. Drag it larger; the new size is kept.
+- **A field is greyed out** â€” Overview, Releases and System are disabled until a project is saved.
+- **The window opened small** â€” it remembers its size. Drag it larger; the new size is kept.
 
 More, including the message you get when GitHub rate-limits the app: [Troubleshooting](docs/TROUBLESHOOTING.md).
 
@@ -191,7 +191,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\PreviewDocs.p
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1 -PreviewDirectory .\docs\images
 ```
 
-Both render the real interface with synthetic data — no network, no saved projects.
+Both render the real interface with synthetic data â€” no network, no saved projects.
 
 **Installer.** MSI packaging is available for testing:
 `.\app\BuildLaneInstaller.ps1 -Version 1.2.0` writes an unsigned MSI to `%LOCALAPPDATA%\Buildlane-Packages`. Signing
@@ -212,3 +212,5 @@ Related reading: [shared build resources and reservations](docs/RESERVATIONS.md)
 
 The app was originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`; this repository
 holds the standalone app, its tests and its packaging source.
+
+Live build status gives active native jobs priority over old local reports. Exact completed run/attempt evidence clears stale running progress; an unverified old report is labelled unconfirmed, never successful.
