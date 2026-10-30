@@ -1,4 +1,4 @@
-# Commands and machine queries never run on the Forms thread. The timers apply their snapshots.
+﻿# Commands and machine queries never run on the Forms thread. The timers apply their snapshots.
 $script:CommandJob=$null
 $script:CommandState=$null
 $script:HealthJob=$null
@@ -14,7 +14,8 @@ $script:CommandWorker={
     @{AcceptedAtUtc=[datetime]::UtcNow}
 }
 function Start-LaneCommand([string]$Kind='lane',[string]$Path,[hashtable]$Body,[scriptblock]$Worker) {
-    if ($script:CommandJob -or $script:MoveJob -or $script:ActionJob) { return }
+    if ($script:CommandJob -or $script:MoveJob -or $script:ActionJob -or ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending) { return }
+    if ($Kind -ne 'cancel' -and -not (Test-LaneLegacyOperationsAllowed)) { throw 'Use explicit integration checkpoints in the current mode.' }
     if (-not $Worker -and ($SmokeTest -or -not $script:Token)) { throw 'Connect GitHub before sending a lane request.' }
     Stop-LaneRefresh
     $script:DataRevision++
@@ -48,13 +49,14 @@ function Complete-LaneCommand {
     }
     Update-View
 }
-function Update-LaneCommandFeedback {
+function Update-LaneCommandFeedback($View) {
+    if (-not $View) { $View=@{PauseState=$PauseState} }
     $C=$script:CommandState
     if (-not $C) { return }
     $Word=if ($C.Kind -eq 'resume') { 'Resume' } elseif ($C.Kind -eq 'cancel') { 'Stop' } else { 'Lane check' }
     $Age=[math]::Max(0,[int]([datetime]::UtcNow-$C.RequestedAtUtc).TotalSeconds)
-    if ($C.Phase -eq 'sending') { $PauseState.Text="$Word requested; sending to GitHub..."; $PauseState.ForeColor=$Blue; return }
-    if ($C.Phase -eq 'error') { $PauseState.Text="$Word notification not confirmed. Check GitHub before retrying."; $PauseState.ForeColor=$Orange; return }
+    if ($C.Phase -eq 'sending') { $View.PauseState.Text="$Word requested; sending to GitHub..."; $View.PauseState.ForeColor=$Blue; return }
+    if ($C.Phase -eq 'error') { $View.PauseState.Text="$Word notification not confirmed. Check GitHub before retrying."; $View.PauseState.ForeColor=$Orange; return }
     $S=$script:State
     if ($S -and $S.updated) {
         $ReportAt=[DateTimeOffset]::MinValue; $StartedAt=[DateTimeOffset]::MinValue
@@ -72,12 +74,12 @@ function Update-LaneCommandFeedback {
     if ($C.Phase -eq 'runner') { return }
     if ($C.Controller) {
         $Run=$C.Controller
-        $PauseState.Text=if ($Run.status -eq 'queued' -or $Run.status -eq 'pending') { "Latest lane controller queued (${Age}s since click)" }
+        $View.PauseState.Text=if ($Run.status -eq 'queued' -or $Run.status -eq 'pending') { "Latest lane controller queued (${Age}s since click)" }
             elseif ($Run.status -eq 'in_progress') { 'Latest lane controller running; waiting for runner report' }
             elseif ($Run.conclusion -eq 'success') { 'Lane check completed; waiting for runner status' }
             else { "Lane controller ended: $($Run.conclusion). Check its log." }
-    } else { $PauseState.Text="$Word accepted; waiting for lane report (${Age}s)" }
-    $PauseState.ForeColor=if ($C.ObservationError) { $Orange } else { $Blue }
+    } else { $View.PauseState.Text="$Word accepted; waiting for lane report (${Age}s)" }
+    $View.PauseState.ForeColor=if ($C.ObservationError) { $Orange } else { $Blue }
 }
 function Start-LaneControllerRead {
     $C=$script:CommandState

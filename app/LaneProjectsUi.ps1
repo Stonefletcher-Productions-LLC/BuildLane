@@ -1,4 +1,4 @@
-$ProjectTab = New-Object Windows.Forms.TabPage('Projects'); $ProjectTab.BackColor = $Paper
+﻿$ProjectTab = New-Object Windows.Forms.TabPage('Projects'); $ProjectTab.BackColor = $Paper
 [void]$Tabs.TabPages.Add($ProjectTab)
 $ProjectRoot = New-Object Windows.Forms.TableLayoutPanel
 $ProjectRoot.Dock='Fill'; $ProjectRoot.ColumnCount=1; $ProjectRoot.AutoScroll=$true
@@ -25,8 +25,8 @@ $AdvancedToggle.Add_CheckedChanged({ $AdvancedEditor.Visible=$AdvancedToggle.Che
 $script:ProjectFields = [ordered]@{}
 $ProjectTips=New-Object Windows.Forms.ToolTip
 $ProjectTips.AutoPopDelay=15000
-$Hints=@{name='A friendly name shown in the app.';repo='Paste a GitHub repository URL or enter owner/repository.';branch='The branch your lane builds, usually main.';workflow='The workflow filename accepting task=lane.';activeJobs='Optional exact workflow/job allowlist, e.g. ci.yml|Build and test;compile-preview.yml|Compile only (not release validation). Read-only live job observation.';statusFile='JSON status file written by your build runner.';pauseFile='A marker file your runner checks before starting work.';runnerPath='Existing runner folder, used to find recent step logs.';drive='Drive letter to monitor for free space.';serviceFilter='Only show runner services matching this pattern.';cachePort='Optional local cache port. Leave 0 to disable.';minimumFreeGB='Display a warning below this amount. Your backend enforces build limits.';cleanBelowGB='Display the cleanup threshold. Your backend performs cleanup.'}
-$FieldLabels = [ordered]@{name='Project name';repo='GitHub repository';branch='Base branch';workflow='Lane workflow';activeJobs='Active build jobs (optional)';statusFile='Status file';pauseFile='Pause file';runnerPath='Runner folder';drive='Build drive';serviceFilter='Runner service filter';cachePort='Cache port (0 = off)';minimumFreeGB='Minimum free GB';cleanBelowGB='Cleanup below GB'}
+$Hints=@{name='A friendly name shown in the app.';repo='Paste a GitHub repository URL or enter owner/repository.';branch='The branch your lane builds, usually main.';workflow='The workflow filename accepting task=lane.';integrationWorkflow='Optional server-owned integration controller on trusted main. Mode is stored by the backend, never in this profile.';activeJobs='Optional exact workflow/job allowlist, e.g. ci.yml|Build and test;compile-preview.yml|Compile only (not release validation). Read-only live job observation.';statusFile='JSON status file written by your build runner.';pauseFile='A marker file your runner checks before starting work.';runnerPath='Existing runner folder, used to find recent step logs.';drive='Drive letter to monitor for free space.';serviceFilter='Only show runner services matching this pattern.';cachePort='Optional local cache port. Leave 0 to disable.';minimumFreeGB='Display a warning below this amount. Your backend enforces build limits.';cleanBelowGB='Display the cleanup threshold. Your backend performs cleanup.'}
+$FieldLabels = [ordered]@{name='Project name';repo='GitHub repository';branch='Base branch';workflow='Lane workflow';integrationWorkflow='Integration controller (optional)';activeJobs='Active build jobs (optional)';statusFile='Status file';pauseFile='Pause file';runnerPath='Runner folder';drive='Build drive';serviceFilter='Runner service filter';cachePort='Cache port (0 = off)';minimumFreeGB='Minimum free GB';cleanBelowGB='Cleanup below GB'}
 foreach ($Key in $FieldLabels.Keys) {
     $Label=New-Label $FieldLabels[$Key] $FontSmall
     $Label.Margin=New-Object Windows.Forms.Padding(0,7,12,5)
@@ -95,6 +95,7 @@ function Update-ProjectPicker {
 }
 function Use-LaneProject([string]$Path) {
     if ($script:ActionJob) { throw 'Wait for the release or connection request to finish before switching projects.' }
+    if (($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending) { throw 'Wait for the integration request to be confirmed before switching projects.' }
     if ($script:CommandJob) { throw 'Wait for the lane request to finish before switching projects.' }
     if ($script:MoveJob) { throw 'Wait for the current move to finish before switching projects.' }
     $Value=Read-LaneProfile $Path

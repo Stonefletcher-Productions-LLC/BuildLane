@@ -31,6 +31,12 @@ jobs:
       - name: Automatic native-job handoff and stale status checks
         timeout-minutes: 4
         run: ./app/TestLaneActivity.ps1
+      - name: Authoritative integration mode checks
+        timeout-minutes: 4
+        run: ./app/TestLaneIntegration.ps1
+      - name: Tall window and repeated handoff layout checks
+        timeout-minutes: 4
+        run: ./app/TestLaneLayout.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1

@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/images/logo.png" width="112" alt="BuildLane">
 </p>
 
@@ -20,12 +20,16 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 
 - **Shows the truth about the current build** — which step, how far through, how long it has been running, and the
   exact run it belongs to. A green test run never makes an unreported Package step look finished.
+- **Updates without flashing** — unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
 - **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
 - **Pauses everything** — including the option to stop the build that is already running.
 - **Handles releases** — group pull requests into a release, queue its package build, and see the cut time it has to
   ship by.
 - **Moves pull requests in bulk**, in the background, and keeps the ones that failed selected so you can retry.
+- **Reports the server's integration mode** — validation before merge or reviewed merges to Test-Staging followed by
+  explicit build checkpoints. Mode changes require fresh backend eligibility and confirmed server readback.
+  Full release tests and packaging remain mandatory in both modes.
 - **Keeps several projects apart** — each with its own repository, runner paths and credentials.
 - **Remembers how you left it** — window size, divider positions, light or dark, last project.
 
