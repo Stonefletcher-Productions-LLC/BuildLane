@@ -31,6 +31,11 @@ jobs:
       - name: Automatic native-job handoff and stale status checks
         timeout-minutes: 4
         run: ./app/TestLaneActivity.ps1
+      - name: Live PR pagination and status checks
+        run: ./app/TestLanePullReader.ps1
+      - name: Completed build PR overview checks
+        timeout-minutes: 4
+        run: ./app/TestLanePullView.ps1 -OutDirectory "$env:RUNNER_TEMP/Buildlane-docs"
       - name: Authoritative integration mode checks
         timeout-minutes: 4
         run: ./app/TestLaneIntegration.ps1 -OutDirectory "$env:RUNNER_TEMP/Buildlane-docs"
