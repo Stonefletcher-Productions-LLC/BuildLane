@@ -16,6 +16,12 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 
 **Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The tabs](#the-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
 
+## Refreshed visuals
+
+![BuildLane concept branding](marketing/refresh/brand.png)
+
+[Fresh interface capture and image sources](marketing/refresh/README.md). Real Windows Forms interface rendered by app/PreviewDocs.ps1 with synthetic project data; not live project results.
+
 ## What it does
 
 - **Shows the truth about the current build** — which step, how far through, how long it has been running, and the

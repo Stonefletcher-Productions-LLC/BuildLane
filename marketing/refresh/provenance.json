@@ -1,0 +1,62 @@
+{
+  "tool": "BuildLane",
+  "date": "2026-10-29",
+  "source_revision": "fdfa7c4cc4b8c3ce222c0aac7fcf1da124e85b6f",
+  "brand": {
+    "file": "brand.png",
+    "kind": "AI-generated concept branding",
+    "generator": "built-in image_gen",
+    "prompt": "Use case: logo-brand. Asset type: wide concept brand artwork for BuildLane, a Windows desktop dashboard for build queues, releases and runner health. Create a polished 16:9 near-black blue-grey editorial banner matching Stonefletcher Productions: restrained ember-orange accents, white type and blue secondary light. Show a distinctive simple dimensional emblem of three parallel build lanes merging into a single forward arrow, tactile matte material, crisp sculptural geometry, subtle studio shadows. Large elegant exact text 'BuildLane', small exact text 'Builds. Releases. Runner health.' Keep the emblem and all text comfortably inset for responsive website cropping. Sophisticated developer-tool identity, clean and quiet, no fake software UI, no screenshots, no charts claiming results, no extra text, no third-party logos. This is brand artwork, not a product capture.\n",
+    "sha256": "b5016154cf6e4313b851a0fef02359e678bc1684f9ade905699a0b59c3563636"
+  },
+  "capture": {
+    "file": "screenshot.png",
+    "kind": "real-interface capture",
+    "notes": "Real Windows Forms interface rendered by app/PreviewDocs.ps1 with synthetic project data. Additional fresh PR/merge controls come from passing app/TestLanePullView.ps1 fixtures. No real build, merge or release occurred.",
+    "sha256": "dfb62468e7fc674234b4af714ab862170ce220ae994ffe2642e8ae96eee2f14a"
+  },
+  "website": {
+    "brand": "buildlane-brand.jpg",
+    "capture": "buildlane-capture.png",
+    "brand_sha256": "d159fa9fa20c333f8f0b65225c54c31d40636c96396038330db8a72fe3f05a3b",
+    "capture_sha256": "dfb62468e7fc674234b4af714ab862170ce220ae994ffe2642e8ae96eee2f14a"
+  },
+  "additional_captures": [
+    {
+      "file": "docs\\images\\refresh\\handoff.png",
+      "sha256": "737c96386f6607732e8a5e0c6ea168201bf1b3494ca2aacdd883abec5a61ba5e"
+    },
+    {
+      "file": "docs\\images\\refresh\\open-prs.png",
+      "sha256": "0fc69d85ba4df4c2f47f5cd8de460dec991f059f3b3b3c07236e340161ca7b04"
+    },
+    {
+      "file": "docs\\images\\refresh\\overview-dark.png",
+      "sha256": "dfb62468e7fc674234b4af714ab862170ce220ae994ffe2642e8ae96eee2f14a"
+    },
+    {
+      "file": "docs\\images\\refresh\\overview.png",
+      "sha256": "4bb017cdf8059ae0d4fd564c4b19331a3379ac731353f8e266eb7ac7a41ad046"
+    },
+    {
+      "file": "docs\\images\\refresh\\projects.png",
+      "sha256": "f176a4fb4e399f93916cb31bbcc1bb586d82f2b93a9cf3543fb76d69ef0eb1e1"
+    },
+    {
+      "file": "docs\\images\\refresh\\releases.png",
+      "sha256": "b86973b70df906dcdd62d9fc05afd813eb566fb5041f8dc836ddddd2eee0e528"
+    },
+    {
+      "file": "docs\\images\\refresh\\setup.png",
+      "sha256": "159a723b1c95ec5dd6b6ad3f750b22cdfc516f42e7d7dd80fefaf874a47f076a"
+    },
+    {
+      "file": "docs\\images\\refresh\\timings.png",
+      "sha256": "2ca761b6600325cd3e1f783205d643567c29f31c0d5fb07a792cfe565237d703"
+    },
+    {
+      "file": "docs\\images\\refresh\\waiting.png",
+      "sha256": "d302631aa32131b15635284d59478ebdc0b09a6f1da149931e5862e142a39c2c"
+    }
+  ]
+}
