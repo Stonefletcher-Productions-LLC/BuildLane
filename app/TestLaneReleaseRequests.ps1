@@ -21,8 +21,8 @@ try {
     $Form.Show(); [Windows.Forms.Application]::DoEvents(); $Timer.Stop(); $RefreshTimer.Stop(); $Tabs.SelectedTab=$RelTab
     Update-View
     Assert ($RelSplit.Visible -and -not $StagingReleaseRoot.Visible) 'Unconfigured mode replaced the legacy release flow.'
-    $State=@{schemaVersion=1;integrationMode='MergeToStagingThenValidate';work=@();checkpoints=@();controllerRequests=@();releaseRequests=@()}
-    $Payload=@{Initialized=$true;Repo=$Repo;Revision=('a'*40);AtUtc=[datetime]::UtcNow;State=$State}
+    $ReleaseState=@{schemaVersion=1;integrationMode='MergeToStagingThenValidate';work=@();checkpoints=@();controllerRequests=@();requests=@()}
+    $Payload=@{Initialized=$true;Repo=$Repo;Revision=('a'*40);AtUtc=[datetime]::UtcNow;State=$ReleaseState}
     Apply-ReleasePayload $Payload
     $ReleaseVersion.Text='0.3.0'
     Assert ($StagingReleaseRoot.Visible -and -not $RelSplit.Visible -and -not $ReleaseQueue.Enabled) 'Staging used the milestone-only queue or guessed release eligibility.'
@@ -57,21 +57,26 @@ try {
     $Pending=$script:IntegrationPending
     Assert ($Pending.Operation -eq 'release' -and $Pending.Target -eq ('b'*40) -and $Pending.Version -eq '0.3.0' -and -not $ReleaseQueue.Enabled) 'Acceptance lost frozen identity or enabled duplicate requests.'
     $Wrong=@{requestId=$Pending.RequestId;operation='release';status='completed';binding=(@{operation='release';target=('b'*40);version='0.3.1'} | ConvertTo-Json -Compress)}
-    $State.controllerRequests=@($Wrong)
-    $State.releaseRequests=@(@{requestId=$Pending.RequestId;target=('b'*40);version='0.3.0';status='queued';fullTests='pending';package='pending'})
+    $ReleaseState.controllerRequests=@($Wrong)
+    $ReleaseState.requests=@(@{requestId=$Pending.RequestId;target=('b'*40);version='0.3.0';status='dispatching';testSet='Full'})
     Apply-ReleasePayload $Payload
     Assert ($script:IntegrationPending -and $script:IntegrationError -match 'binding') 'Wrong release version was acknowledged.'
     $Wrong.binding=(@{operation='release';target=('b'*40);version='0.3.0'} | ConvertTo-Json -Compress)
-    $State.releaseRequests[0].target='c'*40; Apply-ReleasePayload $Payload
+    $ReleaseState.requests[0].target='c'*40; Apply-ReleasePayload $Payload
     Assert ($script:IntegrationPending -and $script:IntegrationError -match 'matching frozen') 'Wrong frozen source was acknowledged.'
-    $State.releaseRequests[0].target='b'*40; Apply-ReleasePayload $Payload
-    Assert (-not $script:IntegrationPending -and $ReleaseRequests.Items.Count -eq 1 -and $ReleaseRequests.Items[0].SubItems[2].Text -eq 'queued' -and $ReleaseRequests.Items[0].SubItems[3].Text -eq 'pending' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'pending') 'Queued release was shown as full tests or package passing.'
-    $State.releaseRequests[0].status='completed'; $State.releaseRequests[0].fullTests='success'; $State.releaseRequests[0].package='skipped'
-    $State.releaseRequests[0].runId=123; $State.releaseRequests[0].attempt=2
+    $ReleaseState.requests[0].target='b'*40; Apply-ReleasePayload $Payload
+    Assert (-not $script:IntegrationPending -and $ReleaseRequests.Items.Count -eq 1 -and $ReleaseRequests.Items[0].SubItems[2].Text -eq 'dispatching' -and $ReleaseRequests.Items[0].SubItems[3].Text -eq 'unverified' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'unreported') 'Queued release was shown as full tests or package passing.'
+    $ReleaseState.requests[0].status='verified'; $ReleaseState.requests[0].output='d'*40; $ReleaseState.requests[0].tree='e'*40
+    $ReleaseState.requests[0].worker=@{runId=123;attempt=2}
+    $ReleaseState.requests[0].package=@{result='skipped';version='0.3.0';source=('d'*40);tree=('e'*40);runId=123;attempt=2;artifactVerified=$true;artifactSha256=('f'*64)}
     Apply-ReleasePayload $Payload
     $ReleaseRequests.Items[0].Selected=$true; Update-LaneReleaseRequestSelection
     Assert ($ReleaseRequests.Items[0].SubItems[4].Text -eq 'skipped' -and $ReleaseOpen.Enabled -and $ReleaseRequests.Items[0].SubItems[5].Text -eq '123 / 2') 'Skipped packaging or exact run attempt was hidden.'
-    $State.integrationMode='ValidateBeforeMerge'; Apply-ReleasePayload $Payload
+    $ReleaseState.requests[0].package.result='success'; Apply-ReleasePayload $Payload
+    Assert ($ReleaseRequests.Items[0].SubItems[2].Text -eq 'packaged' -and $ReleaseRequests.Items[0].SubItems[3].Text -eq 'success' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'success') 'Verified exact Full/package result was not displayed from the raw state.'
+    $ReleaseState.requests[0].package.runId=124; Apply-ReleasePayload $Payload
+    Assert ($ReleaseRequests.Items[0].SubItems[2].Text -ne 'packaged' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'success (unverified)') 'Wrong-run package receipt was accepted as a release pass.'
+    $ReleaseState.integrationMode='ValidateBeforeMerge'; Apply-ReleasePayload $Payload
     Assert ($RelSplit.Visible -and -not $StagingReleaseRoot.Visible) 'Switching back did not restore legacy releases.'
     Assert (-not $script:UiErrors.Count) 'A release UI handler threw.'
     'PASS: staging release UI, legacy mode, frozen version/source/revision/UUID transport, pause/packaging/stale guards, durable acknowledgement and exact separate Full/package outcomes.'

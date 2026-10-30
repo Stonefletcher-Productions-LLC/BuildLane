@@ -109,6 +109,8 @@ try {
     Assert (-not $IntegrationCheckpoint.Enabled -and $IntegrationCheckpointReason.Text -match 'paused') 'Local pause allowed a checkpoint.'
     Remove-Item -LiteralPath $PauseFile; Update-LaneIntegrationView
     Assert $IntegrationCheckpoint.Enabled 'Fresh explicit checkpoint capability did not enable the frozen target.'
+    $script:IntegrationInspect.Observation.capabilityReasons.checkpoint=''; Update-LaneIntegrationView
+    Assert $IntegrationCheckpoint.Enabled 'An empty backend string reason incorrectly blocked an eligible checkpoint.'
     if ($OutDirectory) {
         [void][IO.Directory]::CreateDirectory($OutDirectory)
         [Windows.Forms.Application]::DoEvents()

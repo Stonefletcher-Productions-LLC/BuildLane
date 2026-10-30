@@ -141,9 +141,9 @@ In staging mode the Releases tab uses controller requests instead of milestone-o
 and `details={"target":"<frozen SHA>","version":"0.3.0"}` to the trusted main controller.
 
 Only a matching completed controller record (including target and version binding) plus the corresponding
-`state.releaseRequests[]` entry acknowledges the request. HTTP acceptance stays pending and is never
+versioned `state.requests[]` entry acknowledges the request. HTTP acceptance stays pending and is never
 automatically retried. The backend owns cumulative imports, full validation, package generation and
-receipt verification. The history displays authoritative `status`, `fullTests` and `package` separately;
+receipt verification. The history reads live versioned `state.requests[]`, not a cached inspection projection, and displays status, Full validation and `package.result` separately;
 missing results remain unreported, and skipped packaging never becomes a passed package. Run links use
-only the recorded numeric `runId` and `attempt`. Optional `outputSha` and `treeSha` identify the tested
+only the recorded numeric `worker.runId` and `worker.attempt`. The raw `output` and `tree` identify the tested
 post-import source separately from the frozen input. Validation-first releases retain their existing UI.

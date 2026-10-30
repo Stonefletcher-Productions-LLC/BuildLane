@@ -90,13 +90,16 @@ function Test-LaneModeChangeAllowed {
     $Allowed=$Inspected -and $I.Observation.capabilities.changeMode -is [bool] -and $I.Observation.capabilities.changeMode -eq $true -and -not @($I.Observation.blockingReasons).Count
     [bool]($Fresh -and $Allowed -and -not @($S.State.work).Count -and $Target -ne $S.State.integrationMode -and -not $script:IntegrationPending)
 }
+function Get-LaneCapabilityReasons([string]$Capability) {
+    @($script:IntegrationInspect.Observation.capabilityReasons.$Capability | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+}
 function Test-LaneCheckpointAllowed {
     $S=$script:IntegrationSnapshot; $I=$script:IntegrationInspect
     [bool]($S -and $S.Initialized -and -not $script:IntegrationError -and ([datetime]::UtcNow-$S.AtUtc).TotalSeconds -le 60 -and
         $S.State.integrationMode -eq 'MergeToStagingThenValidate' -and $I -and ([datetime]::UtcNow-$I.AtUtc).TotalSeconds -le 60 -and
         $I.Observation.integrationMode -eq $S.State.integrationMode -and $I.Observation.controllerRef -eq 'main' -and
         $I.Observation.staging.headSha -match '^[a-f0-9]{40}$' -and $I.Observation.capabilities.checkpoint -is [bool] -and
-        $I.Observation.capabilities.checkpoint -eq $true -and -not @($I.Observation.capabilityReasons.checkpoint).Count -and
+        $I.Observation.capabilities.checkpoint -eq $true -and -not @(Get-LaneCapabilityReasons checkpoint).Count -and
         -not @($S.State.work).Count -and -not $script:IntegrationPending -and -not (Test-Path -LiteralPath $PauseFile))
 }
 function Update-LaneIntegrationView {
@@ -114,7 +117,7 @@ function Update-LaneIntegrationView {
     $IntegrationOpen.Enabled=$Configured
     $IntegrationCheckpoint.Enabled=($Configured -and -not $Busy -and (Test-LaneCheckpointAllowed))
     $IntegrationTarget.Text=if ($I -and $I.Observation.staging.headSha -match '^[a-f0-9]{40}$') { "Checkpoint target: $($I.Observation.staging.headSha)" } else { 'Checkpoint target has not been verified.' }
-    $IntegrationCheckpointReason.Text=if ($script:IntegrationPending -and $script:IntegrationPending.Operation -eq 'checkpoint') { 'Waiting for the checkpoint request result. Acceptance is not a test pass.' } elseif (Test-Path -LiteralPath $PauseFile) { 'Checkpoint waits: builds are paused. Resume builds first.' } elseif ($I -and @($I.Observation.capabilityReasons.checkpoint).Count) { 'Checkpoint blocked: '+(@($I.Observation.capabilityReasons.checkpoint) -join '; ') } elseif (-not $IntegrationCheckpoint.Enabled) { 'Request a fresh backend inspection. Checkpoints require staging mode, a verified target, an idle lane and explicit backend eligibility.' } else { 'This requests compilation and tests for the exact revision above. Full release coverage remains required before release.' }
+    $IntegrationCheckpointReason.Text=if ($script:IntegrationPending -and $script:IntegrationPending.Operation -eq 'checkpoint') { 'Waiting for the checkpoint request result. Acceptance is not a test pass.' } elseif (Test-Path -LiteralPath $PauseFile) { 'Checkpoint waits: builds are paused. Resume builds first.' } elseif ($I -and @(Get-LaneCapabilityReasons checkpoint).Count) { 'Checkpoint blocked: '+(@(Get-LaneCapabilityReasons checkpoint) -join '; ') } elseif (-not $IntegrationCheckpoint.Enabled) { 'Request a fresh backend inspection. Checkpoints require staging mode, a verified target, an idle lane and explicit backend eligibility.' } else { 'This requests compilation and tests for the exact revision above. Full release coverage remains required before release.' }
     $IntegrationBlock.Text=if (-not $Configured) { 'Configure the integration controller workflow in Projects > Advanced settings.' } elseif ($script:IntegrationError) { $script:IntegrationError } elseif (-not $S -or -not $S.Initialized) { 'The release owner must initialize and verify the backend before these controls can change it.' } elseif ($script:IntegrationPending) { "Waiting for the server result of request $($script:IntegrationPending.RequestId). No automatic retry." } elseif (@($S.State.work).Count) { 'Outstanding work blocks a mode change: '+(@($S.State.work) -join '; ') } elseif ($I -and @($I.Observation.blockingReasons).Count) { 'Mode change blocked: '+(@($I.Observation.blockingReasons) -join '; ') } elseif (-not $I -or ([datetime]::UtcNow-$I.AtUtc).TotalSeconds -gt 60) { 'Refresh backend eligibility before changing mode.' } else { '' }
     if ($S -and $S.Initialized) { $IntegrationDetails.Text="State revision: $($S.Revision)`nVerified at $($S.AtUtc.ToLocalTime().ToString('HH:mm:ss')). Recorded outstanding work: $(@($S.State.work).Count). Checkpoint records: $(@($S.State.checkpoints).Count)." } else { $IntegrationDetails.Text='' }
     Update-LaneReleaseRequestsView
@@ -196,7 +199,7 @@ function Complete-LaneIntegration {
                             $script:IntegrationPending=$null; $script:IntegrationInspect=$null
                         } else { $script:IntegrationError='The completed request has no matching frozen checkpoint record. Inspect the controller; no retry was sent.' }
                     } elseif ($P.Operation -eq 'release') {
-                        $Releases=@($Result.State.releaseRequests | Where-Object { $_.requestId -eq $P.RequestId -and $_.target -eq $P.Target -and $_.version -eq $P.Version })
+                        $Releases=@(Get-LaneReleaseRecords $Result.State | Where-Object { $_.requestId -eq $P.RequestId -and $_.target -eq $P.Target -and $_.version -eq $P.Version })
                         if ($Releases.Count -eq 1) {
                             $script:ReleaseRequestResult="Release $($P.Version) requested for $($P.Target). Server state: $($Releases[0].status). Full tests and packaging have separate outcomes."
                             $IntegrationMessage.Text=$script:ReleaseRequestResult

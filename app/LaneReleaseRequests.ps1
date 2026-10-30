@@ -40,7 +40,7 @@ foreach ($Column in @(@('Version',90),@('Source',120),@('Server state',160),@('F
 $ReleaseRequestDetails=Add-Row (New-Label '' $FontSmall $Grey) 8 $StagingReleaseRoot
 $ReleaseVersion.Add_TextChanged({ Update-LaneReleaseRequestsView })
 $ReleaseRequests.Add_SelectedIndexChanged({ Update-LaneReleaseRequestSelection })
-function Test-LaneReleaseVersion([string]$Version) { [bool]($Version -match '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$' -and $Version.Length -le 64) }
+function Test-LaneReleaseVersion([string]$Version) { [bool]($Version -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -and $Version.Length -le 64) }
 function Get-LaneReleaseTarget {
     $I=$script:IntegrationInspect
     if ($I -and $I.Observation.releaseTarget.sourceSha -match '^[a-f0-9]{40}$') { [string]$I.Observation.releaseTarget.sourceSha }
@@ -51,13 +51,31 @@ function Test-LaneReleaseRequestAllowed {
         $S.State.integrationMode -eq 'MergeToStagingThenValidate' -and $I -and ([datetime]::UtcNow-$I.AtUtc).TotalSeconds -le 60 -and
         $I.Observation.integrationMode -eq $S.State.integrationMode -and $I.Observation.controllerRef -eq 'main' -and
         (Get-LaneReleaseTarget) -and $I.Observation.capabilities.release -is [bool] -and $I.Observation.capabilities.release -eq $true -and
-        -not @($I.Observation.capabilityReasons.release).Count -and -not @($S.State.work).Count -and
+        -not @(Get-LaneCapabilityReasons release).Count -and -not @($S.State.work).Count -and
         -not $script:IntegrationPending -and -not (Test-Path -LiteralPath $PauseFile) -and (Test-LaneReleaseVersion $ReleaseVersion.Text.Trim()))
+}
+function Get-LaneReleaseRecords($RawState) {
+    foreach ($Request in @($RawState.requests | Where-Object { $_ -and $_.version })) {
+        $RunId=$Request.worker.runId; $Attempt=$Request.worker.attempt
+        $Identity=[string]$RunId -match '^[1-9]\d*$' -and [string]$Attempt -match '^[1-9]\d*$' -and [string]$Request.output -match '^[a-f0-9]{40}$' -and [string]$Request.tree -match '^[a-f0-9]{40}$'
+        $FullVerified=$Request.status -eq 'verified' -and $Request.testSet -eq 'Full' -and $Identity
+        $Package=$Request.package
+        $PackageVerified=$FullVerified -and $Package -and $Package.result -eq 'success' -and $Package.version -eq $Request.version -and
+            $Package.source -eq $Request.output -and $Package.tree -eq $Request.tree -and [string]$Package.runId -eq [string]$RunId -and
+            [string]$Package.attempt -eq [string]$Attempt -and $Package.artifactVerified -is [bool] -and $Package.artifactVerified -eq $true -and
+            [string]$Package.artifactSha256 -match '^[a-f0-9]{64}$'
+        $PackageState=if (-not $Package -or -not $Package.result) { 'unreported' } elseif ($Package.result -eq 'success' -and -not $PackageVerified) { 'success (unverified)' } else { [string]$Package.result }
+        [pscustomobject]@{requestId=$Request.requestId;version=$Request.version;target=$Request.target;
+            status=$(if ($PackageVerified) { 'packaged' } else { [string]$Request.status });
+            fullTests=$(if ($FullVerified) { 'success' } else { 'unverified' });package=$PackageState;
+            runId=$RunId;attempt=$Attempt;outputSha=$Request.output;treeSha=$Request.tree;packagePath=$Package.path;
+            message=$(if ($PackageVerified) { 'Full tests and exact package receipt verified.' } else { 'This frozen release request has not yet produced a verified Full/package result. Open the exact build for progress or failure details.' })}
+    }
 }
 function Update-LaneReleaseRequestSelection {
     $Record=if ($ReleaseRequests.SelectedItems.Count) { $ReleaseRequests.SelectedItems[0].Tag }
     $ReleaseOpen.Enabled=[bool]($Record -and [string]$Record.runId -match '^[1-9]\d*$' -and [string]$Record.attempt -match '^[1-9]\d*$')
-    $ReleaseRequestDetails.Text=if ($Record) { "Request: $($Record.requestId)`nVersion: $($Record.version). Frozen input: $($Record.target).`nTested output: $(if ($Record.outputSha) { $Record.outputSha } else { 'not reported' }). Tree: $(if ($Record.treeSha) { $Record.treeSha } else { 'not reported' }).`n$($Record.message)" } else { 'Select a release request to see its exact input, tested output and build attempt. Outcomes below are reported by the backend; missing results remain unreported.' }
+    $ReleaseRequestDetails.Text=if ($Record) { "Request: $($Record.requestId)`nVersion: $($Record.version). Frozen input: $($Record.target).`nTested output: $(if ($Record.outputSha) { $Record.outputSha } else { 'not reported' }). Tree: $(if ($Record.treeSha) { $Record.treeSha } else { 'not reported' }).`nPackage location: $(if ($Record.packagePath) { $Record.packagePath } else { 'not reported' }).`n$($Record.message)" } else { 'Select a release request to see its exact input, tested output and build attempt. Outcomes below are reported by the backend; missing results remain unreported.' }
 }
 function Update-LaneReleaseRequestsView {
     $S=$script:IntegrationSnapshot; $I=$script:IntegrationInspect
@@ -79,13 +97,13 @@ function Update-LaneReleaseRequestsView {
     $ReleaseRequestMessage.Text=if ($script:IntegrationPending -and $script:IntegrationPending.Operation -eq 'release') { "Waiting for release request $($script:IntegrationPending.RequestId), version $($script:IntegrationPending.Version). Acceptance does not mean full tests or packaging passed. No automatic retry." }
         elseif ($script:IntegrationError) { $script:IntegrationError }
         elseif (Test-Path -LiteralPath $PauseFile) { 'Release waits: builds are paused. Resume builds first.' }
-        elseif ($I -and @($I.Observation.capabilityReasons.release).Count) { 'Release blocked: '+(@($I.Observation.capabilityReasons.release) -join '; ') }
+        elseif ($I -and @(Get-LaneCapabilityReasons release).Count) { 'Release blocked: '+(@(Get-LaneCapabilityReasons release) -join '; ') }
         elseif (-not $Fresh -or -not $Target) { 'Refresh release eligibility to confirm a frozen target and current availability.' }
         elseif (@($S.State.work).Count) { 'Release waits for outstanding work: '+(@($S.State.work) -join '; ') }
         elseif (-not (Test-LaneReleaseVersion $ReleaseVersion.Text.Trim())) { 'Enter a version such as 0.3.0, without a leading v.' }
         elseif (-not $ReleaseQueue.Enabled) { 'The backend has not confirmed that a release can be queued. Full release coverage cannot be bypassed.' }
         else { 'This queues full tests and packaging for the exact version and revision above. Later staging changes are separate.' }
-    $Records=@($S.State.releaseRequests | Where-Object { $null -ne $_ })
+    $Records=@(Get-LaneReleaseRecords $S.State)
     $Key="$Repo|$Profile|"+($Records | ConvertTo-Json -Depth 12 -Compress)
     if ($Key -ne $script:ReleaseRowsKey) {
         $script:ReleaseRowsKey=$Key
