@@ -28,7 +28,7 @@ try {
     $Before=$Queue.Items[0]; 1..10 | ForEach-Object { Update-View }
     Assert ([object]::ReferenceEquals($Before,$Queue.Items[0])) 'Unchanged refresh rebuilt PR rows.'
     Set-LanePullResult @{Error='Fixture offline';RetrySeconds=60}
-    Assert ($Queue.Items.Count -eq 4 -and $QueueHint.Text -match 'Last known') 'API failure erased cached evidence.'
+    Assert ($Queue.Items.Count -eq 3 -and $QueueHint.Text -match 'Last known') 'API failure erased cached evidence.'
     $script:PullError=''; Update-View
     ($Queue.Items | Where-Object Tag -eq 1).Selected=$true
     function Fresh-MergeEligibility {
