@@ -1,7 +1,12 @@
 # Live PR evidence is independent of a runner's historical queue.
 $script:PullSnapshot=$null; $script:PullError=''; $script:PullIdentity=''; $script:NextPullRead=[datetime]::MinValue
+function Get-LanePullBranch {
+    # Read-only history can retain the known mode while mutation eligibility expires.
+    if ($script:IntegrationSnapshot.Initialized -and $script:IntegrationSnapshot.State.integrationMode -eq 'MergeToStagingThenValidate') { return 'Test-Staging' }
+    $Config.branch
+}
 function Initialize-LanePulls {
-    $Identity="$Repo|$Profile|$(Get-LaneIntegrationBranch)"
+    $Identity="$Repo|$Profile|$(Get-LanePullBranch)"
     if ($Identity -ne $script:PullIdentity) {
         $script:PullIdentity=$Identity; $script:PullSnapshot=$null; $script:PullError=''; $script:NextPullRead=[datetime]::MinValue; $script:PullRowsKey=''
     }

@@ -30,6 +30,7 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
         return
     }
     $ReadBranch=Get-LaneIntegrationBranch
+    if ($Kind -eq 'pulls') { $ReadBranch=Get-LanePullBranch }
     if ($Kind -eq 'releases' -and -not $ReadBranch) { $RelMsg.Text='Refresh authoritative integration status before listing release PRs.'; return }
     if (-not $ReadBranch) { $ReadBranch=$Config.branch }
     $Shell = [PowerShell]::Create()
