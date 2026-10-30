@@ -12,6 +12,11 @@ $PullRefresh=New-Button 'Refresh merge eligibility' {
 $PullMerge=New-Button 'Merge now' { try { Start-LanePullAction stage } catch { $script:PullActionMessage=$_.Exception.Message; Update-View } } $PullActions
 $PullAuto=New-Button 'Merge when checks pass' { try { Start-LanePullAction queue-merge } catch { $script:PullActionMessage=$_.Exception.Message; Update-View } } $PullActions
 $PullCancel=New-Button 'Cancel queued merge' { try { Start-LanePullAction cancel-merge } catch { $script:PullActionMessage=$_.Exception.Message; Update-View } } $PullActions
+$MergePause=New-Button 'Resume merges' {
+    try { Start-LaneIntegrationRequest $(if ($script:IntegrationSnapshot.State.integrationPaused -is [bool] -and $script:IntegrationSnapshot.State.integrationPaused -eq $false) { 'pause-integration' } else { 'resume-integration' }) }
+    catch { $script:PullActionMessage=$_.Exception.Message; Update-View }
+} $PullActions
+$PullMerge.Enabled=$false; $PullAuto.Enabled=$false; $PullCancel.Enabled=$false
 $Queue.Add_SelectedIndexChanged({ Update-LanePullActions })
 function Get-LaneSelectedPull {
     if (-not $Queue.SelectedItems.Count) { return $null }
@@ -27,11 +32,23 @@ function Get-LaneSelectedMergeQueue {
 }
 function Update-LanePullActions {
     if (-not $PullActions) { return }
+    $Visible=[bool]$Config.integrationWorkflow
+    if ($PullActions.Visible -ne $Visible) { $PullActions.Visible=$Visible }
     $Pr=Get-LaneSelectedPull
     $PullMerge.Enabled=Test-LanePullActionAllowed stage $Pr
     $PullAuto.Enabled=Test-LanePullActionAllowed queue-merge $Pr
     $PullCancel.Enabled=Test-LanePullActionAllowed cancel-merge $Pr
     $PullRefresh.Enabled=[bool]($Config.integrationWorkflow -and -not $script:IntegrationJob -and -not $script:IntegrationPending -and -not $script:CommandJob -and -not $script:ActionJob -and -not $script:MoveJob)
+    $Running=$script:IntegrationSnapshot.State.integrationPaused -is [bool] -and $script:IntegrationSnapshot.State.integrationPaused -eq $false
+    $MergePause.Text=if ($Running) { 'Pause merges' } else { 'Resume merges' }
+    $MergePause.Enabled=Test-LaneMergePauseAllowed $(if ($Running) { 'pause-integration' } else { 'resume-integration' })
+}
+function Test-LaneMergePauseAllowed([string]$Operation) {
+    $S=$script:IntegrationSnapshot; $I=$script:IntegrationInspect
+    if (-not $Config.integrationWorkflow -or -not $S.Initialized -or $script:IntegrationError -or ([datetime]::UtcNow-$S.AtUtc).TotalSeconds -gt 60 -or -not $I -or ([datetime]::UtcNow-$I.AtUtc).TotalSeconds -gt 60 -or $I.Observation.controllerRef -ne 'main' -or $I.Observation.integrationMode -ne $S.State.integrationMode) { return $false }
+    if ($script:IntegrationJob -or $script:IntegrationPending -or $script:MoveJob -or $script:CommandJob -or $script:ActionJob) { return $false }
+    $Capability=if ($Operation -eq 'pause-integration') { $I.Observation.capabilities.pauseIntegration } else { $I.Observation.capabilities.resumeIntegration }
+    [bool]($Capability -is [bool] -and $Capability)
 }
 function Test-LanePullActionAllowed([string]$Operation,$Pr) {
     $S=$script:IntegrationSnapshot; $I=$script:IntegrationInspect
@@ -39,12 +56,11 @@ function Test-LanePullActionAllowed([string]$Operation,$Pr) {
     if (-not $Fresh -or -not $Config.integrationWorkflow -or $S.State.integrationMode -ne 'MergeToStagingThenValidate' -or $I.Observation.integrationMode -ne $S.State.integrationMode -or $I.Observation.controllerRef -ne 'main') { return $false }
     if ($script:IntegrationJob -or $script:IntegrationPending -or $script:MoveJob -or $script:CommandJob -or $script:ActionJob) { return $false }
     if ($Operation -eq 'cancel-merge') { return [bool]($I.Observation.capabilities.cancelMerge -is [bool] -and $I.Observation.capabilities.cancelMerge -and (Get-LaneSelectedMergeQueue)) }
-    if (Test-Path -LiteralPath $PauseFile) { return $false }
     if (-not $Pr -or $Pr.isDraft -or $Pr.baseRefName -ne 'Test-Staging' -or $Pr.headRefOid -notmatch '^[a-f0-9]{40}$' -or -not (Test-LanePullReviewed $Pr)) { return $false }
     if (-not $script:PullSnapshot -or $script:PullError -or ([datetime]::UtcNow-$script:PullSnapshot.AtUtc).TotalSeconds -gt 90 -or (Get-LaneSelectedMergeQueue)) { return $false }
     if ($Operation -eq 'queue-merge') { return [bool]($I.Observation.capabilities.queueMerge -is [bool] -and $I.Observation.capabilities.queueMerge) }
     $Checks=[string](@($Pr.commits.nodes)[0].commit.statusCheckRollup.state)
-    [bool]($I.Observation.capabilities.stage -is [bool] -and $I.Observation.capabilities.stage -and $Checks -eq 'SUCCESS' -and $Pr.mergeable -eq 'MERGEABLE' -and $Pr.mergeStateStatus -eq 'CLEAN')
+    [bool]($S.State.integrationPaused -is [bool] -and $S.State.integrationPaused -eq $false -and $I.Observation.capabilities.stage -is [bool] -and $I.Observation.capabilities.stage -and $Checks -eq 'SUCCESS' -and $Pr.mergeable -eq 'MERGEABLE' -and $Pr.mergeStateStatus -eq 'CLEAN')
 }
 function Get-LanePullActionReason($Pr) {
     if ($Pr.isDraft) { return 'Finish the draft before merging.' }
@@ -52,9 +68,9 @@ function Get-LanePullActionReason($Pr) {
     if ($Pr.baseRefName -ne 'Test-Staging') { return 'This PR targets another branch. Staging merge controls do not retarget it.' }
     $Queued=Get-LaneSelectedMergeQueue
     if ($Queued) { return "Queued merge: $($Queued.status). $($Queued.reason) Cancel only removes this merge request, not a build." }
-    if (Test-Path -LiteralPath $PauseFile) { return 'Builds are paused. Resume before requesting a merge.' }
+    if ($script:IntegrationSnapshot.State.integrationPaused -ne $false) { return 'Merges are paused. Reviewed changes can be queued; Resume merges allows the server to process them. Pause builds is separate.' }
     if ($PullMerge.Enabled) { return 'Reviewed and checks successful. Merge now still rechecks the exact head on the server.' }
-    if ($PullAuto.Enabled) { return 'Queue this reviewed head. The server waits for checks and rechecks review, conflicts and pause state; a new head requires review again.' }
+    if ($PullAuto.Enabled) { return 'Queue this reviewed head. The server waits for checks and rechecks review, conflicts and merge-pause state; a new head requires review again.' }
     'Refresh merge eligibility. The backend must explicitly permit this operation; stale or busy state disables it.'
 }
 function Start-LanePullAction([string]$Operation,[scriptblock]$Worker) {

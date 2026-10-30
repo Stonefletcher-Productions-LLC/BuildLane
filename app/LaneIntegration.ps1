@@ -141,13 +141,14 @@ function Start-LaneIntegrationRead([scriptblock]$Worker,[switch]$Force) {
     Start-LaneIntegrationWorker @{Kind='read';Repo=$Repo;Token=$script:Token} $Worker
     $script:NextIntegrationRead=[datetime]::UtcNow.AddSeconds($(if ($script:IntegrationPending) { 2 } else { 15 }))
 }
-function Start-LaneIntegrationRequest([ValidateSet('inspect','set-mode','checkpoint','release','stage','queue-merge','cancel-merge')][string]$Operation,[scriptblock]$Worker,[int]$PrNumber,[string]$Head,[string]$QueueId) {
+function Start-LaneIntegrationRequest([ValidateSet('inspect','set-mode','checkpoint','release','stage','queue-merge','cancel-merge','pause-integration','resume-integration')][string]$Operation,[scriptblock]$Worker,[int]$PrNumber,[string]$Head,[string]$QueueId) {
     if ($script:IntegrationJob -or $script:IntegrationPending -or $script:CommandJob -or $script:MoveJob -or $script:ActionJob) { return }
     if ($Config.setupRequired -or -not $Config.integrationWorkflow -or -not $script:IntegrationSnapshot.Initialized) { throw 'Initialize and verify the integration backend first.' }
     if (-not $Worker -and ($SmokeTest -or -not $script:Token)) { throw 'Connect GitHub before sending a controller request.' }
     if ($Operation -eq 'set-mode' -and -not (Test-LaneModeChangeAllowed)) { throw 'The backend has not confirmed that this mode change is currently allowed. Refresh eligibility.' }
     if ($Operation -eq 'checkpoint' -and -not (Test-LaneCheckpointAllowed)) { throw 'The backend has not confirmed that this checkpoint is currently allowed. Refresh eligibility.' }
     if ($Operation -eq 'release' -and -not (Test-LaneReleaseRequestAllowed)) { throw 'The backend has not confirmed release eligibility for this frozen target and version.' }
+    if ($Operation -in @('pause-integration','resume-integration') -and -not (Test-LaneMergePauseAllowed $Operation)) { throw 'Refresh merge eligibility before changing the server merge pause.' }
     if ($Operation -in @('stage','queue-merge','cancel-merge')) {
         $Selected=Get-LaneSelectedPull
         if (-not (Test-LanePullActionAllowed $Operation $Selected)) { throw 'Refresh merge eligibility and select a reviewed PR at its current head.' }
@@ -197,7 +198,7 @@ function Complete-LaneIntegration {
                 if (-not $Bound) { $script:IntegrationError='The durable request binding differs from this action. No retry was sent.' }
                 elseif ($Record.status -in @('failed','attention')) {
                     if ($P.Operation -eq 'release') { $script:ReleaseRequestResult="Release request $($Record.status): $($Record.message)" }
-                    if ($P.Operation -in @('stage','queue-merge','cancel-merge')) { $script:PullActionMessage="Merge request $($Record.status): $($Record.message)" }
+                    if ($P.Operation -in @('stage','queue-merge','cancel-merge','pause-integration','resume-integration')) { $script:PullActionMessage="Merge request $($Record.status): $($Record.message)" }
                     $IntegrationMessage.Text="Controller $($Record.status): $($Record.message)"; $IntegrationMessage.ForeColor=$Orange; $script:IntegrationPending=$null; $script:IntegrationInspect=$null
                 }
                 elseif ($Record.status -eq 'completed') {
@@ -223,6 +224,9 @@ function Complete-LaneIntegration {
                         } else { $script:IntegrationError='The completed release request has no matching frozen version and target record. Inspect the controller; no retry was sent.' }
                     } elseif ($P.Operation -in @('stage','queue-merge','cancel-merge')) {
                         Complete-LanePullRequest $P $Result.State
+                    } elseif ($P.Operation -in @('pause-integration','resume-integration') -and $Result.State.integrationPaused -is [bool] -and $Result.State.integrationPaused -eq ($P.Operation -eq 'pause-integration')) {
+                        $script:PullActionMessage=if ($Result.State.integrationPaused) { 'Server confirmed: merges paused. Build pause is separate.' } else { 'Server confirmed: merges running. Queued reviewed heads can now be processed.' }
+                        $script:IntegrationPending=$null; $script:IntegrationInspect=$null
                     } else { $script:IntegrationError='The completed request does not match the authoritative mode. Refresh and inspect the controller; no retry was sent.' }
                 }
             }

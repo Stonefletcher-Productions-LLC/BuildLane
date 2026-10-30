@@ -25,7 +25,7 @@ try {
     $Queue.Items[0].Selected=$true
     function Fresh-MergeEligibility {
         $script:IntegrationSnapshot.AtUtc=[datetime]::UtcNow
-        $script:IntegrationInspect=@{AtUtc=[datetime]::UtcNow;Observation=@{integrationMode='MergeToStagingThenValidate';controllerRef='main';capabilities=@{stage=$true;queueMerge=$true;cancelMerge=$true}}}
+        $script:IntegrationInspect=@{AtUtc=[datetime]::UtcNow;Observation=@{integrationMode='MergeToStagingThenValidate';controllerRef='main';capabilities=@{stage=$true;queueMerge=$true;cancelMerge=$true;pauseIntegration=$true;resumeIntegration=$true}}}
         Update-LanePullActions
     }
     function Drain-Merge {
@@ -41,6 +41,8 @@ try {
     }
     # Exact-head approval, including controller review, is distinct from successful checks.
     Fresh-MergeEligibility
+    Assert (-not $PullMerge.Enabled -and $PullAuto.Enabled -and $MergePause.Text -eq 'Resume merges') 'Missing remote pause state failed open.'
+    $script:IntegrationSnapshot.State.integrationPaused=$false; Update-LanePullActions
     Assert ($PullMerge.Enabled -and $PullAuto.Enabled) 'Eligible approved PR did not enable merge controls.'
     $Prs[0].commits.nodes[0].commit.statusCheckRollup.state='PENDING'; Update-LanePullActions
     Assert (-not $PullMerge.Enabled -and $PullAuto.Enabled) 'Pending checks could merge now or could not be queued.'
@@ -102,6 +104,22 @@ try {
     $script:IntegrationSnapshot.State.controllerRequests=@(@{requestId=$Pending.RequestId;operation='queue-merge';status='attention';message='Current head needs review';binding=(@{operation='queue-merge';number=1;head=('b'*40)} | ConvertTo-Json -Compress)})
     Apply-MergeState
     Assert (-not $script:IntegrationPending -and $QueueHint.Text -match 'Current head needs review') 'Controller rejection was hidden from Overview.'
+    Fresh-MergeEligibility
+    Start-LaneIntegrationRequest pause-integration -Worker { param($Request) @{Accepted=$true;RequestId=$Request.RequestId} }; Drain-Merge
+    $Pending=$script:IntegrationPending
+    Assert ($script:IntegrationSnapshot.State.integrationPaused -eq $false) 'HTTP acceptance optimistically paused server merges.'
+    $script:IntegrationSnapshot.State.controllerRequests=@(@{requestId=$Pending.RequestId;operation='pause-integration';status='completed';binding='{"operation":"pause-integration"}'})
+    $script:IntegrationSnapshot.State.integrationPaused=$true
+    Apply-MergeState
+    Assert (-not $script:IntegrationPending -and $QueueHead.Text -match 'merges paused') 'Durable pause was not shown.'
+    Fresh-MergeEligibility
+    Assert (-not $PullMerge.Enabled -and $PullAuto.Enabled -and $MergePause.Enabled) 'Paused merge server blocked queueing or allowed merge now.'
+    Start-LaneIntegrationRequest resume-integration -Worker { param($Request) @{Accepted=$true;RequestId=$Request.RequestId} }; Drain-Merge
+    $Pending=$script:IntegrationPending
+    $script:IntegrationSnapshot.State.controllerRequests=@(@{requestId=$Pending.RequestId;operation='resume-integration';status='completed';binding='{"operation":"resume-integration"}'})
+    $script:IntegrationSnapshot.State.integrationPaused=$false
+    Apply-MergeState
+    Assert (-not $script:IntegrationPending -and $QueueHead.Text -match 'merges running') 'Durable resume was not shown.'
     $script:PullActionMessage=''; Fresh-MergeEligibility; Update-View
     if ($OutDirectory) { [void][IO.Directory]::CreateDirectory($OutDirectory); Resize-Content; Set-PaneHeights; [Windows.Forms.Application]::DoEvents(); $Bitmap=New-Object Drawing.Bitmap($Form.Width,$Form.Height); try {$Form.DrawToBitmap($Bitmap,(New-Object Drawing.Rectangle(0,0,$Form.Width,$Form.Height)));$Bitmap.Save((Join-Path $OutDirectory 'open-prs.png'))} finally {$Bitmap.Dispose()} }
     $script:IntegrationSnapshot.State.requests[0].worker.attempt=3; Update-View
