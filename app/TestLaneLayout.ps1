@@ -57,7 +57,7 @@ public static class LaneLayoutFixtureWindow {
             if ($Control -is [Windows.Forms.Label] -and $Control.Height -lt $Control.GetPreferredSize((New-Object Drawing.Size($Control.Width,0))).Height) { throw "Clipped label: $($Control.Text) bounds$($Control.Bounds)" }
             $Previous=$Control
         }
-        if ($JobBar.Width -lt 700 -or $StepBar.Width -lt 700) { throw "Progress bars collapsed: $($JobBar.Bounds) / $($StepBar.Bounds); columns $($Root.GetColumnWidths() -join ',')" }
+        if (($JobBar.Visible -and $JobBar.Width -lt 700) -or ($StepBar.Visible -and $StepBar.Width -lt 700)) { throw "Progress bars collapsed: $($JobBar.Bounds) / $($StepBar.Bounds); columns $($Root.GetColumnWidths() -join ',')" }
         # An unchanged completed report and unchanged checkout handoff must not repaint
         # intermediate local values or toggle rows on each one-second status tick.
         foreach ($Handoff in @($false,$true)) {

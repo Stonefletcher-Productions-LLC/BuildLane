@@ -17,6 +17,12 @@ $MergePause=New-Button 'Resume merges' {
     catch { $script:PullActionMessage=$_.Exception.Message; Update-View }
 } $PullActions
 $PullMerge.Enabled=$false; $PullAuto.Enabled=$false; $PullCancel.Enabled=$false
+# Merged PRs are history, not work: hidden unless asked for, so the list only shows what is still moving.
+$PullShowMerged=New-Object Windows.Forms.CheckBox
+$PullShowMerged.Text='Show recent merges'; $PullShowMerged.AutoSize=$true; $PullShowMerged.Checked=$false; $PullShowMerged.Font=$FontBody
+$PullShowMerged.Margin=New-Object Windows.Forms.Padding(12, 10, 0, 0)
+$PullShowMerged.Add_CheckedChanged({ $script:PullRowsKey=''; Update-View })
+[void]$PullActions.Controls.Add($PullShowMerged)
 $Queue.Add_SelectedIndexChanged({ Update-LanePullActions })
 function Get-LaneSelectedPull {
     if (-not $Queue.SelectedItems.Count) { return $null }

@@ -33,7 +33,7 @@ Your runner writes the configured `statusFile`. Use ISO 8601 timestamps, and rep
 
 `phase` is zero-based. Keep `done` empty during work; use `success`, `failure`, or `cancelled` when finished. Optional `runId` supports canceling the associated GitHub Actions run; `runUrl` and `issueUrl` enable log/status links. Recent step logs are read from `<runnerPath>\_diag\pages\*.log`.
 
-The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “completed or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
+The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “done or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
 
 Optional `waitingReason` explains the current wait, `waitingSince` is its ISO 8601 start time, and
 `blockingRunId` identifies the reported blocker. These fields are displayed only for unfinished work in

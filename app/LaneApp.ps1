@@ -384,7 +384,7 @@ function Publish-LaneOverviewFrame($Frame) {
 }
 function Set-Bar($Bar, [double]$Fraction, $Frame=$null) {
     if ($Frame) {
-        $Entry=@{Control=$Bar;Style=$(if ($Fraction -lt 0) { [Windows.Forms.ProgressBarStyle]::Marquee } else { [Windows.Forms.ProgressBarStyle]::Continuous })}
+        $Entry=@{Control=$Bar;Visible=$true;Style=$(if ($Fraction -lt 0) { [Windows.Forms.ProgressBarStyle]::Marquee } else { [Windows.Forms.ProgressBarStyle]::Continuous })}
         if ($Fraction -lt 0) { $Entry.MarqueeAnimationSpeed=40 } else { $Entry.Value=[int]([math]::Max(0.0,[math]::Min(1.0,$Fraction))*1000) }
         $Frame[$Bar]=$Entry
         return
@@ -440,8 +440,9 @@ function Update-View {
             $View.Title.Text = if ($Ok) { "✓ $($S.what): passed" } elseif ($S.done -eq "cancelled") { "○ $($S.what): cancelled" } elseif ($S.done -eq 'failure') { "✗ $($S.what): FAILED" } else { "○ $($S.what): $($S.done)" }
             $View.Title.ForeColor = if ($Ok) { $Green } elseif ($S.done -eq "cancelled") { $Grey } else { $Orange }
             $View.Sub.Text = "$($S.what), finished $($Updated.ToString('HH:mm')) after $(Format-Span ($Updated - $Started)). $(if ($Ok) { 'Check the queue below for upcoming work.' } else { 'Open the live log for details.' })"
-            $View.JobLabel.Text = "Run ended: $($S.done)"; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 })) $View
-            $View.StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 })) $View
+            # The title already says how it ended; full bars and a second "Run ended" line only repeated it.
+            $View.JobLabel.Text = ""; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 })) $View; $View[$JobBar].Visible = $false
+            $View.StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 })) $View; $View[$StepBar].Visible = $false
             $View.Time.Text = ""
         }
         else {
@@ -485,7 +486,7 @@ function Update-View {
                              else { "○", $Grey }
             $PhaseNote = if ($i -eq $Cur -and $S.done -eq 'cancelled') { ' (cancelled)' }
                          elseif ($S.done -and $i -gt $Cur) { ' (not reported)' }
-                         elseif ($i -lt $Cur) { ' (completed or skipped)' }
+                         elseif ($i -lt $Cur) { ' (done or skipped)' }
                          else { '' }
             $L = New-Label "$Glyph $($Phases[$i])$PhaseNote   " $FontBody $Color
             [void]$StepsBox.Controls.Add($L)

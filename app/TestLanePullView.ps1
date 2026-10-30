@@ -15,14 +15,22 @@ try {
     $Prs=@()
     foreach ($N in 1..3) { $Prs+=@(@{number=$N;title=@('Creator improvements','Street lighting','Vehicle polish')[$N-1];headRefOid=('b'*40);baseRefName='Test-Staging';isDraft=$false;reviewDecision=$(if ($N -eq 2) {'REVIEW_REQUIRED'} else {'APPROVED'});mergeable='MERGEABLE';mergeStateStatus='CLEAN';commits=@{nodes=@(@{commit=@{statusCheckRollup=@{state=$(if ($N -eq 3) {'FAILURE'} else {'SUCCESS'})}}})}}) }
     Set-LanePullResult @{Repo=$Repo;Branch='Test-Staging';AtUtc=[datetime]::UtcNow;Pulls=$Prs;Merged=@(@{number=4;title='Completed neck fix';baseRefName='Test-Staging';mergedAt='2026-10-30T00:00:00Z'})}
-    Assert ($Queue.Visible -and $Queue.Items.Count -eq 4 -and $QueueHead.Text -match 'Open pull requests') 'Completed report hid current PRs.'
+    Assert ($Queue.Visible -and $Queue.Items.Count -eq 3 -and $QueueHead.Text -match '^Pull requests:') 'Completed report hid current PRs.'
+    # Merged PRs are hidden until asked for; open work is grouped: needs you, ready, then waiting for review.
+    Assert ((@($Queue.Items | ForEach-Object {$_.Tag}) -join ',') -eq '3,1,2') 'Open PRs were not grouped by what they need.'
+    Assert ($QueueHead.Text -match '1 need you' -and $QueueHead.Text -match '1 ready' -and $QueueHead.Text -match '1 waiting for review' -and $QueueHead.Text -match 'builds on') "Summary line is wrong: $($QueueHead.Text)"
+    Assert ($Queue.Items[0].ForeColor -eq $Orange -and $Queue.Items[0].SubItems[2].Text -match 'Checks failed') 'Failed checks are not called out.'
+    $PullShowMerged.Checked=$true
+    Assert ($Queue.Items.Count -eq 4 -and $Queue.Items[3].Tag -eq 4 -and $Queue.Items[3].ForeColor -eq $Grey -and $PullShowMerged.Text -match '\(1\)') 'Show recent merges did not list merged PRs last, in grey.'
+    $PullShowMerged.Checked=$false
+    Assert ($Queue.Items.Count -eq 3) 'Hiding merges kept merged PRs.'
     Assert ($Title.Text -match '^Release 0.3.0') 'Exact run/attempt binding did not name release.'
     $Before=$Queue.Items[0]; 1..10 | ForEach-Object { Update-View }
     Assert ([object]::ReferenceEquals($Before,$Queue.Items[0])) 'Unchanged refresh rebuilt PR rows.'
     Set-LanePullResult @{Error='Fixture offline';RetrySeconds=60}
     Assert ($Queue.Items.Count -eq 4 -and $QueueHint.Text -match 'Last known') 'API failure erased cached evidence.'
     $script:PullError=''; Update-View
-    $Queue.Items[0].Selected=$true
+    ($Queue.Items | Where-Object Tag -eq 1).Selected=$true
     function Fresh-MergeEligibility {
         $script:IntegrationSnapshot.AtUtc=[datetime]::UtcNow
         $script:IntegrationInspect=@{AtUtc=[datetime]::UtcNow;Observation=@{integrationMode='MergeToStagingThenValidate';controllerRef='main';capabilities=@{stage=$true;queueMerge=$true;cancelMerge=$true;pauseIntegration=$true;resumeIntegration=$true}}}
@@ -142,10 +150,10 @@ try {
     Assert ($Queue.Columns[0].Text.EndsWith([string][char]0x2193)) 'Descending arrow is missing.'
     Click-QueueHeader 1; Assert-QueueOrder '10,100,2'
     Click-QueueHeader 1; Assert-QueueOrder '2,100,10'
-    Click-QueueHeader 2; Assert-QueueOrder '2,10,100'
-    Click-QueueHeader 2; Assert-QueueOrder '100,10,2'
+    Click-QueueHeader 2; Assert-QueueOrder '2,100,10'
+    Click-QueueHeader 2; Assert-QueueOrder '10,100,2'
     $SortPrs[0].title='Updated beta'; Refresh-SortRows
-    Assert-QueueOrder '100,10,2'
+    Assert-QueueOrder '10,100,2'
     Assert ($Queue.SelectedItems.Count -eq 1 -and $Queue.SelectedItems[0].Tag -eq 10) 'Refresh lost the selected PR.'
     Assert ($Queue.Columns[2].Text.EndsWith([string][char]0x2193) -and $Queue.Columns[1].Text -eq 'Title') 'Refresh lost sort direction or left a stale arrow.'
     $SortPrs=@(); Refresh-SortRows
