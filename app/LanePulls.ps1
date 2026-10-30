@@ -63,6 +63,18 @@ function Get-LanePullRow($Pr) {
     if ($Checks -ne 'SUCCESS') { return @{Rank=2;Group='Ready';Text="$($G.Circle) Approved, checks running";Color=$Ink} }
     @{Rank=2;Group='Ready';Text="$($G.Tick) Ready: press Merge now or Merge when checks pass";Color=$Blue}
 }
+# One line saying what the AI merge fixer (a GitHub Actions workflow) is doing, so its work is visible without GitHub.
+function Get-LaneAgentLine($Snapshot) {
+    $A=if ($Snapshot) { $Snapshot.Agent }
+    if (-not $A) { return '' }
+    if ($A.Error) { return "AI merge fixer: status unavailable ($($A.Error))" }
+    $Last=@($A.Runs)[0]
+    if (-not $Last) { return 'AI merge fixer (Claude): set up, has not run yet. It runs when the integration branch moves.' }
+    $When=$Last.createdAt; try { $When=([datetime]::Parse($Last.createdAt)).ToLocalTime().ToString('HH:mm') } catch {}
+    if ($Last.status -ne 'completed') { return "AI merge fixer (Claude): $($script:LaneGlyph.Play) working now on stuck PRs (started $When). Open AI fixer log to watch." }
+    $Outcome=switch ($Last.conclusion) { 'success' {'finished'} 'skipped' {'nothing to fix'} 'cancelled' {'cancelled'} default { "$($script:LaneGlyph.Warn) FAILED, open AI fixer log" } }
+    "AI merge fixer (Claude): idle. Last run $When, $Outcome. Fixed PRs get a Claude comment and need a fresh review."
+}
 function Update-LanePullView($View) {
     Initialize-LanePulls
     if ($PullActions) { Update-LanePullActions }
@@ -92,6 +104,9 @@ function Update-LanePullView($View) {
     $View.QueueHead.Text="Pull requests: $($Parts -join "  $($G.Dot)  ")"
     $Fresh=$Snapshot -and -not $script:PullError -and ([datetime]::UtcNow-$Snapshot.AtUtc).TotalSeconds -le 90
     $View.QueueHint.Text=if ($script:PullError) { "GitHub unavailable: $($script:PullError) Last known results; merge eligibility unconfirmed." } elseif ($Snapshot) { "$(if (-not $Fresh) { 'Last known' } else { 'Updated' }) $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss')). Queued PRs merge by themselves once checks pass, while merges are running. Pausing builds does not pause merges. Double-click a PR to open it; click a header to sort." } else { 'Current PRs come from GitHub, independently of completed build reports. Connect GitHub if needed.' }
+    $AgentLine=Get-LaneAgentLine $Snapshot
+    if ($AgentLine) { $View.QueueHint.Text="$AgentLine`n$($View.QueueHint.Text)" }
+    if ($PullAgentLog) { $Show=[bool]($Snapshot -and $Snapshot.Agent); if ($PullAgentLog.Visible -ne $Show) { $PullAgentLog.Visible=$Show } }
     if ($PullActions) {
         $Message=if ($script:IntegrationPending -and $script:IntegrationPending.Operation -in @('stage','queue-merge','cancel-merge','pause-integration','resume-integration')) { 'Waiting for the controller result. This is not a merge confirmation; no automatic retry.' } elseif ($script:PullActionMessage) { $script:PullActionMessage } elseif ($script:IntegrationError) { $script:IntegrationError } elseif (Get-LaneSelectedPull) { Get-LanePullActionReason (Get-LaneSelectedPull) } else { 'Select a PR to see what it is waiting for and which buttons apply.' }
         $View.QueueHint.Text="$Message`n$($View.QueueHint.Text)"

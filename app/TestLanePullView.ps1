@@ -23,6 +23,13 @@ try {
     $PullShowMerged.Checked=$true
     Assert ($Queue.Items.Count -eq 4 -and $Queue.Items[3].Tag -eq 4 -and $Queue.Items[3].ForeColor -eq $Grey -and $PullShowMerged.Text -match '\(1\)') 'Show recent merges did not list merged PRs last, in grey.'
     $PullShowMerged.Checked=$false
+    # The AI merge fixer's latest run is one plain line plus a log button; without the workflow there is neither.
+    Assert ($QueueHint.Text -notmatch 'AI merge fixer' -and -not $PullAgentLog.Visible) 'Agent line shown for a project without the fixer.'
+    $script:PullSnapshot.Agent=@{Workflow='claude-merge-fixer.yml';Runs=@(@{status='in_progress';conclusion='';createdAt='2026-10-30T17:20:00Z';url='https://github.com/example/pulls/actions/runs/9'})}; Update-View
+    Assert ($QueueHint.Text -match 'AI merge fixer \(Claude\): .* working now' -and $PullAgentLog.Visible) "Running fixer not shown: $($QueueHint.Text)"
+    $script:PullSnapshot.Agent.Runs[0].status='completed'; $script:PullSnapshot.Agent.Runs[0].conclusion='failure'; Update-View
+    Assert ($QueueHint.Text -match 'FAILED') 'Failed fixer run looked fine.'
+    $script:PullSnapshot.Agent=$null; Update-View
     Assert ($Queue.Items.Count -eq 3) 'Hiding merges kept merged PRs.'
     Assert ($Title.Text -match '^Release 0.3.0') 'Exact run/attempt binding did not name release.'
     $Before=$Queue.Items[0]; 1..10 | ForEach-Object { Update-View }
