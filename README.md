@@ -36,12 +36,13 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 ## See it
 
 <p>
-  <img src="docs/images/releases.png" width="48%" alt="The Releases tab: a queued release with the time it ships by, an open release, a packaged one, and the pull request list with move controls">
+  <img src="docs/images/staging-release.png" width="48%" alt="The staging Releases tab with an illustrative verified full-test and package result">
   <img src="docs/images/overview-dark.png" width="48%" alt="The same dashboard in dark mode">
 </p>
 
-Left: **Releases** — a queued release says when it has to ship, and pull requests can be moved in bulk. Right: the same
-dashboard in **dark mode**.
+Left: **Releases in staging mode** — a versioned request with separate Full tests and Package results. Right: the
+Overview in **dark mode**. These are real app screens with synthetic fixture data, not live project results.
+See [screenshot provenance](docs/images/README.md). The [milestone release screen](docs/images/releases.png) remains available in validation-first mode.
 
 BuildLane is a front end for a build system you already have. It does not create a runner, and it does not supply a
 CI pipeline: your runner writes a small status file and the app draws it. See
