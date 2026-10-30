@@ -212,3 +212,5 @@ Related reading: [shared build resources and reservations](docs/RESERVATIONS.md)
 
 The app was originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`; this repository
 holds the standalone app, its tests and its packaging source.
+
+Live build status gives active native jobs priority over old local reports. Exact completed run/attempt evidence clears stale running progress; an unverified old report is labelled unconfirmed, never successful.

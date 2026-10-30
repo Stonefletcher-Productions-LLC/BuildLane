@@ -33,6 +33,10 @@ try {
             if ($Id -eq '40') { return @{jobs=@(@{id=400;run_id=40;name='Compile only (not release validation)';status='queued';steps=@()})} }
             return @{jobs=@(@{id=300;run_id=$(if ($script:WrongJob) { 999 } else { 30 });name='Build and test';status='in_progress';started_at=[datetime]::UtcNow.AddSeconds(-20).ToString('o');steps=@(@{name='Run actions/checkout@v4';status='in_progress'})})}
         }
+        if ($Uri -match '/runs/20/attempts/1$') {
+            if ($script:Mode -eq 'report404') { throw '404 not found' }
+            return @{id=20;run_attempt=$(if ($script:Mode -eq 'reportMismatch') { 2 } else { 1 });status='completed';conclusion='success'}
+        }
         if ($Uri -match '/runs/(\d+)$') {
             $Run=if ($Matches[1] -eq '40') { $script:Queued.Clone() } else { $script:Native.Clone() }
             if ($script:Mode -eq 'rerun') { $Run.run_attempt=3 }
@@ -58,6 +62,25 @@ try {
     Assert ($Title.Text -match 'New runner report' -and $Title.Text -notmatch 'Integration batch') 'Older API evidence overwrote a newer local run.'
     $script:Mode='quick'; $Result=& $script:ActivityWorker $Request
     Assert (-not $Result.Error -and -not $Result.Active) 'Quick-check-only workflow was treated as a native build.'
+    $Current.runId='20'; $Current.runAttempt=1; $Current.what='Stale quick checks'; $Current.updated=[datetime]::UtcNow.AddMinutes(-2).ToString('o')
+    $Current | ConvertTo-Json -Depth 5 | Set-Content $StatusPath
+    $Request.ReportRunId=20; $Request.ReportAttempt=1
+    $Result=& $script:ActivityWorker $Request
+    Assert (-not $Result.Error -and $Result.CompletedReport.conclusion -eq 'success') 'Exact completed report attempt was not observed.'
+    $script:ActivitySnapshot=$Result; Update-View
+    Assert ($Title.Text -match '^Run finished:' -and $JobLabel.Text -eq 'Run ended: success' -and -not $StepsBox.Visible) 'Completed quick run retained running tests/progress.'
+    Assert ($null -eq (Get-LaneCurrentRunForControl)) 'Completed old run remained cancellable.'
+    $script:ActivitySnapshot.CompletedReport=$null; Update-View
+    Assert ($Title.Text -eq 'No active build observed' -and $Sub.Text -match 'unconfirmed') 'Unknown attempt was invented as successful or still running.'
+    $script:Mode='normal'; $script:ActivitySnapshot=& $script:ActivityWorker $Request; Update-View
+    Assert ($Title.Text -match '^Preparing: Integration batch') 'Completed quick evidence overrode the real active native job.'
+    $script:Mode='reportMismatch'; $Result=& $script:ActivityWorker $Request
+    Assert (-not $Result.CompletedReport -and $Result.ReportError -and $Result.Active.Run.id -eq 30) 'Wrong report attempt was accepted or erased native evidence.'
+    $script:Mode='report404'; $Result=& $script:ActivityWorker $Request
+    Assert (-not $Result.Error -and -not $Result.CompletedReport -and $Result.ReportError -and $Result.Active.Run.id -eq 30) 'A failed optional report lookup erased native evidence.'
+    $script:ActivitySnapshot=$Result; Update-View
+    Assert ($Title.Text -match '^Preparing: Integration batch' -and $ActivityNote.Text -match 'could not be verified') 'Failed report lookup hid active native job or its diagnostic.'
+    $Request.Remove('ReportRunId'); $Request.Remove('ReportAttempt')
     $script:Mode='rerun'; $Result=& $script:ActivityWorker $Request
     Assert $Result.Error 'A moving run attempt was accepted.'
     $script:Mode='normal'; $script:WrongJob=$true; $Result=& $script:ActivityWorker $Request
