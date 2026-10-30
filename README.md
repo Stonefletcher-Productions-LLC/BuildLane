@@ -22,6 +22,7 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
   exact run it belongs to. A green test run never makes an unreported Package step look finished.
 - **Updates without flashing** — unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
 - **Keeps open PRs visible after builds finish** — independently reads paginated GitHub PRs and recent merges to the integration branch. Shows drafts, review requirements, failed checks, conflicts and operator-ready changes; a ready row does not claim automatic merging. Results refresh every 30 seconds and retain clearly marked last-known evidence on errors.
+- **Merges reviewed changes through the controller** — select a PR, refresh merge eligibility, then merge now or queue that exact head until checks pass. Cancel queued merge removes that request without cancelling a build. Missing review, stale data and unsupported backends keep controls disabled.
 - **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
 - **Pauses everything** — including the option to stop the build that is already running.

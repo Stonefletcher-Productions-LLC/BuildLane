@@ -20,6 +20,12 @@ A successful compile preview or checkpoint is not a packaged release. Promotion 
 
 ## Checkpoints between releases
 
+### Merge reviewed PRs from Overview
+
+Select an open PR and press **Refresh merge eligibility**. **Merge now** requires an approved current head, successful checks and clean merge state. **Merge when checks pass** records a durable server queue entry for a reviewed head; the server rechecks approval, checks, conflicts and pause state before attempting a merge. GitHub approval or an exact-head controller review can count; requested changes override prior approval. A new commit requires review of that head.
+
+The row shows the server's queue state and waiting reason. Requests are never resent automatically by the desktop timer. **Cancel queued merge** cancels only the selected queue entry, not a running build. Unsupported controllers, stale observations, drafts and PRs targeting other branches keep merge controls disabled. Double-click a PR to open it for review.
+
 Use **Integration → Refresh backend eligibility → Request checkpoint** to validate the current integration revision without asking for a release. The backend determines checkpoint checks; LifeShare uses its import, compile and game-test checkpoint. Full release tests and packaging remain required in both modes.
 
 ## If it appears to stop

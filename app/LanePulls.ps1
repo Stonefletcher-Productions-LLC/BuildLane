@@ -8,7 +8,7 @@ function Get-LanePullBranch {
 function Initialize-LanePulls {
     $Identity="$Repo|$Profile|$(Get-LanePullBranch)"
     if ($Identity -ne $script:PullIdentity) {
-        $script:PullIdentity=$Identity; $script:PullSnapshot=$null; $script:PullError=''; $script:NextPullRead=[datetime]::MinValue; $script:PullRowsKey=''
+        $script:PullIdentity=$Identity; $script:PullSnapshot=$null; $script:PullError=''; $script:NextPullRead=[datetime]::MinValue; $script:PullRowsKey=''; $script:PullActionMessage=''
     }
 }
 function Start-LanePullRead {
@@ -22,13 +22,22 @@ function Set-LanePullResult($Result) {
     elseif ($Result.Repo -eq $Repo) { $script:PullSnapshot=$Result; $script:PullError='' }
     Update-View
 }
+function Test-LanePullReviewed($Pr) {
+    if ($Pr.reviewDecision -eq 'CHANGES_REQUESTED') { return $false }
+    if ($Pr.reviewDecision -eq 'APPROVED') { return $true }
+    [bool]@($script:IntegrationSnapshot.State.reviews | Where-Object { $_.source -eq 'controller' -and $_.decision -eq 'approved' -and $_.prNumber -eq $Pr.number -and $_.head -eq $Pr.headRefOid -and $_.reviewer -and $_.reason }).Count
+}
 function Get-LanePullState($Pr) {
     $Checks=[string](@($Pr.commits.nodes)[0].commit.statusCheckRollup.state)
     $Review=switch ([string]$Pr.reviewDecision) { 'APPROVED' {'approved'} 'CHANGES_REQUESTED' {'changes requested'} 'REVIEW_REQUIRED' {'review required'} default {'review unconfirmed'} }
+    $Reviewed=Test-LanePullReviewed $Pr
+    if ($Reviewed -and $Pr.reviewDecision -ne 'APPROVED') { $Review='controller review approved' }
     $Action=if ($Pr.isDraft) { 'Draft' } elseif ($Pr.mergeable -eq 'CONFLICTING') { 'Resolve conflicts' }
         elseif ($Checks -in @('FAILURE','ERROR')) { 'Fix checks' } elseif ($Pr.reviewDecision -eq 'CHANGES_REQUESTED') { 'Address review' }
-        elseif ($Pr.reviewDecision -ne 'APPROVED') { 'Review required' } elseif ($Checks -ne 'SUCCESS') { 'Waiting for checks' }
+        elseif (-not $Reviewed) { 'Review required' } elseif ($Checks -ne 'SUCCESS') { 'Waiting for checks' }
         elseif ($Pr.mergeStateStatus -ne 'CLEAN') { 'Merge eligibility unconfirmed' } else { 'Ready for operator merge' }
+    $Queued=@($script:IntegrationSnapshot.State.mergeQueue | Where-Object { $_.prNumber -eq $Pr.number -and $_.status -notin @('cancelled','closed') } | Select-Object -Last 1)
+    if ($Queued.Count) { $Action=if ($Queued[0].head -ne $Pr.headRefOid) { 'Queue refers to an older head; review again' } else { "Merge queue: $($Queued[0].status) - $($Queued[0].reason)" } }
     "$Action | $Review | checks: $(if ($Checks) { $Checks.ToLowerInvariant() } else { 'unreported' }) | target: $($Pr.baseRefName)"
 }
 function Update-LanePullView($View) {
@@ -39,6 +48,11 @@ function Update-LanePullView($View) {
     $View.QueueHead.Text=if ($Snapshot) { "Open pull requests ($(@($Snapshot.Pulls).Count)) and recent merges ($(@($Snapshot.Merged).Count))" } else { 'Open pull requests - checking GitHub' }
     $Fresh=$Snapshot -and -not $script:PullError -and ([datetime]::UtcNow-$Snapshot.AtUtc).TotalSeconds -le 90
     $View.QueueHint.Text=if ($script:PullError) { "GitHub unavailable: $($script:PullError) Last known results; merge eligibility unconfirmed." } elseif ($Snapshot) { "$(if (-not $Fresh) { 'Last known' } else { 'Observed' }) $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss')). Recent merges to $($Snapshot.Branch). Drag divider to resize; double-click to open. Ready does not mean queued for automatic merge." } else { 'Current PRs come from GitHub, independently of completed build reports. Connect GitHub if needed.' }
+    if ($PullActions) {
+        Update-LanePullActions
+        $Message=if ($script:IntegrationPending -and $script:IntegrationPending.Operation -in @('stage','queue-merge','cancel-merge')) { 'Waiting for the controller result. This is not a merge confirmation; no automatic retry.' } elseif ($script:PullActionMessage) { $script:PullActionMessage } elseif ($script:IntegrationError) { $script:IntegrationError } elseif (Get-LaneSelectedPull) { Get-LanePullActionReason (Get-LaneSelectedPull) } else { 'Select a PR to merge now or queue it after checks pass. Review approval is required.' }
+        $View.QueueHint.Text="$Message`n$($View.QueueHint.Text)"
+    }
     $Rows=@()
     if ($Snapshot) {
         foreach ($Pr in $Snapshot.Pulls) { $Rows+=@(@{number=$Pr.number;title=$Pr.title;state=(Get-LanePullState $Pr);merged=$false}) }
