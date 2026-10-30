@@ -37,7 +37,7 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
     if ($Worker) { [void]$Shell.AddScript($Worker.ToString()) }
     else {
         [void]$Shell.AddScript([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LaneGitHub.ps1')))
-        [void]$Shell.AddArgument($Repo).AddArgument($ReadBranch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue })).AddArgument([string]$script:State.runId)
+        [void]$Shell.AddArgument($Repo).AddArgument($ReadBranch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue })).AddArgument([string]$script:State.runId).AddArgument($(if ($Config.PSObject.Properties['agentWorkflow']) { [string]$Config.agentWorkflow } else { 'claude-merge-fixer.yml' }))
     }
     $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision; Command=$script:CommandState; RunId=$script:State.runId; What=$script:State.what; Report="$($script:State.runId)|$($script:State.started)|$($script:State.done)" }
     if ($Kind -eq 'releases') {

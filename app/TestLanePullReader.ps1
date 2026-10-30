@@ -4,6 +4,7 @@ function Assert($Ok,$Message) { if (-not $Ok) { throw $Message } }
 $global:PullReaderPage=0
 function Invoke-WebRequest {
     param($Uri,$Method,$Body,$ContentType,$Headers,$TimeoutSec,[switch]$UseBasicParsing)
+    if ($Uri -match '/actions/workflows/claude-merge-fixer\.yml/runs') { return @{Content=(@{workflow_runs=@(@{status='in_progress';conclusion=$null;created_at='2026-10-30T17:20:00Z';html_url='https://github.com/example/test/actions/runs/9'})} | ConvertTo-Json -Depth 5)} }
     $Request=$Body | ConvertFrom-Json
     Assert ($Uri -eq 'https://api.github.com/graphql' -and $Request.variables.base -eq 'Test-Staging') 'Lost GraphQL or staging target.'
     $global:PullReaderPage++
@@ -13,6 +14,7 @@ function Invoke-WebRequest {
 }
 $Result=& "$PSScriptRoot/LaneGitHub.ps1" -Repository example/test -BaseBranch Test-Staging -AccessToken fixture -Kind pulls
 Assert (-not $Result.Error -and $Result.Pulls.Count -eq 2 -and $Result.Merged.Count -eq 1 -and $global:PullReaderPage -eq 2) 'Pagination failed or fanned out per PR.'
+Assert ($Result.Agent.Workflow -eq 'claude-merge-fixer.yml' -and @($Result.Agent.Runs)[0].status -eq 'in_progress' -and @($Result.Agent.Runs)[0].url -match 'runs/9') 'AI fixer runs were not read.'
 . "$PSScriptRoot/LanePulls.ps1"
 $Pr=$Result.Pulls[0]
 Assert ((Get-LanePullState $Pr) -match '^Ready for operator merge') 'Approved clean successful PR was not recognized.'

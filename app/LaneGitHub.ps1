@@ -1,5 +1,5 @@
 # Runs in an isolated PowerShell runspace. Never touches Windows Forms controls.
-param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue, [string]$RunId)
+param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue, [string]$RunId, [string]$AgentWorkflow = 'claude-merge-fixer.yml')
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
@@ -41,7 +41,19 @@ try {
             if ($Page -eq 10 -or -not $Connection.pageInfo.endCursor -or $Cursor -eq $Connection.pageInfo.endCursor) { throw 'Too many pull requests or incomplete pagination. Previous results retained.' }
             $Cursor=$Connection.pageInfo.endCursor
         }
-        return @{Token=$AccessToken;Repo=$Repository;Branch=$BaseBranch;AtUtc=[datetime]::UtcNow;Pulls=@($Prs | Sort-Object number -Unique);Merged=$Merged}
+        # The AI merge fixer is optional: a project without that workflow simply has no agent line.
+        $Agent=$null
+        if ($AgentWorkflow) {
+            try {
+                $Response=Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$Repository/actions/workflows/$([uri]::EscapeDataString($AgentWorkflow))/runs?per_page=5" -Headers $Headers -TimeoutSec 15
+                $Runs=@(($Response.Content | ConvertFrom-Json).workflow_runs | ForEach-Object { $_ } | Select-Object -First 5 | ForEach-Object { @{status=[string]$_.status;conclusion=[string]$_.conclusion;createdAt=[string]$_.created_at;url=[string]$_.html_url} })
+                $Agent=@{Workflow=$AgentWorkflow;Runs=$Runs}
+            } catch {
+                $Status=0; try { $Status=[int]$_.Exception.Response.StatusCode } catch {}
+                $Agent=if ($Status -eq 404) { $null } else { @{Workflow=$AgentWorkflow;Error=$_.Exception.Message} }
+            }
+        }
+        return @{Token=$AccessToken;Repo=$Repository;Branch=$BaseBranch;AtUtc=[datetime]::UtcNow;Pulls=@($Prs | Sort-Object number -Unique);Merged=$Merged;Agent=$Agent}
     }
     if ($Kind -eq 'history') {
         if ($RunId -notmatch '^\d+$') { throw 'A numeric run ID is required.' }

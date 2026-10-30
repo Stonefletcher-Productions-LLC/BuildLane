@@ -17,6 +17,12 @@ $MergePause=New-Button 'Resume merges' {
     catch { $script:PullActionMessage=$_.Exception.Message; Update-View }
 } $PullActions
 $PullMerge.Enabled=$false; $PullAuto.Enabled=$false; $PullCancel.Enabled=$false
+$PullAgentLog=New-Button 'Open AI fixer log' {
+    $A=$script:PullSnapshot.Agent
+    $Last=@($A.Runs)[0]
+    if ($Last -and $Last.url -match '^https://github\.com/') { Start-Process $Last.url } elseif ($A) { Start-Process "https://github.com/$Repo/actions/workflows/$($A.Workflow)" }
+} $PullActions
+$PullAgentLog.Visible=$false
 # Merged PRs are history, not work: hidden unless asked for, so the list only shows what is still moving.
 $PullShowMerged=New-Object Windows.Forms.CheckBox
 $PullShowMerged.Text='Show recent merges'; $PullShowMerged.AutoSize=$true; $PullShowMerged.Checked=$false; $PullShowMerged.Font=$FontBody

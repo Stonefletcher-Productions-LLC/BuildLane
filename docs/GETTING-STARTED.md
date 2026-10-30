@@ -95,3 +95,10 @@ The heading above the list answers the common questions in one line, for example
   4. **○ Waiting**: drafts and PRs that still need a review.
 - Merged PRs are history, so they are hidden by default. Tick **Show recent merges** to list them in grey at the bottom.
 - Hover a row for the full detail: review state, checks and target branch.
+
+### The AI merge fixer
+
+If the repository has a `claude-merge-fixer.yml` workflow (set `agentWorkflow` in the profile to use another name), the
+hint under the PR list starts with one line about it: **working now**, **idle** with the last run's result, or
+**FAILED**. **Open AI fixer log** opens its latest GitHub Actions run. The fixer only repairs PR branches (conflicts,
+failed hosted checks) and comments on them; it never merges, so a repaired PR shows as needing a fresh review.
