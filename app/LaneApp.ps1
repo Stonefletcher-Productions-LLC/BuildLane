@@ -762,6 +762,7 @@ function Set-PaneHeights([string]$Only = '') {
                 # Start the queue immediately below the overview content, while preserving room to scroll on small screens.
                 $Preferred = $Root.GetPreferredSize((New-Object Drawing.Size($Root.ClientSize.Width, 0))).Height
                 $Fallback = $Room - $Preferred
+                if ($Config.integrationWorkflow -or $script:PullSnapshot) { $Fallback=[math]::Max($Fallback,[int]($Room * 0.42)) }
             }
             $Lower = if ($script:LaneLayout.ContainsKey($Pane.Key)) { [int]$script:LaneLayout[$Pane.Key] } else { $Fallback }
             $Lower = [math]::Max($Split.Panel2MinSize, [math]::Min($Lower, $Room - $Split.Panel1MinSize))
