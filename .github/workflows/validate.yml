@@ -34,6 +34,9 @@ jobs:
       - name: Authoritative integration mode checks
         timeout-minutes: 4
         run: ./app/TestLaneIntegration.ps1
+      - name: Staging release request checks
+        timeout-minutes: 4
+        run: ./app/TestLaneReleaseRequests.ps1
       - name: Tall window and repeated handoff layout checks
         timeout-minutes: 4
         run: ./app/TestLaneLayout.ps1

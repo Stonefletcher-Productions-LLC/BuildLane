@@ -24,8 +24,8 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 - **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
 - **Pauses everything** — including the option to stop the build that is already running.
-- **Handles releases** — group pull requests into a release, queue its package build, and see the cut time it has to
-  ship by.
+- **Handles releases** — validation-first projects keep milestone release queues. Staging projects queue an exact
+  version and frozen source through the controller, with separate full-test and package results tied to a build attempt.
 - **Moves pull requests in bulk**, in the background, and keeps the ones that failed selected so you can retry.
 - **Reports the server's integration mode** — validation before merge or reviewed merges to Test-Staging followed by
   explicit build checkpoints. Mode changes require fresh backend eligibility and confirmed server readback.

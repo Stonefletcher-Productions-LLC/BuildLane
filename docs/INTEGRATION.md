@@ -132,3 +132,18 @@ matching `state.requests[]` acknowledge the frozen request; only verified `state
 can attest validation. A queued request is never shown as a test pass. Legacy release and automatic lane mutations remain disabled in this mode until
 the controller supplies their corresponding operations. Use Open controller runs to inspect a request
 that is waiting or requires attention.
+
+## Staging release requests
+
+In staging mode the Releases tab uses controller requests instead of milestone-only queue actions.
+`inspect` must supply `capabilities.release`, `capabilityReasons.release` and
+`releaseTarget.sourceSha`. Queueing sends operation `release`, a fresh UUID, the latest state revision
+and `details={"target":"<frozen SHA>","version":"0.3.0"}` to the trusted main controller.
+
+Only a matching completed controller record (including target and version binding) plus the corresponding
+`state.releaseRequests[]` entry acknowledges the request. HTTP acceptance stays pending and is never
+automatically retried. The backend owns cumulative imports, full validation, package generation and
+receipt verification. The history displays authoritative `status`, `fullTests` and `package` separately;
+missing results remain unreported, and skipped packaging never becomes a passed package. Run links use
+only the recorded numeric `runId` and `attempt`. Optional `outputSha` and `treeSha` identify the tested
+post-import source separately from the frozen input. Validation-first releases retain their existing UI.
