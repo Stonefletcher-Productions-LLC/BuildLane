@@ -225,7 +225,7 @@ function New-Button([string]$Text, [scriptblock]$OnClick, $Panel = $Buttons) {
 $Brand = New-Label "Buildlane  /  $ProductName" $FontHead
 $Brand.Margin = New-Object Windows.Forms.Padding(0, 10, 24, 0)
 [void]$TopBar.Controls.Add($Brand)
-# Pause everything: no new build starts (batches, the release build, the nightly, a PR's own build), and the lane
+# Pause native builds on this PC; the hosted merge queue has its own durable pause. The build lane
 # starts nothing. The build running now can be stopped too (it asks). Resume lets the lane go on at once.
 $PauseButton = New-Button "Pause builds" {
     if ($Config.setupRequired) { return }
@@ -244,7 +244,7 @@ $PauseButton = New-Button "Pause builds" {
         Update-View
         $S = Get-LaneCurrentRunForControl
         if ($S -and -not $S.done -and $S.runId) {
-            $A = [Windows.Forms.MessageBox]::Show("Paused: nothing new will start.`n`nA build is running now ($($S.what)). Stop it too?`n`nYes stops it now. No lets it finish.", "Pause everything", "YesNo", "Question")
+            $A = [Windows.Forms.MessageBox]::Show("Builds paused on this PC. Hosted merges have a separate Pause merges control.`n`nA build is running now ($($S.what)). Stop it too?`n`nYes stops it now. No lets it finish.", "Pause everything", "YesNo", "Question")
             if ($A -eq "Yes") {
                 try { Start-LaneCommand -Kind cancel -Path "/actions/runs/$($S.runId)/cancel" } catch { Show-Error "Paused, but the running build could not be stopped." $_ }
             }
@@ -374,7 +374,7 @@ function Update-View {
     $View.Notes.Text = ''; $View.Sub.ForeColor = $Grey
     $Paused = Test-Path $PauseFile
     $View.PauseButton.Text = if ($Paused) { "Resume builds" } else { "Pause builds" }
-    $View.PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Builds allowed" }
+    $View.PauseState.Text = if ($Paused) { "⏸ BUILDS PAUSED: no new builds" } else { "Builds allowed" }
     $View.PauseState.ForeColor = if ($Paused) { $Orange } else { $Grey }
     Update-LaneCommandFeedback $View
     $View.GhButton.Text = if (Get-Token) { "✓ GitHub connected" } else { "Connect GitHub" }
@@ -492,7 +492,7 @@ function Update-View {
         elseif ($Machine.FreeGB -lt $Config.cleanBelowGB) { $View.DiskLabel.Text+=' (below the configured cleanup threshold)' }
         $View.DiskLabel.ForeColor=if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
     } else { $View.DiskLabel.Text=if ($Machine) { $Machine.DiskError } else { 'Checking machine health...' } }
-    $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Builds allowed" }
+    $P = if ($Paused) { "⏸ BUILDS PAUSED: resume to allow new builds" } else { "✓ Builds allowed" }
     $View.Health.Text=(@(if ($Machine) { $Machine.Health } else { 'Checking machine health...' })+@($P)) -join "`n"
     $View.Health.ForeColor=if ($Paused) { $Orange } else { $Ink }
 
@@ -697,6 +697,7 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneIntegration.ps1')
 . (Join-Path $PSScriptRoot 'LaneReleaseRequests.ps1')
 . (Join-Path $PSScriptRoot 'LanePulls.ps1')
+. (Join-Path $PSScriptRoot 'LanePullActions.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
 $Form.Add_FormClosing({ if ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq "request") { $_.Cancel=$true; $IntegrationMessage.Text="Wait for the controller request response before closing." }; if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })

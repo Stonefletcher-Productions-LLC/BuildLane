@@ -19,4 +19,6 @@ These tests open temporary fixture windows. Use hosted CI when a shared PC is re
 
 ## Other images
 
+`open-prs.png` was downloaded unchanged from [successful Windows checks run 40991291488](https://github.com/Stonefletcher-Productions-LLC/BuildLane/actions/runs/40991291488), source `ce091e5`, and visually reviewed. It shows the production Overview UI after mocked PR, merge and durable pause/resume scenarios in `TestLanePullView.ps1 -OutDirectory`. The project, PRs, release `0.3.0` and successful run are synthetic; no real merge or game build occurred in the fixture. Drag the divider to show more PR rows; hover a row for its full status.
+
 Overview, dark Overview and milestone Releases use `app/PreviewDocs.ps1`; Setup and Projects use `app/TestLaneOnboarding.ps1 -PreviewDirectory`. These existing images illustrate the corresponding flows and predate the staging screenshots. Logo assets come from `app/BuildLogo.ps1`. See [contributing](../../CONTRIBUTING.md).
