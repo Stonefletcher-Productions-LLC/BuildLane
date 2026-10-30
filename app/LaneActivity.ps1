@@ -60,7 +60,7 @@ function Initialize-LaneActivity {
 }
 function Start-LaneActivity([scriptblock]$Worker) {
     Initialize-LaneActivity
-    if ($Config.setupRequired -or -not $Config.activeJobs -or $script:ActivityJob -or $script:RefreshJob -or $script:MoveJob -or $script:CommandJob -or $script:ActionJob -or [datetime]::UtcNow -lt $script:NextActivityRead) { return }
+    if ($Config.setupRequired -or -not $Config.activeJobs -or $script:ActivityJob -or $script:RefreshJob -or $script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:IntegrationJob -or [datetime]::UtcNow -lt $script:NextActivityRead) { return }
     if (-not $Worker -and ($SmokeTest -or -not $script:Token)) { return }
     $Request=@{Repo=$Repo;Token=$script:Token;Targets=@(Get-LaneActivityTargets $Config.activeJobs)}
     $Shell=[PowerShell]::Create()

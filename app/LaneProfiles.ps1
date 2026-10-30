@@ -15,6 +15,8 @@ function Test-LaneProfile($Value) {
         if ([string]::IsNullOrWhiteSpace([string]$Value.$Key)) { throw "Enter a value for $Key." }
     }
     if ($Value.activeJobs) { [void]@(Get-LaneActivityTargets $Value.activeJobs) }
+    if ($Value.integrationWorkflow -and [string]$Value.integrationWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Integration controller must be a YAML filename.' }
+    if ($Value.integrationWorkflow -and $Value.branch -ne 'main') { throw 'This integration controller uses trusted main; the PR integration branch is reported by the backend.' }
     if ($Value.repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Repository must be owner/repository.' }
     if ($Value.drive -notmatch '^[A-Za-z]$') { throw 'Drive must be one letter, for example E.' }
     foreach ($Key in @('statusFile','pauseFile','runnerPath')) {
@@ -44,7 +46,7 @@ function Save-LaneProfile([string]$Path, $Value, [string]$ExpectedHash) {
     $Temporary = Join-Path $Folder ([guid]::NewGuid().ToString() + '.tmp')
     try {
         [IO.File]::WriteAllText($Temporary, ($Value | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, $null) }
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($Temporary, $Path, [NullString]::Value) }
         else { [IO.File]::Move($Temporary, $Path) }
     } finally { if (Test-Path -LiteralPath $Temporary) { Remove-Item -LiteralPath $Temporary -Force } }
 }
@@ -59,5 +61,5 @@ function ConvertTo-LaneRepository([string]$Text) {
 }
 function New-LaneProjectDefaults {
     $Folder=Join-Path $env:LOCALAPPDATA 'Buildlane\Runner'
-    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';activeJobs='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
+    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';activeJobs='';integrationWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
 }

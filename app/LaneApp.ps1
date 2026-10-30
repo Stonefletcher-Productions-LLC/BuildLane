@@ -110,6 +110,8 @@ $SystemTab.Controls.Add($SystemRoot)
 
 $Root = New-Object Windows.Forms.TableLayoutPanel
 $Root.Dock = "Fill"; $Root.Padding = New-Object Windows.Forms.Padding(24); $Root.ColumnCount = 1; $Root.AutoScroll = $true
+[void]$Root.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent',100)))
+$Root.GrowStyle='AddRows'
 # The queue is the one part of the overview that grows with the project, so it gets its own resizable pane instead of a
 # fixed 180 px box: drag the divider, and the height is remembered for this Windows user.
 $QueuePanel = New-Object Windows.Forms.TableLayoutPanel
@@ -138,9 +140,12 @@ function Add-Row($Control, [int]$Top = 4, $Panel = $Root) {
     $Control.Margin = New-Object Windows.Forms.Padding(0, $Top, 0, 4)
     $Control.Dock = "Top"
     if ($Panel -eq $Root) {
+        # Keep stable cells when handoff hides and restores overview rows.
+        $Row=$Panel.Controls.Count
+        $Panel.RowCount=$Row+1
         [void]$Panel.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))
-    }
-    [void]$Panel.Controls.Add($Control)
+        [void]$Panel.Controls.Add($Control,0,$Row)
+    } else { [void]$Panel.Controls.Add($Control) }
     $Control
 }
 function New-Label([string]$Text = "", $Font = $FontBody, $Color = $Ink) {
@@ -224,10 +229,12 @@ $Brand.Margin = New-Object Windows.Forms.Padding(0, 10, 24, 0)
 $PauseButton = New-Button "Pause builds" {
     if ($Config.setupRequired) { return }
     if (Test-Path $PauseFile) {
+        if ($Config.integrationWorkflow -and (-not $script:IntegrationSnapshot -or $script:IntegrationError -or ([datetime]::UtcNow-$script:IntegrationSnapshot.AtUtc).TotalSeconds -gt 60)) { $PauseState.Text='Verify integration status before resuming.'; return }
         try { Remove-Item $PauseFile -ErrorAction Stop }
         catch { Show-Error "Could not resume (removing $PauseFile)." $_; return }
         Update-View
-        Start-Lane -Kind resume
+        if (-not $Config.integrationWorkflow -or -not $script:IntegrationSnapshot.Initialized -or $script:IntegrationSnapshot.State.integrationMode -eq 'ValidateBeforeMerge') { Start-Lane -Kind resume }
+        else { $PauseState.Text='Builds allowed. Reviewed changes go to Test-Staging; request a checkpoint when ready in Integration.' }
     }
     else {
         try { Set-Content $PauseFile "Paused $(Get-Date -Format s) by $env:USERNAME from the Build Lane app" -ErrorAction Stop }
@@ -309,7 +316,7 @@ function Set-Bar($Bar, [double]$Fraction) {
 $script:State = $null
 function Update-View {
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob)
+    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
@@ -458,6 +465,7 @@ function Update-View {
         $LogBox.SelectionStart = $LogBox.Text.Length; $LogBox.ScrollToCaret()
     }
     Update-LaneActivityView $S
+    Update-LaneIntegrationView
 }
 
 # Releases: GitHub milestones. The line "lane: <state>" in a milestone's description is what the lane reads (open,
@@ -641,12 +649,13 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneHistory.ps1')
 . (Join-Path $PSScriptRoot 'LaneActivity.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
+. (Join-Path $PSScriptRoot 'LaneIntegration.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
-$Form.Add_FormClosing({ if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
+$Form.Add_FormClosing({ if ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq "request") { $_.Cancel=$true; $IntegrationMessage.Text="Wait for the controller request response before closing." }; if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })
 $RefreshTimer=New-Object Windows.Forms.Timer
 $RefreshTimer.Interval=150
-$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth; Complete-LaneAction; Complete-LaneActivity })
+$RefreshTimer.Add_Tick({ Complete-LaneMove; Complete-LaneRefresh; Complete-LaneCommand; Complete-LaneHealth; Complete-LaneAction; Complete-LaneActivity; Complete-LaneIntegration })
 
 $script:Ticks = 0
 $Timer = New-Object Windows.Forms.Timer
@@ -656,6 +665,7 @@ $Timer.Add_Tick({
     Start-LaneControllerRead
     Start-LaneActivity
     Start-LaneHistory
+    Start-LaneIntegrationRead
     $script:Ticks++
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 15 -eq 0) { Update-Releases }
 })
@@ -760,7 +770,7 @@ $Form.Add_Shown({
     } catch { Write-Warning "Could not size the window: $($_.Exception.Message) [$($_.InvocationInfo.PositionMessage -replace "`r?`n", ' ')]" }
 })
 $Form.Add_Shown({ try { Resize-Content; Set-PaneHeights } catch { Write-Warning "Could not lay out the window: $($_.Exception.Message)" } })
-$Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneActivity; Stop-LaneRefresh })
+$Form.Add_FormClosed({ Save-PaneHeights; $Timer.Stop(); $Timer.Dispose(); $RefreshTimer.Stop(); $RefreshTimer.Dispose(); Stop-LaneIntegration; Stop-LaneActivity; Stop-LaneRefresh })
 . (Join-Path $PSScriptRoot 'LaneTheme.ps1')
 if ($NoShow) { return }
 if ($SmokeTest) {

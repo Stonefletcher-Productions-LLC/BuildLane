@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/images/logo.png" width="112" alt="BuildLane">
 </p>
 
@@ -26,6 +26,9 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 - **Handles releases** — group pull requests into a release, queue its package build, and see the cut time it has to
   ship by.
 - **Moves pull requests in bulk**, in the background, and keeps the ones that failed selected so you can retry.
+- **Reports the server's integration mode** — validation before merge or reviewed merges to Test-Staging followed by
+  explicit build checkpoints. Mode changes require fresh backend eligibility and confirmed server readback.
+  Full release tests and packaging remain mandatory in both modes.
 - **Keeps several projects apart** — each with its own repository, runner paths and credentials.
 - **Remembers how you left it** — window size, divider positions, light or dark, last project.
 

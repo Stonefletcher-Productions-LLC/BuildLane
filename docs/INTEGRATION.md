@@ -110,3 +110,25 @@ that run's local report arrives. Optional local `runAttempt` binds the producer 
 prevents an earlier attempt's report from being treated as current. A newer local report can supersede an older
 API observation. Errors retain last-observed evidence with an explicit unconfirmed label. Run links include the
 observed attempt, so a later rerun cannot silently change which evidence opens.
+
+## Server-owned integration mode
+
+Optional profile field `integrationWorkflow` names a controller workflow such as `staging-controller.yml`.
+Its trusted dispatch branch is `main`; the backend reports the separate integration branch (`main` or
+`Test-Staging`). The Integration tab reads `state.json` at an immutable commit on `lane/staging-state`,
+then checks the ref again. Missing, stale, moving or unavailable state disables mode changes.
+
+The app requests a fresh `inspect` before enabling a change. A mode request includes a UUID and the
+latest state revision. HTTP acceptance is only pending: the UI requires the matching durable request
+binding and actual mode readback before showing success. Uncertain requests are never automatically
+resent. The backend must reject changes while work is queued, running, packaging or incompletely
+inventoried. Full release tests and packaging remain required in both modes.
+
+In staging mode Resume allows work; reviewed changes go to Test-Staging and native builds require an
+explicit checkpoint. Request checkpoint uses a fresh backend `staging.headSha` SHA, explicit boolean
+`capabilities.checkpoint`, no `capabilityReasons.checkpoint`, no outstanding work and no local pause.
+It sends `details={"target":"<SHA>"}` with the latest state revision. The durable controller record and
+matching `state.requests[]` acknowledge the frozen request; only verified `state.checkpoints[]` receipts
+can attest validation. A queued request is never shown as a test pass. Legacy release and automatic lane mutations remain disabled in this mode until
+the controller supplies their corresponding operations. Use Open controller runs to inspect a request
+that is waiting or requires attention.

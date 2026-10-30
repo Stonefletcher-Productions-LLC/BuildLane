@@ -25,7 +25,7 @@ $script:ActionWorker={
             $Loose=@()
             for ($Page=1; $Page -le 100; $Page++) {
                 $Progress.Message="Reading ready pull requests (page $Page)..."
-                $Batch=@(Call GET "/pulls?state=open&base=$([uri]::EscapeDataString($Request.Branch))&per_page=100&page=$Page" | ForEach-Object { $_ })
+                $Batch=@(Call GET "/pulls?state=open&base=$([uri]::EscapeDataString($(if ($Request.IntegrationBranch) { $Request.IntegrationBranch } else { $Request.Branch })))&per_page=100&page=$Page" | ForEach-Object { $_ })
                 $Loose+=@($Batch | Where-Object { -not $_.milestone -and -not $_.draft -and @($_.labels | Where-Object name -in @('ready','fix-main')).Count })
                 if ($Batch.Count -lt 100) { break }
                 if ($Page -eq 100) { throw 'Too many pull requests to queue safely.' }
@@ -59,12 +59,13 @@ $script:ActionWorker={
     $Result
 }
 function Start-LaneAction([ValidateSet('create','prepareQueue','queue','unqueue','close','connect')][string]$Operation,$Milestone,[Alias('Title')][string]$ReleaseTitle,[int[]]$Numbers=@(),[string]$Token,[scriptblock]$Worker,$Context) {
-    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob) { return }
+    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob -or $script:IntegrationJob -or $script:IntegrationPending) { return }
+    if ($Operation -ne 'connect' -and -not (Test-LaneLegacyOperationsAllowed)) { throw 'Legacy release mutations are unavailable in the current integration mode. Use authoritative integration controls.' }
     if ($Config.setupRequired) { throw 'Save your project first.' }
     if (-not $Token) { $Token=$script:Token }
     if (-not $Worker -and ($SmokeTest -or -not $Token)) { throw 'Connect GitHub before changing releases.' }
     Stop-LaneRefresh; $script:DataRevision++
-    $Request=@{Operation=$Operation;Repo=$Repo;Branch=$Config.branch;Workflow=$Workflow;Token=$Token;Number=$Milestone.number;Title=$ReleaseTitle;Numbers=@($Numbers)}
+    $Request=@{Operation=$Operation;Repo=$Repo;Branch=$Config.branch;IntegrationBranch=(Get-LaneIntegrationBranch);Workflow=$Workflow;Token=$Token;Number=$Milestone.number;Title=$ReleaseTitle;Numbers=@($Numbers)}
     $Progress=[hashtable]::Synchronized(@{Message='Contacting GitHub...'})
     $Shell=[PowerShell]::Create()
     try {
