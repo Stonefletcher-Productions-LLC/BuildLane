@@ -25,7 +25,7 @@ function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
     if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:ActivityJob -or $script:IntegrationJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
-    if ($Kind -notin @('controller','history') -and [datetime]::UtcNow -lt $script:NextRefresh) {
+    if ($Kind -notin @('controller','history','pulls') -and [datetime]::UtcNow -lt $script:NextRefresh) {
         $RelMsg.Text = "Retry available at $($script:NextRefresh.ToLocalTime().ToString('HH:mm:ss')). Showing previous results."
         return
     }
@@ -59,6 +59,7 @@ function Complete-LaneRefresh {
     } catch { $Result = @{ Error=$_.Exception.Message; RetrySeconds=60 } }
     finally { $Job.Shell.Dispose() }
     if ($Job.Generation -ne $script:ProjectGeneration) { return }
+    if ($Job.Kind -eq 'pulls') { Set-LanePullResult $Result; return }
     if ($Job.Kind -eq 'history') { Set-LaneHistoryResult $Job $Result; return }
     if ($Job.Kind -eq 'controller') {
         if (-not [object]::ReferenceEquals($Job.Command,$script:CommandState)) { return }

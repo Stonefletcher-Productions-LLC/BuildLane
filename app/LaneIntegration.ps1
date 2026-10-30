@@ -201,7 +201,7 @@ function Complete-LaneIntegration {
                     } elseif ($P.Operation -eq 'release') {
                         $Releases=@(Get-LaneReleaseRecords $Result.State | Where-Object { $_.requestId -eq $P.RequestId -and $_.target -eq $P.Target -and $_.version -eq $P.Version })
                         if ($Releases.Count -eq 1) {
-                            $script:ReleaseRequestResult="Release $($P.Version) requested for $($P.Target). Server state: $($Releases[0].status). Full tests and packaging have separate outcomes."
+                            $script:ReleaseRequestResult="Release $($P.Version) request recorded. Follow its current Full tests and Package results below."
                             $IntegrationMessage.Text=$script:ReleaseRequestResult
                             $script:IntegrationPending=$null; $script:IntegrationInspect=$null
                         } else { $script:IntegrationError='The completed release request has no matching frozen version and target record. Inspect the controller; no retry was sent.' }

@@ -187,6 +187,7 @@ $QueueHead.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 4)
 $Queue = New-Object Windows.Forms.ListView
 $Queue.Dock = "Fill"; $Queue.Margin = New-Object Windows.Forms.Padding(0)
 $Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Nonclickable"; $Queue.Font = $FontSmall
+$Queue.ShowItemToolTips=$true
 [void]$Queue.Columns.Add("PR", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
 [void]$QueuePanel.Controls.Add($Queue, 0, 1)
 $Queue.Add_DoubleClick({
@@ -450,6 +451,7 @@ function Update-View {
     }
 
     # Queue. Same rule: rebuild only when the list itself changes, so hovering or scrolling is not interrupted.
+    if (-not $script:PullSnapshot -and -not $Config.integrationWorkflow -and -not $script:PullError) {
     $QueueKey = (@($(if ($S) { $S.queue })) | ForEach-Object { "$($_.number)|$($_.state)|$($_.title)" }) -join "`n"
     if ($QueueKey -ne $script:QueueKey) {
         $script:QueueKey = $QueueKey
@@ -478,6 +480,7 @@ function Update-View {
         $Queue.EndUpdate()
     }
     $View.QueueHead.Text = "Queue ($(@(if ($S) { $S.queue }).Count))"
+    }
 
     # Render the last machine snapshot; system queries run outside the Forms thread.
     Start-LaneHealth
@@ -502,6 +505,8 @@ function Update-View {
         $LogBox.SelectionStart = $LogBox.Text.Length; $LogBox.ScrollToCaret()
     }
     Update-LaneActivityView $S $View
+    Update-LanePullView $View
+    Update-LaneReleaseHeading $S $View
     Publish-LaneOverviewFrame $View
     Update-LaneIntegrationView
 }
@@ -691,6 +696,7 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
 . (Join-Path $PSScriptRoot 'LaneIntegration.ps1')
 . (Join-Path $PSScriptRoot 'LaneReleaseRequests.ps1')
+. (Join-Path $PSScriptRoot 'LanePulls.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
 $Form.Add_FormClosing({ if ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq "request") { $_.Cancel=$true; $IntegrationMessage.Text="Wait for the controller request response before closing." }; if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })
@@ -707,6 +713,7 @@ $Timer.Add_Tick({
     Start-LaneActivity
     Start-LaneHistory
     Start-LaneIntegrationRead
+    Start-LanePullRead
     $script:Ticks++
     if ($Tabs.SelectedTab -eq $RelTab -and $script:Ticks % 15 -eq 0) { Update-Releases }
 })

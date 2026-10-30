@@ -1,4 +1,4 @@
-﻿# Install the reusable desktop client without changing runner services or queue state.
+# Install the reusable desktop client without changing runner services or queue state.
 param(
     [string]$Destination = "$env:LOCALAPPDATA\Programs\Buildlane",
     [string]$Profile = (Join-Path $PSScriptRoot 'BuildLane.profile.json'),
@@ -17,7 +17,7 @@ $IconHash = (Get-FileHash (Join-Path $PSScriptRoot 'BuildLane.ico')).Hash
 $Stamp = "$LauncherHash $IconHash"
 $Receipt = Join-Path $Destination 'launcher.sha256'
 $NeedsCompile = -not (Test-Path (Join-Path $Destination 'Buildlane.exe')) -or -not (Test-Path $Receipt) -or (Get-Content $Receipt -Raw -ErrorAction SilentlyContinue).Trim() -ne $Stamp
-foreach ($Name in @('LaneApp.ps1', 'LaneProfiles.ps1', 'LaneGitHub.ps1', 'LaneRefresh.ps1','LaneMoves.ps1','LaneFeedback.ps1','LaneActions.ps1','LaneHistory.ps1','LaneActivity.ps1','LaneIntegration.ps1','LaneReleaseRequests.ps1', 'LaneProjectsUi.ps1', 'LaneTheme.ps1', 'BuildLane.ico', 'BuildLaneLauncher.cs', 'LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs')) {
+foreach ($Name in @('LaneApp.ps1', 'LaneProfiles.ps1', 'LaneGitHub.ps1', 'LaneRefresh.ps1','LaneMoves.ps1','LaneFeedback.ps1','LaneActions.ps1','LaneHistory.ps1','LaneActivity.ps1','LaneIntegration.ps1','LaneReleaseRequests.ps1','LanePulls.ps1', 'LaneProjectsUi.ps1', 'LaneTheme.ps1', 'BuildLane.ico', 'BuildLaneLauncher.cs', 'LaneTaskbar.cs','Invoke-LaneResource.ps1','LaneJob.cs')) {
     $Source = Join-Path $PSScriptRoot $Name
     $Target = Join-Path $Destination $Name
     if ([IO.Path]::GetFullPath($Source) -ne [IO.Path]::GetFullPath($Target)) { Copy-Item -LiteralPath $Source -Destination $Target -Force }
