@@ -34,6 +34,7 @@ try {
             return @{jobs=@(@{id=300;run_id=$(if ($script:WrongJob) { 999 } else { 30 });name='Build and test';status='in_progress';started_at=[datetime]::UtcNow.AddSeconds(-20).ToString('o');steps=@(@{name='Run actions/checkout@v4';status='in_progress'})})}
         }
         if ($Uri -match '/runs/20/attempts/1$') {
+            if ($script:Mode -eq 'report404') { throw '404 not found' }
             return @{id=20;run_attempt=$(if ($script:Mode -eq 'reportMismatch') { 2 } else { 1 });status='completed';conclusion='success'}
         }
         if ($Uri -match '/runs/(\d+)$') {
@@ -74,7 +75,11 @@ try {
     $script:Mode='normal'; $script:ActivitySnapshot=& $script:ActivityWorker $Request; Update-View
     Assert ($Title.Text -match '^Preparing: Integration batch') 'Completed quick evidence overrode the real active native job.'
     $script:Mode='reportMismatch'; $Result=& $script:ActivityWorker $Request
-    Assert $Result.Error 'Wrong completed report attempt was accepted.'
+    Assert (-not $Result.CompletedReport -and $Result.ReportError -and $Result.Active.Run.id -eq 30) 'Wrong report attempt was accepted or erased native evidence.'
+    $script:Mode='report404'; $Result=& $script:ActivityWorker $Request
+    Assert (-not $Result.Error -and -not $Result.CompletedReport -and $Result.ReportError -and $Result.Active.Run.id -eq 30) 'A failed optional report lookup erased native evidence.'
+    $script:ActivitySnapshot=$Result; Update-View
+    Assert ($Title.Text -match '^Preparing: Integration batch' -and $ActivityNote.Text -match 'could not be verified') 'Failed report lookup hid active native job or its diagnostic.'
     $Request.Remove('ReportRunId'); $Request.Remove('ReportAttempt')
     $script:Mode='rerun'; $Result=& $script:ActivityWorker $Request
     Assert $Result.Error 'A moving run attempt was accepted.'

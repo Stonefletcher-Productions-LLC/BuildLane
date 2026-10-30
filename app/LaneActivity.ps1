@@ -21,7 +21,7 @@ $script:ActivityWorker={
         }
         $Runs=@($Runs | Sort-Object @{Expression={[long]$_.id}} -Unique)
         if ($Runs.Count -gt 6) { throw 'Too many matching workflows to classify safely.' }
-        $Candidates=@(); $CompletedReport=$null
+        $Candidates=@(); $CompletedReport=$null; $ReportError=''
         foreach ($Run in $Runs) {
             if ([string]$Run.id -notmatch '^\d+$' -or [string]$Run.run_attempt -notmatch '^[1-9]\d*$') { throw 'Missing run identity.' }
             $Path=([string]$Run.path -split '@',2)[0]
@@ -45,11 +45,13 @@ $script:ActivityWorker={
         }
         $Active=$Candidates | Sort-Object @{Expression={if ($_.Job.status -eq 'in_progress') { 0 } else { 1 }}},@{Expression={$_.Job.started_at};Descending=$true},@{Expression={[long]$_.Run.id};Descending=$true} | Select-Object -First 1
         if ([string]$Request.ReportRunId -match '^[1-9]\d*$' -and [string]$Request.ReportAttempt -match '^[1-9]\d*$') {
-            $Report=Read "/actions/runs/$($Request.ReportRunId)/attempts/$($Request.ReportAttempt)"
-            if ([string]$Report.id -ne [string]$Request.ReportRunId -or [string]$Report.run_attempt -ne [string]$Request.ReportAttempt) { throw 'Local report run attempt mismatch.' }
-            if ($Report.status -eq 'completed' -and $Report.conclusion) { $CompletedReport=$Report }
+            try {
+                $Report=Read "/actions/runs/$($Request.ReportRunId)/attempts/$($Request.ReportAttempt)"
+                if ([string]$Report.id -ne [string]$Request.ReportRunId -or [string]$Report.run_attempt -ne [string]$Request.ReportAttempt) { throw 'Local report run attempt mismatch.' }
+                if ($Report.status -eq 'completed' -and $Report.conclusion) { $CompletedReport=$Report }
+            } catch { $ReportError='The previous local report outcome could not be verified.' }
         }
-        @{AtUtc=[datetime]::UtcNow;Active=$Active;CompletedReport=$CompletedReport;Count=$Candidates.Count;Repo=$Request.Repo}
+        @{AtUtc=[datetime]::UtcNow;Active=$Active;CompletedReport=$CompletedReport;ReportError=$ReportError;Count=$Candidates.Count;Repo=$Request.Repo}
     } catch {
         $Delay=60
         if ($_.Exception.Response) { $Retry=0; if ([int]::TryParse([string]$_.Exception.Response.Headers['Retry-After'],[ref]$Retry)) { $Delay=[math]::Max(60,$Retry) } }
@@ -101,6 +103,7 @@ function Update-LaneActivityView($S,$View) {
     $Fresh=$Snapshot -and -not $script:ActivityError -and ([datetime]::UtcNow-$Snapshot.AtUtc).TotalSeconds -le 60
     $View.ActivityNote.ForeColor=if ($Fresh) { $Grey } else { $Orange }
     $View.ActivityNote.Text=if ($script:ActivityError) { $script:ActivityError } elseif (-not $Snapshot) { 'Checking live build jobs. The local report below may describe an earlier run.' } else { "GitHub jobs observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss'))." }
+    if ($Snapshot.ReportError) { $View.ActivityNote.Text+=" $($Snapshot.ReportError)" }
     $Active=if ($Snapshot) { $Snapshot.Active }
     $ReportAt=[DateTimeOffset]::MinValue; $HasReport=$S -and [DateTimeOffset]::TryParse([string]$S.updated,[ref]$ReportAt)
     if ($Active -and -not $Fresh -and $HasReport -and $ReportAt.UtcDateTime -gt $Snapshot.AtUtc -and ($S.done -or [string]$S.runId -ne [string]$Active.Run.id)) { $Active=$null }
