@@ -1,4 +1,4 @@
-Ã¯Â»Â¿# Observe actual configured jobs independently of local button clicks and status-file handoffs.
+﻿# Observe actual configured jobs independently of local button clicks and status-file handoffs.
 $script:ActivityJob=$null; $script:ActivitySnapshot=$null; $script:ActivityError=''
 $script:ActivityIdentity=''; $script:NextActivityRead=[datetime]::MinValue
 $script:ActivityWorker={
