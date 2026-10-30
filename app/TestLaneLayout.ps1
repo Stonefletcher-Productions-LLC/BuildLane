@@ -10,11 +10,24 @@ try {
     $Status | ConvertTo-Json -Depth 6 | Set-Content $StatusPath
     Set-Content $PauseFile 'Paused by release owner while Test-Staging migration is verified. Current integration was allowed to finish.'
     $Form.Show(); [Windows.Forms.Application]::DoEvents(); $Timer.Stop(); $RefreshTimer.Stop(); $Tabs.SelectedTab=$NowTab
-    # Hosted Windows has a 788px work area. A fixed fixture minimum prevents the
-    # desktop's maximum tracking bounds from shrinking this intentional tall viewport.
-    $Form.MinimumSize=New-Object Drawing.Size(980,1100)
     $Form.MaximumSize=New-Object Drawing.Size(2000,2000)
-    $Form.Size=New-Object Drawing.Size(980,1100); $NowSplit.SplitterDistance=500
+    $Form.Size=New-Object Drawing.Size(980,1100)
+    # Form.SetBoundsCore unconditionally clamps to MaxWindowTrackSize on the short
+    # hosted desktop. Set this fixture's native bounds after Shown; keep all real
+    # 980x1100 layout assertions instead of silently testing a smaller viewport.
+    if ($Form.Width -ne 980 -or $Form.Height -ne 1100) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class LaneLayoutFixtureWindow {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+}
+"@
+        if (-not [LaneLayoutFixtureWindow]::SetWindowPos($Form.Handle,[IntPtr]::Zero,0,0,980,1100,0x16)) { throw 'Could not set the tall fixture viewport.' }
+        [Windows.Forms.Application]::DoEvents()
+    }
+    $NowSplit.SplitterDistance=500
     $Cells=@{}; foreach ($Control in $Root.Controls) { $Cells[$Control]=$Root.GetPositionFromControl($Control) }
     foreach ($Dark in @($false,$true)) {
         Set-LaneTheme $Dark
