@@ -186,10 +186,53 @@ $QueueHead.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 4)
 [void]$QueuePanel.Controls.Add($QueueHead, 0, 0)
 $Queue = New-Object Windows.Forms.ListView
 $Queue.Dock = "Fill"; $Queue.Margin = New-Object Windows.Forms.Padding(0)
-$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Nonclickable"; $Queue.Font = $FontSmall
+$Queue.View = "Details"; $Queue.FullRowSelect = $true; $Queue.HeaderStyle = "Clickable"; $Queue.Font = $FontSmall
 $Queue.ShowItemToolTips=$true
-[void]$Queue.Columns.Add("PR", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
+[void]$Queue.Columns.Add("PR #", 60); [void]$Queue.Columns.Add("Title", 380); [void]$Queue.Columns.Add("State", 260)
 [void]$QueuePanel.Controls.Add($Queue, 0, 1)
+
+# Compare PR identities numerically; the displayed number can also contain a status glyph.
+if (-not ('LaneQueueComparer' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
+using System;
+using System.Collections;
+using System.Windows.Forms;
+public sealed class LaneQueueComparer : IComparer {
+    public int Column;
+    public bool Descending;
+    private static long Number(ListViewItem item) {
+        long number;
+        return Int64.TryParse(Convert.ToString(item.Tag), out number) ? number : Int64.MaxValue;
+    }
+    public int Compare(object x, object y) {
+        var a = (ListViewItem)x;
+        var b = (ListViewItem)y;
+        int result = Column == 0 ? Number(a).CompareTo(Number(b)) :
+            StringComparer.OrdinalIgnoreCase.Compare(a.SubItems.Count > Column ? a.SubItems[Column].Text : "",
+                                                    b.SubItems.Count > Column ? b.SubItems[Column].Text : "");
+        if (result == 0) result = Number(a).CompareTo(Number(b));
+        return Descending ? -result : result;
+    }
+}
+"@
+}
+$script:QueueSortColumn = -1
+$script:QueueSortDescending = $false
+function Set-LaneQueueSort([int]$Column) {
+    if ($Column -lt 0 -or $Column -ge $Queue.Columns.Count) { return }
+    $script:QueueSortDescending = if ($script:QueueSortColumn -eq $Column) { -not $script:QueueSortDescending } else { $false }
+    $script:QueueSortColumn = $Column
+    $Comparer = New-Object LaneQueueComparer
+    $Comparer.Column = $Column; $Comparer.Descending = $script:QueueSortDescending
+    $Queue.ListViewItemSorter = $Comparer
+    $Queue.Sort()
+    $Names = @('PR #', 'Title', 'State')
+    for ($i = 0; $i -lt $Names.Count; $i++) {
+        $Queue.Columns[$i].Text = $Names[$i] + $(if ($i -eq $Column) { if ($script:QueueSortDescending) { ' ↓' } else { ' ↑' } } else { '' })
+    }
+}
+$Queue.Add_ColumnClick({ param($Sender, $EventArgs) Set-LaneQueueSort $EventArgs.Column })
+
 $Queue.Add_DoubleClick({
     if ($Queue.SelectedItems.Count -and $Queue.SelectedItems[0].Tag) {
         $N = $Queue.SelectedItems[0].Tag
@@ -341,7 +384,7 @@ function Publish-LaneOverviewFrame($Frame) {
 }
 function Set-Bar($Bar, [double]$Fraction, $Frame=$null) {
     if ($Frame) {
-        $Entry=@{Control=$Bar;Style=$(if ($Fraction -lt 0) { [Windows.Forms.ProgressBarStyle]::Marquee } else { [Windows.Forms.ProgressBarStyle]::Continuous })}
+        $Entry=@{Control=$Bar;Visible=$true;Style=$(if ($Fraction -lt 0) { [Windows.Forms.ProgressBarStyle]::Marquee } else { [Windows.Forms.ProgressBarStyle]::Continuous })}
         if ($Fraction -lt 0) { $Entry.MarqueeAnimationSpeed=40 } else { $Entry.Value=[int]([math]::Max(0.0,[math]::Min(1.0,$Fraction))*1000) }
         $Frame[$Bar]=$Entry
         return
@@ -397,8 +440,9 @@ function Update-View {
             $View.Title.Text = if ($Ok) { "✓ $($S.what): passed" } elseif ($S.done -eq "cancelled") { "○ $($S.what): cancelled" } elseif ($S.done -eq 'failure') { "✗ $($S.what): FAILED" } else { "○ $($S.what): $($S.done)" }
             $View.Title.ForeColor = if ($Ok) { $Green } elseif ($S.done -eq "cancelled") { $Grey } else { $Orange }
             $View.Sub.Text = "$($S.what), finished $($Updated.ToString('HH:mm')) after $(Format-Span ($Updated - $Started)). $(if ($Ok) { 'Check the queue below for upcoming work.' } else { 'Open the live log for details.' })"
-            $View.JobLabel.Text = "Run ended: $($S.done)"; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 })) $View
-            $View.StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 })) $View
+            # The title already says how it ended; full bars and a second "Run ended" line only repeated it.
+            $View.JobLabel.Text = ""; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 })) $View; $View[$JobBar].Visible = $false
+            $View.StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 })) $View; $View[$StepBar].Visible = $false
             $View.Time.Text = ""
         }
         else {
@@ -442,7 +486,7 @@ function Update-View {
                              else { "○", $Grey }
             $PhaseNote = if ($i -eq $Cur -and $S.done -eq 'cancelled') { ' (cancelled)' }
                          elseif ($S.done -and $i -gt $Cur) { ' (not reported)' }
-                         elseif ($i -lt $Cur) { ' (completed or skipped)' }
+                         elseif ($i -lt $Cur) { ' (done or skipped)' }
                          else { '' }
             $L = New-Label "$Glyph $($Phases[$i])$PhaseNote   " $FontBody $Color
             [void]$StepsBox.Controls.Add($L)

@@ -15,14 +15,22 @@ try {
     $Prs=@()
     foreach ($N in 1..3) { $Prs+=@(@{number=$N;title=@('Creator improvements','Street lighting','Vehicle polish')[$N-1];headRefOid=('b'*40);baseRefName='Test-Staging';isDraft=$false;reviewDecision=$(if ($N -eq 2) {'REVIEW_REQUIRED'} else {'APPROVED'});mergeable='MERGEABLE';mergeStateStatus='CLEAN';commits=@{nodes=@(@{commit=@{statusCheckRollup=@{state=$(if ($N -eq 3) {'FAILURE'} else {'SUCCESS'})}}})}}) }
     Set-LanePullResult @{Repo=$Repo;Branch='Test-Staging';AtUtc=[datetime]::UtcNow;Pulls=$Prs;Merged=@(@{number=4;title='Completed neck fix';baseRefName='Test-Staging';mergedAt='2026-10-30T00:00:00Z'})}
-    Assert ($Queue.Visible -and $Queue.Items.Count -eq 4 -and $QueueHead.Text -match 'Open pull requests') 'Completed report hid current PRs.'
+    Assert ($Queue.Visible -and $Queue.Items.Count -eq 3 -and $QueueHead.Text -match '^Pull requests:') 'Completed report hid current PRs.'
+    # Merged PRs are hidden until asked for; open work is grouped: needs you, ready, then waiting for review.
+    Assert ((@($Queue.Items | ForEach-Object {$_.Tag}) -join ',') -eq '3,1,2') 'Open PRs were not grouped by what they need.'
+    Assert ($QueueHead.Text -match '1 need you' -and $QueueHead.Text -match '1 ready' -and $QueueHead.Text -match '1 waiting for review' -and $QueueHead.Text -match 'builds on') "Summary line is wrong: $($QueueHead.Text)"
+    Assert ($Queue.Items[0].ForeColor -eq $Orange -and $Queue.Items[0].SubItems[2].Text -match 'Checks failed') 'Failed checks are not called out.'
+    $PullShowMerged.Checked=$true
+    Assert ($Queue.Items.Count -eq 4 -and $Queue.Items[3].Tag -eq 4 -and $Queue.Items[3].ForeColor -eq $Grey -and $PullShowMerged.Text -match '\(1\)') 'Show recent merges did not list merged PRs last, in grey.'
+    $PullShowMerged.Checked=$false
+    Assert ($Queue.Items.Count -eq 3) 'Hiding merges kept merged PRs.'
     Assert ($Title.Text -match '^Release 0.3.0') 'Exact run/attempt binding did not name release.'
     $Before=$Queue.Items[0]; 1..10 | ForEach-Object { Update-View }
     Assert ([object]::ReferenceEquals($Before,$Queue.Items[0])) 'Unchanged refresh rebuilt PR rows.'
     Set-LanePullResult @{Error='Fixture offline';RetrySeconds=60}
-    Assert ($Queue.Items.Count -eq 4 -and $QueueHint.Text -match 'Last known') 'API failure erased cached evidence.'
+    Assert ($Queue.Items.Count -eq 3 -and $QueueHint.Text -match 'Last known') 'API failure erased cached evidence.'
     $script:PullError=''; Update-View
-    $Queue.Items[0].Selected=$true
+    ($Queue.Items | Where-Object Tag -eq 1).Selected=$true
     function Fresh-MergeEligibility {
         $script:IntegrationSnapshot.AtUtc=[datetime]::UtcNow
         $script:IntegrationInspect=@{AtUtc=[datetime]::UtcNow;Observation=@{integrationMode='MergeToStagingThenValidate';controllerRef='main';capabilities=@{stage=$true;queueMerge=$true;cancelMerge=$true;pauseIntegration=$true;resumeIntegration=$true}}}
@@ -121,6 +129,39 @@ try {
     Apply-MergeState
     Assert (-not $script:IntegrationPending -and $QueueHead.Text -match 'merges running') 'Durable resume was not shown.'
     $script:PullActionMessage=''; Fresh-MergeEligibility; Update-View
+    # Drive the actual header event, including numbers that differ from lexical order and a refresh that replaces rows.
+    $SortPrs=@(
+        @{number=100;title='Beta';headRefOid=('b'*40);baseRefName='Test-Staging';isDraft=$false;reviewDecision='APPROVED';mergeable='CONFLICTING';mergeStateStatus='DIRTY';commits=@{nodes=@(@{commit=@{statusCheckRollup=@{state='SUCCESS'}}})}},
+        @{number=2;title='Zeta';headRefOid=('b'*40);baseRefName='Test-Staging';isDraft=$true;reviewDecision='APPROVED';mergeable='MERGEABLE';mergeStateStatus='CLEAN';commits=@{nodes=@(@{commit=@{statusCheckRollup=@{state='SUCCESS'}}})}},
+        @{number=10;title='alpha';headRefOid=('b'*40);baseRefName='Test-Staging';isDraft=$false;reviewDecision='APPROVED';mergeable='MERGEABLE';mergeStateStatus='CLEAN';commits=@{nodes=@(@{commit=@{statusCheckRollup=@{state='SUCCESS'}}})}}
+    )
+    function Refresh-SortRows { Set-LanePullResult @{Repo=$Repo;Branch='Test-Staging';AtUtc=[datetime]::UtcNow;Pulls=$SortPrs;Merged=@()} }
+    function Click-QueueHeader([int]$Column) {
+        $Method=[Windows.Forms.ListView].GetMethod('OnColumnClick',[Reflection.BindingFlags]'Instance,NonPublic')
+        $Event = New-Object Windows.Forms.ColumnClickEventArgs($Column)
+        [void]$Method.Invoke($Queue,[object[]]@($Event.PSObject.BaseObject))
+    }
+    function Assert-QueueOrder([string]$Expected) { Assert ((@($Queue.Items | ForEach-Object {$_.Tag}) -join ',') -eq $Expected) "Wrong queue order, expected $Expected" }
+    Refresh-SortRows
+    Assert ($Queue.HeaderStyle -eq 'Clickable') 'Queue headers cannot be clicked.'
+    ($Queue.Items | Where-Object Tag -eq 10).Selected=$true
+    Click-QueueHeader 0; Assert-QueueOrder '2,10,100'
+    Click-QueueHeader 0; Assert-QueueOrder '100,10,2'
+    Assert ($Queue.Columns[0].Text.EndsWith([string][char]0x2193)) 'Descending arrow is missing.'
+    Click-QueueHeader 1; Assert-QueueOrder '10,100,2'
+    Click-QueueHeader 1; Assert-QueueOrder '2,100,10'
+    Click-QueueHeader 2; Assert-QueueOrder '2,100,10'
+    Click-QueueHeader 2; Assert-QueueOrder '10,100,2'
+    $SortPrs[0].title='Updated beta'; Refresh-SortRows
+    Assert-QueueOrder '10,100,2'
+    Assert ($Queue.SelectedItems.Count -eq 1 -and $Queue.SelectedItems[0].Tag -eq 10) 'Refresh lost the selected PR.'
+    Assert ($Queue.Columns[2].Text.EndsWith([string][char]0x2193) -and $Queue.Columns[1].Text -eq 'Title') 'Refresh lost sort direction or left a stale arrow.'
+    $SortPrs=@(); Refresh-SortRows
+    Assert ($Queue.Items.Count -eq 1 -and -not $Queue.Items[0].Tag) 'Sorted empty queue failed.'
+    $SortPrs=@($Prs[0]); Refresh-SortRows; Click-QueueHeader 0
+    Assert ($Queue.Items.Count -eq 1 -and $Queue.Items[0].Tag -eq 1) 'Single-row sorting failed.'
+    Set-LanePullResult @{Repo=$Repo;Branch='Test-Staging';AtUtc=[datetime]::UtcNow;Pulls=$Prs;Merged=@()}
+    Click-QueueHeader 1
     if ($OutDirectory) { [void][IO.Directory]::CreateDirectory($OutDirectory); Resize-Content; Set-PaneHeights; [Windows.Forms.Application]::DoEvents(); $Bitmap=New-Object Drawing.Bitmap($Form.Width,$Form.Height); try {$Form.DrawToBitmap($Bitmap,(New-Object Drawing.Rectangle(0,0,$Form.Width,$Form.Height)));$Bitmap.Save((Join-Path $OutDirectory 'open-prs.png'))} finally {$Bitmap.Dispose()} }
     $script:IntegrationSnapshot.State.requests[0].worker.attempt=3; Update-View
     Assert ($Title.Text -notmatch '^Release 0.3.0') 'Mismatched attempt acquired release identity.'

@@ -77,3 +77,21 @@ Exports contain project settings, not BuildLane's separately stored token. Revie
 - Encrypted app credentials: `%APPDATA%\Buildlane\<owner_repo>\github.token`
 
 Reinstalling the app preserves saved profiles. Back up the profile folder before changing machines; encrypted tokens must be reconnected on the new machine.
+
+### Sorting the queue
+
+Click the **PR #**, **Title**, or **State** column header to sort the queue. The first click sorts ascending; another click on the same header sorts descending. An arrow marks the active column and direction. PR numbers sort numerically, and your chosen order and selected PR survive queue refreshes. Sorting changes the display only; it does not change which PR the controller merges next.
+
+### Reading the pull request list
+
+The heading above the list answers the common questions in one line, for example
+`Pull requests: merges running · builds paused · 3 queued to merge · 3 need you · 0 ready · 2 waiting for review`.
+
+- **Merges** and **builds** are separate switches. Pausing builds (top bar) does not stop the controller merging queued PRs, and **Pause merges** does not stop builds.
+- Until you click a header, rows are grouped by what they need:
+  1. **▶ Queued to merge** (blue): the controller merges these by itself once their checks pass.
+  2. **⚠ Needs you** (orange): conflicts, failed checks, requested changes, or a queued PR whose head changed.
+  3. **✓ Ready** (blue): approved and green. Press **Merge now** or **Merge when checks pass**.
+  4. **○ Waiting**: drafts and PRs that still need a review.
+- Merged PRs are history, so they are hidden by default. Tick **Show recent merges** to list them in grey at the bottom.
+- Hover a row for the full detail: review state, checks and target branch.
