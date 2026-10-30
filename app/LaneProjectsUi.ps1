@@ -1,4 +1,4 @@
-$ProjectTab = New-Object Windows.Forms.TabPage('Projects'); $ProjectTab.BackColor = $Paper
+﻿$ProjectTab = New-Object Windows.Forms.TabPage('Projects'); $ProjectTab.BackColor = $Paper
 [void]$Tabs.TabPages.Add($ProjectTab)
 $ProjectRoot = New-Object Windows.Forms.TableLayoutPanel
 $ProjectRoot.Dock='Fill'; $ProjectRoot.ColumnCount=1; $ProjectRoot.AutoScroll=$true
@@ -95,7 +95,7 @@ function Update-ProjectPicker {
 }
 function Use-LaneProject([string]$Path) {
     if ($script:ActionJob) { throw 'Wait for the release or connection request to finish before switching projects.' }
-    if ($script:IntegrationJob -or $script:IntegrationPending) { throw 'Wait for the integration request to be confirmed before switching projects.' }
+    if (($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending) { throw 'Wait for the integration request to be confirmed before switching projects.' }
     if ($script:CommandJob) { throw 'Wait for the lane request to finish before switching projects.' }
     if ($script:MoveJob) { throw 'Wait for the current move to finish before switching projects.' }
     $Value=Read-LaneProfile $Path

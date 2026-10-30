@@ -353,7 +353,7 @@ $script:State = $null
 function Update-View {
     $View=New-LaneOverviewFrame
     $Ready = -not $Config.setupRequired
-    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending)
+    $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob -and -not ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -and -not $script:IntegrationPending); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob -and -not ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -and -not $script:IntegrationPending)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
     if (-not $Ready) { $View.PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; Publish-LaneOverviewFrame $View; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".

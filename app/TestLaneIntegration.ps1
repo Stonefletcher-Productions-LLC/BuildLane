@@ -131,10 +131,19 @@ try {
     Assert (-not $script:IntegrationPending -and $IntegrationMessage.Text -match 'Checkpoint requested' -and $IntegrationMessage.Text -match 'dispatching' -and -not @($script:IntegrationSnapshot.State.checkpoints).Count) 'Queued checkpoint was confused with a verified receipt.'
     $script:IntegrationSnapshot.AtUtc=[datetime]::UtcNow.AddMinutes(-2); Update-LaneIntegrationView
     Assert ($IntegrationCurrent.Text -match 'Last confirmed' -and -not $IntegrationApply.Enabled) 'Stale mode evidence stayed actionable/current.'
+    $script:NextIntegrationRead=[datetime]::MinValue
+    Start-LaneIntegrationRead -Worker { Start-Sleep -Milliseconds 600; throw 'Retired fixture read' }
+    Update-View
+    Assert ($script:IntegrationJob -and $PauseButton.Enabled -and $GhButton.Enabled) 'A read-only integration poll disabled user buttons.'
+    Start-LaneCommand -Kind cancel -Worker { @{AcceptedAtUtc=[datetime]::UtcNow} }
+    Assert ($script:CommandJob -and -not $script:IntegrationJob) 'User action could not retire the background read.'
+    $Until=[datetime]::UtcNow.AddSeconds(5)
+    while ($script:CommandJob -and [datetime]::UtcNow -lt $Until) { Complete-LaneCommand; Start-Sleep -Milliseconds 20 }
+    Assert (-not $script:CommandJob) 'Foreground action did not finish after retiring read.'
     Assert (-not $script:UiErrors.Count) 'A UI handler threw.'
     'PASS: immutable state reads, revision/UUID controller binding, no optimistic mode, fresh capabilities, busy/stale guards, durable readback and staging PR-base separation.'
 } finally {
-    foreach ($Job in @($script:IntegrationJob,$script:ActivityJob,$script:RefreshJob,$script:HealthJob)+@($script:RetiredJobs)) { if ($Job -and $Job.Shell) { try { $Job.Shell.Stop() } finally { $Job.Shell.Dispose() } } }
+    foreach ($Job in @($script:CommandJob,$script:IntegrationJob,$script:ActivityJob,$script:RefreshJob,$script:HealthJob)+@($script:RetiredJobs)) { if ($Job -and $Job.Shell) { try { $Job.Shell.Stop() } finally { $Job.Shell.Dispose() } } }
     if ($Form) { $Form.Dispose() }; if ($Timer) { $Timer.Dispose() }; if ($RefreshTimer) { $RefreshTimer.Dispose() }
     Remove-Item -LiteralPath $FixtureRoot -Recurse -Force
 }
