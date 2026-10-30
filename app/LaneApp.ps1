@@ -594,7 +594,9 @@ function Get-SelectedRelease {
 }
 $StateWords = @{ open = "○ open"; queued = "▶ queued: landing its PRs"; packaging = "▶ packaging now"; packaged = "✓ packaged"; failed = "✗ package build failed" }
 
-function Update-Releases { Start-LaneRefresh }
+function Update-Releases {
+    if ($script:IntegrationSnapshot -and $script:IntegrationSnapshot.Initialized -and $script:IntegrationSnapshot.State.integrationMode -eq 'MergeToStagingThenValidate') { Start-LaneIntegrationRead -Force } else { Start-LaneRefresh }
+}
 function Set-ReleaseView($Snapshot) {
     $Open=@($Snapshot.Open | Sort-Object { Get-VerKey $_ })
     $Closed=@($Snapshot.Closed | Sort-Object closed_at -Descending | Select-Object -First 3)
@@ -688,6 +690,7 @@ $MoveBar.Controls[0].Margin = New-Object Windows.Forms.Padding(0, 9, 6, 0)
 . (Join-Path $PSScriptRoot 'LaneActivity.ps1')
 . (Join-Path $PSScriptRoot 'LaneProjectsUi.ps1')
 . (Join-Path $PSScriptRoot 'LaneIntegration.ps1')
+. (Join-Path $PSScriptRoot 'LaneReleaseRequests.ps1')
 $MoveStatus=Add-Row (New-Label '' $FontSmall $Grey) 4 $RelRoot
 $Form.Add_FormClosing({ if ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq "request") { $_.Cancel=$true; $IntegrationMessage.Text="Wait for the controller request response before closing." }; if ($script:ActionJob) { $_.Cancel=$true; $MoveStatus.Text="A release or connection request is in progress. Wait for its result before closing." }; if ($script:CommandJob) { $_.Cancel=$true; $PauseState.Text="A lane request is still being sent. Wait for its result before closing." }; if ($script:MoveJob) { $_.Cancel=$true; $MoveStatus.Text='A move is still running. Wait for its result before closing BuildLane.' } })
 $Tabs.Add_SelectedIndexChanged({ if ($Tabs.SelectedTab -eq $RelTab) { Update-Releases }; if ($Tabs.SelectedTab -eq $HistoryTab) { Start-LaneHistory } })
