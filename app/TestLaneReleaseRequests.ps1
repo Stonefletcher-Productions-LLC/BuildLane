@@ -1,4 +1,5 @@
 # Run in hosted Windows CI. Fixtures never dispatch live requests or launch engine jobs.
+param([string]$OutDirectory = '')
 $ErrorActionPreference='Stop'
 $FixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('lane-release-requests-'+[guid]::NewGuid())
 [void][IO.Directory]::CreateDirectory($FixtureRoot)
@@ -74,6 +75,13 @@ try {
     Assert ($ReleaseRequests.Items[0].SubItems[4].Text -eq 'skipped' -and $ReleaseOpen.Enabled -and $ReleaseRequests.Items[0].SubItems[5].Text -eq '123 / 2') 'Skipped packaging or exact run attempt was hidden.'
     $ReleaseState.requests[0].package.result='success'; Apply-ReleasePayload $Payload
     Assert ($ReleaseRequests.Items[0].SubItems[2].Text -eq 'packaged' -and $ReleaseRequests.Items[0].SubItems[3].Text -eq 'success' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'success') 'Verified exact Full/package result was not displayed from the raw state.'
+    if ($OutDirectory) {
+        [void][IO.Directory]::CreateDirectory($OutDirectory)
+        $ReleaseRequests.Items[0].Selected=$true; Update-LaneReleaseRequestSelection
+        Resize-Content; Set-PaneHeights; [Windows.Forms.Application]::DoEvents()
+        $Bitmap=New-Object Drawing.Bitmap($Form.Width,$Form.Height)
+        try { $Form.DrawToBitmap($Bitmap,(New-Object Drawing.Rectangle(0,0,$Form.Width,$Form.Height))); $Bitmap.Save((Join-Path $OutDirectory 'staging-release.png')) } finally { $Bitmap.Dispose() }
+    }
     $ReleaseState.requests[0].package.runId=124; Apply-ReleasePayload $Payload
     Assert ($ReleaseRequests.Items[0].SubItems[2].Text -ne 'packaged' -and $ReleaseRequests.Items[0].SubItems[4].Text -eq 'success (unverified)') 'Wrong-run package receipt was accepted as a release pass.'
     $ReleaseState.integrationMode='ValidateBeforeMerge'; Apply-ReleasePayload $Payload
