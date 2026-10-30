@@ -1,4 +1,4 @@
-# Observe actual configured jobs independently of local button clicks and status-file handoffs.
+﻿# Observe actual configured jobs independently of local button clicks and status-file handoffs.
 $script:ActivityJob=$null; $script:ActivitySnapshot=$null; $script:ActivityError=''
 $script:ActivityIdentity=''; $script:NextActivityRead=[datetime]::MinValue
 $script:ActivityWorker={
@@ -85,17 +85,17 @@ function Complete-LaneActivity {
 function Stop-LaneActivity {
     if ($script:ActivityJob) { [void]$script:ActivityJob.Shell.BeginStop($null,$null); [void]$script:RetiredJobs.Add($script:ActivityJob); $script:ActivityJob=$null }
 }
-function Update-LaneActivityView($S) {
+function Update-LaneActivityView($S,$View) {
     Initialize-LaneActivity
-    $StepsHead.Visible=$true; $StepsBox.Visible=$true; $Queue.Visible=$true
-    $QueueHint.Text='Drag the divider above to resize the queue. Double-click a PR to open it.'
-    $PreviousResult.Text=''; $PreviousResult.Visible=$false; $ActivityNote.Text=''
+    $View.StepsHead.Visible=$true; $View.StepsBox.Visible=$true; $View.Queue.Visible=$true
+    $View.QueueHint.Text='Drag the divider above to resize the queue. Double-click a PR to open it.'
+    $View.PreviousResult.Text=''; $View.PreviousResult.Visible=$false; $View.ActivityNote.Text=''
     $script:DisplayedActivity=$null
     if (-not $Config.activeJobs) { return }
     $Snapshot=$script:ActivitySnapshot
     $Fresh=$Snapshot -and -not $script:ActivityError -and ([datetime]::UtcNow-$Snapshot.AtUtc).TotalSeconds -le 60
-    $ActivityNote.ForeColor=if ($Fresh) { $Grey } else { $Orange }
-    $ActivityNote.Text=if ($script:ActivityError) { $script:ActivityError } elseif (-not $Snapshot) { 'Checking live build jobs. The local report below may describe an earlier run.' } else { "GitHub jobs observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss'))." }
+    $View.ActivityNote.ForeColor=if ($Fresh) { $Grey } else { $Orange }
+    $View.ActivityNote.Text=if ($script:ActivityError) { $script:ActivityError } elseif (-not $Snapshot) { 'Checking live build jobs. The local report below may describe an earlier run.' } else { "GitHub jobs observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss'))." }
     $Active=if ($Snapshot) { $Snapshot.Active }
     $ReportAt=[DateTimeOffset]::MinValue; $HasReport=$S -and [DateTimeOffset]::TryParse([string]$S.updated,[ref]$ReportAt)
     if ($Active -and $HasReport -and $ReportAt.UtcDateTime -gt $Snapshot.AtUtc -and ($S.done -or [string]$S.runId -ne [string]$Active.Run.id)) { $Active=$null }
@@ -105,30 +105,30 @@ function Update-LaneActivityView($S) {
         $AttemptMatches=($null -eq $S.runAttempt -or [string]$S.runAttempt -eq [string]$Active.Run.run_attempt)
         $LocalCurrent=$HasReport -and -not $S.done -and [string]$S.runId -eq [string]$Active.Run.id -and $AttemptMatches -and $HasStart -and $ReportAt.UtcDateTime -ge $Started.UtcDateTime
         if ($LocalCurrent) {
-            $ActivityNote.Text+=" Run #$($Active.Run.id), attempt $($Active.Run.run_attempt), job $($Active.Job.name)."
+            $View.ActivityNote.Text+=" Run #$($Active.Run.id), attempt $($Active.Run.run_attempt), job $($Active.Job.name)."
             return
         }
-        if ($S) { $PreviousResult.Text="Previous local report: $($S.what), run #$($S.runId), $(if ($S.done) { $S.done } else { 'unfinished; current status unconfirmed' })."; $PreviousResult.Visible=$true }
+        if ($S) { $View.PreviousResult.Text="Previous local report: $($S.what), run #$($S.runId), $(if ($S.done) { $S.done } else { 'unfinished; current status unconfirmed' })."; $View.PreviousResult.Visible=$true }
         $script:DisplayedActivity=$Active
         $Step=@($Active.Job.steps | Where-Object status -eq 'in_progress' | Select-Object -First 1)
         $Stage=if ($Active.Job.status -ne 'in_progress') { 'Queued / waiting' } elseif ($Step.Count -and $Step[0].name -match '(checkout|Set up job|Verify checked|Reset generated)') { 'Preparing' } else { 'Job running' }
-        $Title.Text="$(if (-not $Fresh) { 'Last observed' } else { $Stage }): $($Active.Run.display_title)"
-        $Title.ForeColor=if ($Fresh) { $Blue } else { $Orange }
-        $Sub.Text="Run #$($Active.Run.id), attempt $($Active.Run.run_attempt); $($Active.Job.name). Workflow revision $($Active.Run.head_sha)."
-        $JobLabel.Text="GitHub job: $($Active.Job.name) ($($Active.Job.status))"
-        $StepLabel.Text=if ($Step.Count) { "Observed step: $($Step[0].name)" } else { 'Runner phase not reported yet.' }
-        Set-Bar $JobBar -1; Set-Bar $StepBar -1
-        $Time.Text="Job status observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss')); waiting for this run's local report."
-        $Waiting.Text=if ($Active.Job.status -ne 'in_progress') { 'Waiting in GitHub. A more specific runner/concurrency reason has not been reported.' } else { 'This job has started. Its runner report has not caught up yet.' }
-        if (-not $Fresh) { $Waiting.Text='Live status is unconfirmed; the GitHub job above is the last observation.' }
-        $StepsHead.Visible=$false; $StepsBox.Visible=$false
-        $QueueHead.Text='Queue: unknown for this run'; $Queue.Visible=$false
-        $QueueHint.Text='Waiting for this run to publish its queue. The previous report does not establish the current queue.'
+        $View.Title.Text="$(if (-not $Fresh) { 'Last observed' } else { $Stage }): $($Active.Run.display_title)"
+        $View.Title.ForeColor=if ($Fresh) { $Blue } else { $Orange }
+        $View.Sub.Text="Run #$($Active.Run.id), attempt $($Active.Run.run_attempt); $($Active.Job.name). Workflow revision $($Active.Run.head_sha)."
+        $View.JobLabel.Text="GitHub job: $($Active.Job.name) ($($Active.Job.status))"
+        $View.StepLabel.Text=if ($Step.Count) { "Observed step: $($Step[0].name)" } else { 'Runner phase not reported yet.' }
+        Set-Bar $JobBar -1 $View; Set-Bar $StepBar -1 $View
+        $View.Time.Text="Job status observed $($Snapshot.AtUtc.ToLocalTime().ToString('HH:mm:ss')); waiting for this run's local report."
+        $View.Waiting.Text=if ($Active.Job.status -ne 'in_progress') { 'Waiting in GitHub. A more specific runner/concurrency reason has not been reported.' } else { 'This job has started. Its runner report has not caught up yet.' }
+        if (-not $Fresh) { $View.Waiting.Text='Live status is unconfirmed; the GitHub job above is the last observation.' }
+        $View.StepsHead.Visible=$false; $View.StepsBox.Visible=$false
+        $View.QueueHead.Text='Queue: unknown for this run'; $View.Queue.Visible=$false
+        $View.QueueHint.Text='Waiting for this run to publish its queue. The previous report does not establish the current queue.'
     } elseif ($S -and $S.done) {
-        $Title.Text="Last reported: $($S.what) ($($S.done))"
-        $QueueHead.Text='Queue: unknown from a completed report'; $Queue.Visible=$false
-        $QueueHint.Text='A completed local report does not establish the current queue.'
-        if ($Fresh) { $ActivityNote.Text+=' No configured active build job was observed in this snapshot.' }
+        $View.Title.Text="Last reported: $($S.what) ($($S.done))"
+        $View.QueueHead.Text='Queue: unknown from a completed report'; $View.Queue.Visible=$false
+        $View.QueueHint.Text='A completed local report does not establish the current queue.'
+        if ($Fresh) { $View.ActivityNote.Text+=' No configured active build job was observed in this snapshot.' }
     }
 }
 function Get-LaneDisplayedRunUrl {

@@ -308,17 +308,54 @@ function Format-Span([TimeSpan]$T) {
     if ($T.TotalHours -lt 1) { return "$([int][math]::Floor($T.TotalMinutes)) min" }
     "$([int][math]::Floor($T.TotalHours)) h $($T.Minutes) min"
 }
-function Set-Bar($Bar, [double]$Fraction) {
+# Build one final presentation before touching controls. Local status and live-job overlays
+# must not paint intermediate text or briefly restore hidden rows on every timer tick.
+$script:OverviewVisibility=@{}
+function New-LaneOverviewFrame {
+    $Frame=@{}
+    foreach ($Name in @('Title','Sub','JobLabel','StepLabel','Time','Waiting','Notes','QueueHead','DiskLabel','Health','PauseState','GhButton','PauseButton','ActivityNote','PreviousResult','QueueHint','StepsHead','StepsBox','Queue')) {
+        $Control=Get-Variable -Name $Name -ValueOnly
+        $Frame[$Name]=@{Control=$Control;Text=$Control.Text;ForeColor=$Control.ForeColor}
+    }
+    $Frame
+}
+function Publish-LaneOverviewFrame($Frame) {
+    $Changes=New-Object Collections.ArrayList
+    foreach ($Entry in $Frame.Values) {
+        $Control=$Entry.Control
+        foreach ($Property in @($Entry.Keys | Where-Object { $_ -ne 'Control' })) {
+            $Wanted=$Entry[$Property]
+            $Same=if ($Property -eq 'Visible') { $script:OverviewVisibility.ContainsKey($Control) -and $script:OverviewVisibility[$Control] -eq $Wanted } else { $Control.$Property -eq $Wanted }
+            if (-not $Same) { [void]$Changes.Add(@{Control=$Control;Property=$Property;Value=$Wanted}) }
+        }
+    }
+    if (-not $Changes.Count) { return }
+    $Root.SuspendLayout()
+    try {
+        foreach ($Change in $Changes) {
+            $Change.Control.($Change.Property)=$Change.Value
+            if ($Change.Property -eq 'Visible') { $script:OverviewVisibility[$Change.Control]=$Change.Value }
+        }
+    } finally { $Root.ResumeLayout($true) }
+}
+function Set-Bar($Bar, [double]$Fraction, $Frame=$null) {
+    if ($Frame) {
+        $Entry=@{Control=$Bar;Style=$(if ($Fraction -lt 0) { [Windows.Forms.ProgressBarStyle]::Marquee } else { [Windows.Forms.ProgressBarStyle]::Continuous })}
+        if ($Fraction -lt 0) { $Entry.MarqueeAnimationSpeed=40 } else { $Entry.Value=[int]([math]::Max(0.0,[math]::Min(1.0,$Fraction))*1000) }
+        $Frame[$Bar]=$Entry
+        return
+    }
     if ($Fraction -lt 0) { $Bar.Style = "Marquee"; $Bar.MarqueeAnimationSpeed = 40; return }
     $Bar.Style = "Continuous"; $Bar.Value = [int]([math]::Max(0.0, [math]::Min(1.0, $Fraction)) * 1000)
 }
 
 $script:State = $null
 function Update-View {
+    $View=New-LaneOverviewFrame
     $Ready = -not $Config.setupRequired
     $PauseButton.Enabled=($Ready -and -not $script:CommandJob -and -not $script:MoveJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending); $GhButton.Enabled=($Ready -and -not $script:MoveJob -and -not $script:CommandJob -and -not $script:ActionJob -and -not $script:IntegrationJob -and -not $script:IntegrationPending)
     $NowTab.Enabled=$Ready; $RelTab.Enabled=$Ready; $SystemTab.Enabled=$Ready
-    if (-not $Ready) { $PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; return }
+    if (-not $Ready) { $View.PauseState.Text="Set up your first project"; $Tabs.SelectedTab=$ProjectTab; Publish-LaneOverviewFrame $View; return }
     # A read that lands mid-write keeps the last good state instead of flashing "no build".
     $ReadWarning = ''
     if (Test-Path $JsonFile) {
@@ -332,23 +369,23 @@ function Update-View {
     else { $script:State = $null }
     $S = $script:State
     Initialize-LaneHistory
-    $Waiting.Text=Get-LaneWaitingText $S (Test-Path $PauseFile)
-    $Notes.Text = ''; $Sub.ForeColor = $Grey
+    $View.Waiting.Text=Get-LaneWaitingText $S (Test-Path $PauseFile)
+    $View.Notes.Text = ''; $View.Sub.ForeColor = $Grey
     $Paused = Test-Path $PauseFile
-    $PauseButton.Text = if ($Paused) { "Resume builds" } else { "Pause builds" }
-    $PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Builds allowed" }
-    $PauseState.ForeColor = if ($Paused) { $Orange } else { $Grey }
-    Update-LaneCommandFeedback
-    $GhButton.Text = if (Get-Token) { "✓ GitHub connected" } else { "Connect GitHub" }
+    $View.PauseButton.Text = if ($Paused) { "Resume builds" } else { "Pause builds" }
+    $View.PauseState.Text = if ($Paused) { "⏸ PAUSED: nothing new starts" } else { "Builds allowed" }
+    $View.PauseState.ForeColor = if ($Paused) { $Orange } else { $Grey }
+    Update-LaneCommandFeedback $View
+    $View.GhButton.Text = if (Get-Token) { "✓ GitHub connected" } else { "Connect GitHub" }
     # A status written by something other than the lane (a PR's quick checks share the same runner and file) can carry a
     # one-entry phase list. That is not a job shape: showing "Step 1 of 1" for a running batch is worse than falling
     # back to the standard phases, so require a real multi-phase list.
     $Phases = if ($S -and $S.phases -and @($S.phases).Count -ge 2) { @($S.phases) } else { @("Wait for the PC", "Quick checks", "Compile", "Content imports", "Tests", "Package") }
 
     if (-not $S) {
-        $Title.Text = "No build has reported yet"; $Title.ForeColor = $Grey
-        $Sub.Text = "Waiting for a status file. Check the runner paths in Projects, or open the setup guide."
-        $JobLabel.Text = ""; $StepLabel.Text = ""; $Time.Text = ""; Set-Bar $JobBar 0; Set-Bar $StepBar 0
+        $View.Title.Text = "No build has reported yet"; $View.Title.ForeColor = $Grey
+        $View.Sub.Text = "Waiting for a status file. Check the runner paths in Projects, or open the setup guide."
+        $View.JobLabel.Text = ""; $View.StepLabel.Text = ""; $View.Time.Text = ""; Set-Bar $JobBar 0 $View; Set-Bar $StepBar 0 $View
     }
     else {
         $Updated = [datetime]::Parse($S.updated).ToLocalTime()
@@ -356,37 +393,37 @@ function Update-View {
         $Phase = [int]$S.phase
         if ($S.done) {
             $Ok = $S.done -eq "success"
-            $Title.Text = if ($Ok) { "✓ $($S.what): passed" } elseif ($S.done -eq "cancelled") { "○ $($S.what): cancelled" } elseif ($S.done -eq 'failure') { "✗ $($S.what): FAILED" } else { "○ $($S.what): $($S.done)" }
-            $Title.ForeColor = if ($Ok) { $Green } elseif ($S.done -eq "cancelled") { $Grey } else { $Orange }
-            $Sub.Text = "$($S.what), finished $($Updated.ToString('HH:mm')) after $(Format-Span ($Updated - $Started)). $(if ($Ok) { 'Check the queue below for upcoming work.' } else { 'Open the live log for details.' })"
-            $JobLabel.Text = "Run ended: $($S.done)"; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 }))
-            $StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 }))
-            $Time.Text = ""
+            $View.Title.Text = if ($Ok) { "✓ $($S.what): passed" } elseif ($S.done -eq "cancelled") { "○ $($S.what): cancelled" } elseif ($S.done -eq 'failure') { "✗ $($S.what): FAILED" } else { "○ $($S.what): $($S.done)" }
+            $View.Title.ForeColor = if ($Ok) { $Green } elseif ($S.done -eq "cancelled") { $Grey } else { $Orange }
+            $View.Sub.Text = "$($S.what), finished $($Updated.ToString('HH:mm')) after $(Format-Span ($Updated - $Started)). $(if ($Ok) { 'Check the queue below for upcoming work.' } else { 'Open the live log for details.' })"
+            $View.JobLabel.Text = "Run ended: $($S.done)"; Set-Bar $JobBar ($(if ($Ok) { 1 } else { 0 })) $View
+            $View.StepLabel.Text = ""; Set-Bar $StepBar ($(if ($Ok) { 1 } else { 0 })) $View
+            $View.Time.Text = ""
         }
         else {
-            $Title.Text = if ($Phase -eq 0) { "Waiting to build $($S.what)" } else { "▶ Building $($S.what -replace '^batch ', 'batch ')" }; $Title.ForeColor = $Blue
+            $View.Title.Text = if ($Phase -eq 0) { "Waiting to build $($S.what)" } else { "▶ Building $($S.what -replace '^batch ', 'batch ')" }; $View.Title.ForeColor = $Blue
             $Quiet = (Get-Date) - $Updated
-            $Sub.Text = if ($Quiet.TotalMinutes -ge 10) { "⚠ No update from the build for $(Format-Span $Quiet). Check the live log for activity." } else { "Updated $($Updated.ToString('HH:mm:ss'))" }
-            $Sub.ForeColor = if ($Quiet.TotalMinutes -ge 10) { $Orange } else { $Grey }
+            $View.Sub.Text = if ($Quiet.TotalMinutes -ge 10) { "⚠ No update from the build for $(Format-Span $Quiet). Check the live log for activity." } else { "Updated $($Updated.ToString('HH:mm:ss'))" }
+            $View.Sub.ForeColor = if ($Quiet.TotalMinutes -ge 10) { $Orange } else { $Grey }
             $Frac = 0.0
             if ($S.progress -and [int]$S.progress.total -gt 0) { $Frac = [double]$S.progress.done / [double]$S.progress.total }
             $N = [math]::Max(0, [math]::Min($Phase, $Phases.Count - 1))
-            $JobLabel.Text = "Step $($N + 1) of $($Phases.Count): $($Phases[$N])"
-            Set-Bar $JobBar (($N + $Frac) / $Phases.Count)
-            $StepLabel.Text = "$($S.step)$(if ($S.detail) { "  ·  $($S.detail)" })"
+            $View.JobLabel.Text = "Step $($N + 1) of $($Phases.Count): $($Phases[$N])"
+            Set-Bar $JobBar (($N + $Frac) / $Phases.Count) $View
+            $View.StepLabel.Text = "$($S.step)$(if ($S.detail) { "  ·  $($S.detail)" })"
             if ($Paused -and $N -eq 0) {
-                $JobLabel.Text = "Step 1 of $($Phases.Count): ⏸ Paused, waiting for Resume"
-                $Sub.Text = "This build waits at the start while the lane is paused. Press Resume (top left) to let it go on."; $Sub.ForeColor = $Orange
+                $View.JobLabel.Text = "Step 1 of $($Phases.Count): ⏸ Paused, waiting for Resume"
+                $View.Sub.Text = "This build waits at the start while the lane is paused. Press Resume (top left) to let it go on."; $View.Sub.ForeColor = $Orange
             }
-            if ($S.progress -and [int]$S.progress.total -gt 0) { Set-Bar $StepBar $Frac } else { Set-Bar $StepBar -1 }
-            $Time.Text = "Run elapsed: $(Format-Span ((Get-Date) - $Started)) (started $($Started.ToString('HH:mm')), your time)"
+            if ($S.progress -and [int]$S.progress.total -gt 0) { Set-Bar $StepBar $Frac $View } else { Set-Bar $StepBar -1 $View }
+            $View.Time.Text = "Run elapsed: $(Format-Span ((Get-Date) - $Started)) (started $($Started.ToString('HH:mm')), your time)"
         }
         $Identity = if ($S.runId) { "Run #$($S.runId)" } else { 'Run ID not reported' }
-        $Sub.Text += "`nLatest local report: $Identity. This result applies only to $($S.what), not other builds or releases."
-        $Notes.Text = (@($S.notes) | Select-Object -Last 3 | ForEach-Object { "⚠ Watchdog, $_" }) -join "`n"
+        $View.Sub.Text += "`nLatest local report: $Identity. This result applies only to $($S.what), not other builds or releases."
+        $View.Notes.Text = (@($S.notes) | Select-Object -Last 3 | ForEach-Object { "⚠ Watchdog, $_" }) -join "`n"
     }
 
-    if ($ReadWarning) { $Sub.Text = $ReadWarning; $Sub.ForeColor = $Orange }
+    if ($ReadWarning) { $View.Sub.Text = $ReadWarning; $View.Sub.ForeColor = $Orange }
 
     # Steps, ticked off. Only rebuilt when the phase cursor or its result actually moves: this used to dispose and
     # recreate every label on each 3-second tick, which flickered and burned CPU while nothing changed.
@@ -440,21 +477,21 @@ function Update-View {
         if (-not $Queue.Items.Count) { [void]$Queue.Items.Add((New-Object Windows.Forms.ListViewItem("Nothing waiting."))) }
         $Queue.EndUpdate()
     }
-    $QueueHead.Text = "Queue ($(@(if ($S) { $S.queue }).Count))"
+    $View.QueueHead.Text = "Queue ($(@(if ($S) { $S.queue }).Count))"
 
     # Render the last machine snapshot; system queries run outside the Forms thread.
     Start-LaneHealth
     $Machine=$script:CachedMachine
     if ($Machine -and -not $Machine.DiskError) {
-        Set-Bar $DiskBar $Machine.UsedFraction
-        $DiskLabel.Text="Drive ${Drive}: $($Machine.FreeGB) GB free of $($Machine.TotalGB) GB"
-        if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $DiskLabel.Text+=". Below the configured $($Config.minimumFreeGB) GB minimum." }
-        elseif ($Machine.FreeGB -lt $Config.cleanBelowGB) { $DiskLabel.Text+=' (below the configured cleanup threshold)' }
-        $DiskLabel.ForeColor=if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
-    } else { $DiskLabel.Text=if ($Machine) { $Machine.DiskError } else { 'Checking machine health...' } }
+        Set-Bar $DiskBar $Machine.UsedFraction $View
+        $View.DiskLabel.Text="Drive ${Drive}: $($Machine.FreeGB) GB free of $($Machine.TotalGB) GB"
+        if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $View.DiskLabel.Text+=". Below the configured $($Config.minimumFreeGB) GB minimum." }
+        elseif ($Machine.FreeGB -lt $Config.cleanBelowGB) { $View.DiskLabel.Text+=' (below the configured cleanup threshold)' }
+        $View.DiskLabel.ForeColor=if ($Machine.FreeGB -lt $Config.minimumFreeGB) { $Orange } else { $Ink }
+    } else { $View.DiskLabel.Text=if ($Machine) { $Machine.DiskError } else { 'Checking machine health...' } }
     $P = if ($Paused) { "⏸ PAUSED: nothing new starts until you press Resume" } else { "✓ Builds allowed" }
-    $Health.Text=(@(if ($Machine) { $Machine.Health } else { 'Checking machine health...' })+@($P)) -join "`n"
-    $Health.ForeColor=if ($Paused) { $Orange } else { $Ink }
+    $View.Health.Text=(@(if ($Machine) { $Machine.Health } else { 'Checking machine health...' })+@($P)) -join "`n"
+    $View.Health.ForeColor=if ($Paused) { $Orange } else { $Ink }
 
     # The running step's log, from the runner's live page.
     if (-not $LogSplit.Panel2Collapsed) {
@@ -464,7 +501,8 @@ function Update-View {
         } else { "No step is running right now." }
         $LogBox.SelectionStart = $LogBox.Text.Length; $LogBox.ScrollToCaret()
     }
-    Update-LaneActivityView $S
+    Update-LaneActivityView $S $View
+    Publish-LaneOverviewFrame $View
     Update-LaneIntegrationView
 }
 

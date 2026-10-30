@@ -42,9 +42,28 @@ try {
             $Previous=$Control
         }
         if ($JobBar.Width -lt 700 -or $StepBar.Width -lt 700) { throw "Progress bars collapsed: $($JobBar.Bounds) / $($StepBar.Bounds); columns $($Root.GetColumnWidths() -join ',')" }
+        # An unchanged completed report and unchanged checkout handoff must not repaint
+        # intermediate local values or toggle rows on each one-second status tick.
+        foreach ($Handoff in @($false,$true)) {
+            $script:ActivitySnapshot=@{AtUtc=[datetime]::UtcNow;Active=$null;Count=0;Repo=$Repo}
+            if ($Handoff) { $script:ActivitySnapshot.Active=@{Run=@{id=30;run_attempt=1;display_title='Integration batch #331, #400';head_sha=('a'*40)};Job=@{name='Build and test';status='in_progress';started_at=[datetime]::UtcNow.AddSeconds(-4).ToString('o');steps=@(@{name='Run actions/checkout@v4';status='in_progress'})}} }
+            Update-View; [Windows.Forms.Application]::DoEvents()
+            $script:LayoutEvents=0; $script:VisibleEvents=0; $script:TextEvents=0
+            $OnLayout={ $script:LayoutEvents++ }; $OnVisible={ $script:VisibleEvents++ }; $OnText={ $script:TextEvents++ }
+            $Root.Add_Layout($OnLayout)
+            $Watched=@($Root.Controls)+@($Queue,$QueueHead,$QueueHint)
+            foreach ($Control in $Watched) { $Control.Add_VisibleChanged($OnVisible); $Control.Add_TextChanged($OnText) }
+            try {
+                foreach ($Tick in 1..20) { Update-View; [Windows.Forms.Application]::DoEvents() }
+                if ($script:VisibleEvents -or $script:TextEvents -or $script:LayoutEvents) { throw "Unchanged status repainted (handoff=$Handoff): visible=$script:VisibleEvents text=$script:TextEvents layout=$script:LayoutEvents" }
+            } finally {
+                $Root.Remove_Layout($OnLayout)
+                foreach ($Control in $Watched) { $Control.Remove_VisibleChanged($OnVisible); $Control.Remove_TextChanged($OnText) }
+            }
+        }
         if ($script:UiErrors.Count) { throw 'UI handler failed during repeated refreshes.' }
     }
-    "PASS: tall 980x1100 layout, DPI $($Form.DeviceDpi), light/dark, repeated handoff/completed transitions, no text overlap and full-width bars."
+    "PASS: tall 980x1100 layout, DPI $($Form.DeviceDpi), light/dark, repeated handoff/completed transitions, no text overlap, full-width bars, and zero text/visibility/layout events across unchanged idle/handoff ticks."
 } finally {
     foreach ($Job in @($script:ActivityJob,$script:RefreshJob,$script:HealthJob)+@($script:RetiredJobs)) { if ($Job -and $Job.Shell) { try { $Job.Shell.Stop() } finally { $Job.Shell.Dispose() } } }
     if ($Form) { $Form.Dispose() }; if ($Timer) { $Timer.Dispose() }; if ($RefreshTimer) { $RefreshTimer.Dispose() }

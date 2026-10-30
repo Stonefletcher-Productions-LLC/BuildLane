@@ -20,6 +20,7 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
 
 - **Shows the truth about the current build** — which step, how far through, how long it has been running, and the
   exact run it belongs to. A green test run never makes an unreported Package step look finished.
+- **Updates without flashing** — unchanged status leaves overview text, row visibility and layout untouched while live polling continues.
 - **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
   it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
 - **Pauses everything** — including the option to stop the build that is already running.
