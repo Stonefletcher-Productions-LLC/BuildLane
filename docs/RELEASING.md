@@ -28,6 +28,10 @@ The row shows the server's queue state and waiting reason. Requests are never re
 
 **Pause merges / Resume merges** controls the durable hosted merge queue; it starts paused until explicitly enabled. The heading says whether merges are running, paused, or unconfirmed. Reviewed changes can be queued while paused, but the server will not merge them until resumed. **Pause builds** controls native builds on this PC independently; it does not stop hosted merges. Neither queued acceptance nor a button click changes the displayed server pause state before confirmation.
 
+![Overview merge controls and separate server merge-pause status, using synthetic fixture PRs](images/open-prs.png)
+
+This hosted fixture illustrates the controls; its sample release and PR results are not live project evidence. See [image provenance](images/README.md).
+
 Use **Integration → Refresh backend eligibility → Request checkpoint** to validate the current integration revision without asking for a release. The backend determines checkpoint checks; LifeShare uses its import, compile and game-test checkpoint. Full release tests and packaging remain required in both modes.
 
 ## If it appears to stop

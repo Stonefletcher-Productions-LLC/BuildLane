@@ -10,7 +10,7 @@ BuildLane is a small Windows app for a self-hosted build lane. It shows what the
 changes are waiting, and which release is next, so you do not have to keep a PowerShell window open or watch GitHub
 in a browser tab.
 
-![The Overview tab while a batch runs tests: step 5 of 6, both progress bars, the steps so far, and the queue with each change's state](docs/images/overview.png)
+![Overview with live PRs, merge controls and separate merge-pause status; illustrative fixture data](docs/images/open-prs.png)
 
 Made by Stonefletcher Productions LLC. The source is available in this repository.
 
