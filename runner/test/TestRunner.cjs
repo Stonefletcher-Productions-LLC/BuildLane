@@ -306,6 +306,12 @@ function retention() {
   for (let i = 1; i <= 5; i++) { const d = path.join(st.runsDir, String(i)); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ id: i, status: i === 1 ? 'in_progress' : 'completed', updated_at: i === 5 ? new Date().toISOString() : old, jobs: [] })); }
   assert.strictEqual(st.prune({ keepDays: 7, keepRuns: 1 }), 3);
   assert.deepStrictEqual(st.list().map(r => r.id), [5, 1]);
+  const zipBuf = Buffer.from('PK fake zip');
+  const art = st.addArtifact(st.get(5), 'receipt', zipBuf);
+  const want = 'sha256:' + require('crypto').createHash('sha256').update(zipBuf).digest('hex');
+  assert.strictEqual(st.restArtifact(art).digest, want);
+  const legacy = { ...art }; delete legacy.digest;
+  assert.strictEqual(st.restArtifact(legacy).digest, want, 'digest computed for artifacts stored without one');
   const mine = path.join(root, '_work-linux', '_temp', '42'), other = path.join(root, '_workbench', '_temp', '43');
   for (const d of [mine, other]) { fs.mkdirSync(d, { recursive: true }); const t = new Date(Date.now() - 2 * 86400000); fs.utimesSync(d, t, t); }
   const r = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
@@ -315,7 +321,7 @@ function retention() {
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'ci.yml', key: 'quick' }).name, 'quick');
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'lane.yml', key: 'quick' }).name, 'lane');
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows'], { file: 'ci.yml', key: 'other' }).name, 'lane');
-  console.log('PASS retention: old runs pruned, stale temp folders cleared, other folders kept');
+  console.log('PASS retention and artifact digests: old runs pruned, stale temp folders cleared, other folders kept');
 }
 
 (async () => { unit(); retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });

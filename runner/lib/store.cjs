@@ -7,6 +7,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const BASE_ID = 900000000000;
+const zipDigest = buf => `sha256:${crypto.createHash('sha256').update(buf).digest('hex')}`;
 
 class Store {
   constructor(root, { owner, repo }) {
@@ -90,7 +91,7 @@ class Store {
     fs.writeFileSync(file, zipBuffer);
     const fresh = this.get(run.id) || run;
     fresh.artifacts = (fresh.artifacts || []).filter(a => a.name !== name);
-    const art = { id, name, size_in_bytes: zipBuffer.length, expired: false, created_at: new Date().toISOString(), file: path.basename(file),
+    const art = { id, name, size_in_bytes: zipBuffer.length, digest: zipDigest(zipBuffer), expired: false, created_at: new Date().toISOString(), file: path.basename(file),
       workflow_run: { id: run.id, head_sha: run.head_sha, head_branch: run.head_branch } };
     fresh.artifacts.push(art); this.save(fresh); run.artifacts = fresh.artifacts;
     return art;
@@ -110,7 +111,12 @@ class Store {
     const { key, ...rest } = j;
     return { ...rest, run_url: '', html_url: '', check_run_url: '', steps: j.steps.map(s => ({ ...s })) };
   }
-  restArtifact(a) { const { file, ...rest } = a; return { ...rest, archive_download_url: `/repos/${this.owner}/${this.repo}/actions/artifacts/${a.id}/zip` }; }
+  // GitHub reports `digest` (sha256 of the zip) for every artifact, and receipt checks compare it with the
+  // downloaded bytes. Artifacts stored before digests were recorded get theirs from the file.
+  restArtifact(a) {
+    const { file, ...rest } = a;
+    if (!rest.digest && a.workflow_run) try { rest.digest = zipDigest(fs.readFileSync(path.join(this.artifactDir(a.workflow_run.id), file))); } catch {}
+    return { ...rest, archive_download_url: `/repos/${this.owner}/${this.repo}/actions/artifacts/${a.id}/zip` }; }
 
   // Local job results presented as check runs for the given commit.
   checkRunsFor(sha, appId) {
