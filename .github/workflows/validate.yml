@@ -63,6 +63,10 @@ jobs:
       - name: PowerShell 7 resource cleanup checks
         shell: pwsh
         run: ./app/TestLaneResources.ps1
+      - name: Local runner checks
+        timeout-minutes: 6
+        shell: pwsh
+        run: node runner/test/TestRunner.cjs
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut
       - name: Upload illustrative UI screenshots

@@ -4,3 +4,5 @@
 *.md text eol=lf
 *.json text eol=lf
 *.ico binary
+runner/vendor/** -diff linguist-generated
+runner/actions/github-script/index.cjs -diff linguist-generated
