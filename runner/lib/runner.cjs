@@ -404,7 +404,7 @@ class LocalRunner {
   async finishRun(state) {
     const { run } = state;
     const results = [...state.jobs.values()].map(j => j.result);
-    run.conclusion = state.cancelled ? 'cancelled' : results.includes('failure') ? 'failure' : results.includes('cancelled') ? 'cancelled' : 'success';
+    run.conclusion = state.cancelled ? 'cancelled' : results.includes('failure') ? 'failure' : results.includes('cancelled') ? 'cancelled' : results.length && results.every(r => r === 'skipped') ? 'skipped' : 'success';
     run.status = 'completed';
     this.store.save(run);
     this.active.delete(run.id);

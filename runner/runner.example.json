@@ -1,7 +1,7 @@
 {
   "repo": "Stonefletcher-Productions-LLC/LifeShare",
   "repoAliases": ["ProjektPayne/LifeShare"],
-  "root": "E:\\GitHubRunner\\LocalRunner",
+  "root": "%USERPROFILE%\\buildlane-local\\data",
   "mode": "shadow",
   "tokenFile": [
     "%APPDATA%\\Buildlane\\Stonefletcher-Productions-LLC_LifeShare\\github.token",
@@ -21,7 +21,7 @@
     "lane": {
       "labels": ["self-hosted", "Windows", "lifeshare-lane"],
       "max": 1,
-      "workRoot": "E:\\GitHubRunner\\LocalRunner\\_work-lane",
+      "workRoot": "%USERPROFILE%\\buildlane-local\\data\\_work-lane",
       "shadow": false
     },
     "build": {

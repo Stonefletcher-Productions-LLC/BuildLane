@@ -62,7 +62,9 @@ function loadConfig(flags) {
 }
 
 function defaultRoot() {
-  return process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'Buildlane', 'LocalRunner') : path.join(os.homedir(), '.buildlane', 'local-runner');
+  // Not under AppData: apps packaged as MSIX (such as Claude desktop) see a private copy of AppData, so a
+  // config written from one would be invisible to the logon task.
+  return process.platform === 'win32' ? path.join(os.homedir(), 'buildlane-local') : path.join(os.homedir(), '.buildlane', 'local-runner');
 }
 
 function writeRequest(cfg, req) {
