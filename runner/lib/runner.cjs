@@ -295,7 +295,10 @@ class LocalRunner {
   }
 
   // Scheduling ------------------------------------------------------------------
-  poolFor(runsOn) {
+  // A pool with a `jobs` list ("ci.yml:quick" or "quick") takes only those jobs, and takes them ahead of
+  // other pools, so one light job can run while the rest of its runner's pool stays off.
+  poolFor(runsOn, job) {
+    if (job) for (const [name, p] of Object.entries(this.pools)) if (Array.isArray(p.jobs) && p.jobs.some(j => j === `${job.file}:${job.key}` || j === job.key)) return { name, pool: p, have: p.labels || [] };
     let labels = runsOn;
     if (labels && typeof labels === 'object' && !Array.isArray(labels)) labels = labels.labels || [];
     labels = [].concat(labels || []).map(l => String(l).toLowerCase());
@@ -303,6 +306,7 @@ class LocalRunner {
     let best = null;
     for (const [name, p] of Object.entries(this.pools)) {
       const have = (p.labels || []).map(l => l.toLowerCase());
+      if (Array.isArray(p.jobs)) continue;
       if (set.every(l => have.includes(l)) && (!best || have.length < best.have.length)) best = { name, pool: p, have };
     }
     return best;
@@ -360,7 +364,7 @@ class LocalRunner {
         const mctx = { ...ctx, contexts: { ...ctx.contexts, matrix: matrix || {} } };
         let name = def.name ? str(interpolate(String(def.name), mctx)) : key;
         if (matrix && !(def.name && String(def.name).includes('matrix.'))) name = `${name} (${Object.values(matrix).map(v => typeof v === 'object' ? JSON.stringify(v) : String(v)).join(', ')})`;
-        const pool = this.poolFor(typeof def['runs-on'] === 'string' ? str(interpolate(def['runs-on'], mctx)) : def['runs-on']);
+        const pool = this.poolFor(typeof def['runs-on'] === 'string' ? str(interpolate(def['runs-on'], mctx)) : def['runs-on'], { file: wf.file, key });
         entry.parts.push({ name, matrix, pool, def, needsCtx, job: null, runner: null, done: false });
       }
     }
