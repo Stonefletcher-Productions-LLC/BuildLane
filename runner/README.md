@@ -76,12 +76,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File runner\Install-LocalRunner.p
 
 The script does three things:
 
-1. It copies the runner to `%LOCALAPPDATA%\Programs\Buildlane\runner`.
-2. If you have no config yet, it writes `%LOCALAPPDATA%\Buildlane\LocalRunner\runner.json`, a copy of
+1. It copies the runner to `%USERPROFILE%\buildlane-local\runner`.
+2. If you have no config yet, it writes `%USERPROFILE%\buildlane-local\runner.json`, a copy of
    `runner.example.json`.
 3. It registers a scheduled task, *Buildlane local runner*, that starts at logon and restarts if it stops.
 
 Remove the task with `-Uninstall`.
+
+Everything lives outside AppData on purpose. Apps packaged as MSIX, Claude desktop among them, see a private copy of AppData. A config written from inside one would be invisible to the scheduled task. The installer warns you when it runs in such a shell.
+
+Jobs written for Linux runners (`ubuntu-*` labels) get LF checkouts in their own work folder (`_work-linux`). Git for Windows otherwise converts line endings to CRLF.
 
 ## Config (`runner.json`)
 
@@ -102,7 +106,7 @@ Remove the task with `-Uninstall`.
 ## Everyday use
 
 ```powershell
-$R = "$env:LOCALAPPDATA\Programs\Buildlane\runner\buildlane-runner.cjs"
+$R = "$env:USERPROFILE\buildlane-local\runner\buildlane-runner.cjs"
 node $R list                                  # recent runs
 node $R show <run>                            # jobs and steps
 node $R log <run> [job]                       # logs

@@ -56,7 +56,10 @@ class JobRunner {
     const { run, wf, jobKey, config, store, job } = this.o;
     const pool = this.o.pool || {};
     const baseRoot = pool.workRoot || path.join(config.root, '_work');
-    const workRoot = this.o.slot ? `${baseRoot}-${this.o.slot + 1}` : baseRoot;
+    // Jobs written for Linux runners get LF checkouts (as on Linux) in their own work folder, so a Windows
+    // job's CRLF checkout never reaches them (Git for Windows sets core.autocrlf=true system-wide).
+    this.linux = WIN && /ubuntu|linux/.test([].concat(this.o.jobDef['runs-on'] || []).map(String).join(' ').toLowerCase());
+    const workRoot = `${baseRoot}${this.linux ? '-linux' : ''}${this.o.slot ? `-${this.o.slot + 1}` : ''}`;
     const repoName = run.repository.name;
     this.workspace = pool.workspace || path.join(workRoot, repoName, repoName);
     this.temp = path.join(workRoot, '_temp', String(job.id));
@@ -140,6 +143,10 @@ class JobRunner {
     const env = { ...process.env, ...(config.env || {}) };
     for (const k of Object.keys(env)) if (/^(INPUT_|STATE_|GITHUB_|RUNNER_|ACTIONS_)/i.test(k)) delete env[k];
     // The local API is on 127.0.0.1: never send it through a proxy.
+    if (this.linux) {
+      const n = Number(env.GIT_CONFIG_COUNT || 0);
+      Object.assign(env, { GIT_CONFIG_COUNT: String(n + 2), [`GIT_CONFIG_KEY_${n}`]: 'core.autocrlf', [`GIT_CONFIG_VALUE_${n}`]: 'false', [`GIT_CONFIG_KEY_${n + 1}`]: 'core.eol', [`GIT_CONFIG_VALUE_${n + 1}`]: 'lf' });
+    }
     const noProxy = [env.NO_PROXY || env.no_proxy, '127.0.0.1', 'localhost'].filter(Boolean).join(',');
     env.NO_PROXY = noProxy; env.no_proxy = noProxy;
     const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';

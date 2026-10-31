@@ -4,8 +4,8 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File runner\Install-LocalRunner.ps1 [-Config <file>] [-Start]
 #   powershell -NoProfile -ExecutionPolicy Bypass -File runner\Install-LocalRunner.ps1 -Uninstall
 param(
-    [string]$Config = (Join-Path $env:LOCALAPPDATA 'Buildlane\LocalRunner\runner.json'),
-    [string]$Destination = (Join-Path $env:LOCALAPPDATA 'Programs\Buildlane\runner'),
+    [string]$Config = (Join-Path $env:USERPROFILE 'buildlane-local\runner.json'),
+    [string]$Destination = (Join-Path $env:USERPROFILE 'buildlane-local\runner'),
     [string]$TaskName = 'Buildlane local runner',
     [switch]$Start,
     [switch]$Uninstall
@@ -27,6 +27,9 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git for Windo
 if (-not (Test-Path 'C:\Program Files\Git\bin\bash.exe')) { Write-Warning 'Git Bash was not found in C:\Program Files\Git. Set bashPath in the config for workflows written for Linux runners.' }
 
 $Source = $PSScriptRoot
+# An MSIX-packaged app (Claude desktop, for one) sees a private copy of AppData; files written there from
+# inside it are invisible to the scheduled task, which runs outside the package.
+if ($env:LOCALAPPDATA -like '*\Packages\*' -or $Config -like '*\Packages\*\LocalCache\*') { Write-Warning "This shell runs inside a packaged app, so AppData is virtualised here. Keep the config outside AppData (the default, $env:USERPROFILE\buildlane-local)." }
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 foreach ($Item in 'buildlane-runner.cjs', 'lib', 'vendor', 'actions', 'runner.example.json', 'README.md') {
     Copy-Item -LiteralPath (Join-Path $Source $Item) -Destination $Destination -Recurse -Force
