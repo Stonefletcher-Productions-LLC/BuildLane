@@ -1,6 +1,6 @@
 'use strict';
 // `exec`: run one workflow file from disk right now, without watching GitHub. The workspace is the
-// current folder (or --workspace), so a checkout step is usually skipped with --skip-checkout.
+// current folder with --skip-checkout (or --workspace); otherwise each job checks out into its own folder.
 // Handy for checking that a workflow works on this PC before switching it over.
 const fs = require('fs');
 const os = require('os');
@@ -16,8 +16,10 @@ async function exec(args, flags) {
   if (flags.job) { const keep = String(flags.job).split(','); wf.jobs = Object.fromEntries(Object.entries(wf.jobs).filter(([k]) => keep.includes(k))); for (const j of Object.values(wf.jobs)) if (j.needs) j.needs = [].concat(j.needs).filter(n => keep.includes(n)); }
   if (flags['skip-checkout']) for (const j of Object.values(wf.jobs)) j.steps = (j.steps || []).filter(s => !String(s.uses || '').startsWith('actions/checkout'));
   const root = flags.root ? path.resolve(flags.root) : fs.mkdtempSync(path.join(os.tmpdir(), 'buildlane-exec-'));
-  const workspace = path.resolve(flags.workspace || process.cwd());
-  const pools = { all: { labels: ['self-hosted', 'windows', 'linux', 'x64', 'ubuntu-latest', 'windows-latest', ...String(flags.labels || '').split(',').filter(Boolean)], max: 4, workspace } };
+  // With --skip-checkout (or an explicit --workspace) the jobs run in that folder. Otherwise each job checks
+  // out into its own work folder, so a Linux job gets its own LF checkout instead of reusing a Windows one.
+  const pin = flags['skip-checkout'] || flags.workspace ? { workspace: path.resolve(flags.workspace || process.cwd()) } : { workRoot: path.join(root, '_work') };
+  const pools = { all: { labels: ['self-hosted', 'windows', 'linux', 'x64', 'ubuntu-latest', 'windows-latest', ...String(flags.labels || '').split(',').filter(Boolean)], max: 4, ...pin } };
   for (const j of Object.values(wf.jobs)) for (const l of [].concat(j['runs-on'] || [])) if (typeof l === 'string' && !l.includes('${{')) pools.all.labels.push(l);
   const cfg = { repo: flags.repo || 'local/repo', root, token: process.env.BUILDLANE_TOKEN || process.env.GH_TOKEN || '', mode: flags.live ? 'live' : 'shadow', postStatuses: false, pools, replacePools: true, api: flags.api, quiet: !!flags.quiet, bashPath: flags.bash, keepTemp: !!flags['keep-temp'] };
   const r = new LocalRunner(cfg);
