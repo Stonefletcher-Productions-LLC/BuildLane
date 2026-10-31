@@ -2,7 +2,7 @@
 'use strict';
 // Buildlane local runner: runs a repository's GitHub Actions workflows on this PC instead of on GitHub.
 //
-//   node runner/buildlane-runner.cjs serve   [--config <file>]      watch GitHub and run jobs (the service)
+//   node runner/buildlane-runner.cjs serve   [--config <file>] [--parent-pid <pid>]   watch GitHub and run jobs (the service)
 //   node runner/buildlane-runner.cjs once    [--config <file>]      one poll + run until idle (testing)
 //   node runner/buildlane-runner.cjs run <workflow.yml> [--ref main] [name=value ...]   queue a manual run
 //   node runner/buildlane-runner.cjs cancel <runId> | rerun <runId> [--failed]
@@ -101,6 +101,9 @@ async function main() {
       await r.start();
       const shutdown = async () => { r.stopping = true; await r.stop(); try { fs.unlinkSync(lock); } catch {} process.exit(0); };
       process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
+      // Stopping the scheduled task ends only its launcher; --parent-pid makes the service follow it out.
+      const parent = Number(flags['parent-pid']);
+      if (parent) setInterval(() => { if (!alive(parent)) { r.log(`parent ${parent} exited; stopping`); shutdown(); } }, 5000).unref();
       await r.loop();
       return;
     }

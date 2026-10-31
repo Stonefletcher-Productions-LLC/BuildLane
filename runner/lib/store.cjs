@@ -63,6 +63,19 @@ class Store {
     return out.sort((a, b) => b.id - a.id);
   }
 
+  // Deletes finished runs (logs and artifacts included) older than keepDays, always keeping the newest
+  // keepRuns runs and anything still queued or running. Returns how many were removed.
+  prune({ keepDays = 7, keepRuns = 100, now = Date.now() } = {}) {
+    let removed = 0;
+    const cutoff = now - keepDays * 86400000;
+    this.list().forEach((r, i) => {
+      if (i < keepRuns || r.status !== 'completed') return;
+      if (Date.parse(r.updated_at || r.created_at) > cutoff) return;
+      try { fs.rmSync(this.runDir(r.id), { recursive: true, force: true }); removed++; } catch {}
+    });
+    return removed;
+  }
+
   addJob(run, { key, name, labels }) {
     const job = { id: this.nextId('job'), run_id: run.id, run_attempt: run.run_attempt, key, name, workflow_name: run.name, head_sha: run.head_sha, head_branch: run.head_branch,
       status: 'queued', conclusion: null, created_at: new Date().toISOString(), started_at: null, completed_at: null,

@@ -295,4 +295,23 @@ async function actionInputs() {
   console.log('PASS action inputs, post-step state, one job at a time in a pinned workspace');
 }
 
-(async () => { unit(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
+// Retention: old finished runs go, the newest keepRuns and unfinished runs stay; stale job temp folders
+// under the runner's own work folders go, another runner's folders are left alone.
+function retention() {
+  const { Store } = require('../lib/store.cjs');
+  const { LocalRunner } = require('../lib/runner.cjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bl-ret-'));
+  const st = new Store(root, { owner: 'o', repo: 'r' });
+  const old = new Date(Date.now() - 30 * 86400000).toISOString();
+  for (let i = 1; i <= 5; i++) { const d = path.join(st.runsDir, String(i)); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ id: i, status: i === 1 ? 'in_progress' : 'completed', updated_at: i === 5 ? new Date().toISOString() : old, jobs: [] })); }
+  assert.strictEqual(st.prune({ keepDays: 7, keepRuns: 1 }), 3);
+  assert.deepStrictEqual(st.list().map(r => r.id), [5, 1]);
+  const mine = path.join(root, '_work-linux', '_temp', '42'), other = path.join(root, '_workbench', '_temp', '43');
+  for (const d of [mine, other]) { fs.mkdirSync(d, { recursive: true }); const t = new Date(Date.now() - 2 * 86400000); fs.utimesSync(d, t, t); }
+  const r = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
+  r.housekeep();
+  assert.ok(!fs.existsSync(mine) && fs.existsSync(other));
+  console.log('PASS retention: old runs pruned, stale temp folders cleared, other folders kept');
+}
+
+(async () => { unit(); retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });

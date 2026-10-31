@@ -79,6 +79,7 @@ class LocalRunner {
     });
     await this.proxy.listen(this.c.apiPort || 0);
     this.recoverInterrupted();
+    this.housekeep();
     this.log(`Buildlane local runner for ${this.c.repo} as ${this.login}, mode ${this.mode}, local API ${this.proxy.url}`);
     this.writeHeartbeat();
   }
@@ -89,6 +90,30 @@ class LocalRunner {
     const runs = this.store.list().slice(0, 30).map(r => ({ id: r.id, name: r.name, title: r.display_title, event: r.event, status: r.status, conclusion: r.conclusion, sha: r.head_sha, branch: r.head_branch, created: r.created_at, updated: r.updated_at,
       jobs: r.jobs.map(j => ({ id: j.id, name: j.name, status: j.status, conclusion: j.conclusion, step: (j.steps.find(s => s.status === 'in_progress') || {}).name || '' })) }));
     writeAtomic(path.join(this.c.root, 'runner-status.json'), JSON.stringify({ at: new Date().toISOString(), pid: process.pid, mode: this.mode, repo: this.c.repo, login: this.login, api: this.proxy && this.proxy.url, paused: this.paused(), runs, ...extra }, null, 1));
+  }
+
+  // Keeps the data folder from growing without bound: old runs, answered requests, stale job temp
+  // folders and a large runner.log. Runs at start and then hourly.
+  housekeep(now = Date.now()) {
+    this.lastHousekeep = now;
+    const keep = this.c.retention || {};
+    try { const n = this.store.prune({ keepDays: keep.days ?? 7, keepRuns: keep.runs ?? 100, now }); if (n) this.log(`housekeeping: removed ${n} old run(s)`); } catch (e) { this.log(`housekeeping: prune failed: ${e.message}`); }
+    const oldDay = now - 86400000;
+    const stale = p => { try { return fs.statSync(p).mtimeMs < oldDay; } catch { return false; } };
+    try { for (const n of fs.readdirSync(this.requestsDir)) if (n.endsWith('.done') && stale(path.join(this.requestsDir, n))) fs.rmSync(path.join(this.requestsDir, n), { force: true }); } catch {}
+    const running = new Set([...this.running.keys()].map(String));
+    // Only the work folders this runner names (<base>, <base>-linux, <base>-2 ...), never another runner's.
+    const bases = [path.join(this.c.root, '_work'), ...Object.values(this.c.pools || {}).map(p => p.workRoot).filter(Boolean)];
+    for (const base of new Set(bases)) {
+      const dir = path.dirname(base), stem = path.basename(base);
+      let names = []; try { names = fs.readdirSync(dir); } catch {}
+      for (const n of names.filter(n => n.startsWith(stem) && /^(-linux)?(-\d+)?$/.test(n.slice(stem.length)))) {
+        const temp = path.join(dir, n, '_temp');
+        let jobs = []; try { jobs = fs.readdirSync(temp); } catch {}
+        for (const j of jobs) if (/^\d+$/.test(j) && !running.has(j) && stale(path.join(temp, j))) try { fs.rmSync(path.join(temp, j), { recursive: true, force: true }); } catch {}
+      }
+    }
+    try { if (fs.statSync(this.logFile).size > (keep.logMB ?? 20) * 1048576) { fs.rmSync(this.logFile + '.1', { force: true }); fs.renameSync(this.logFile, this.logFile + '.1'); } } catch {}
   }
 
   paused() { return !!(this.c.pauseFile && fs.existsSync(this.c.pauseFile)); }
@@ -575,6 +600,7 @@ class LocalRunner {
       }
       try { await this.tick(); } catch (e) { this.log(`tick failed: ${e.stack || e}`); }
       try { this.writeHeartbeat(); } catch {}
+      if (Date.now() - (this.lastHousekeep || 0) > 3600000) try { this.housekeep(); } catch (e) { this.log(`housekeeping failed: ${e.message}`); }
       await new Promise(r => setTimeout(r, 2000));
     }
   }

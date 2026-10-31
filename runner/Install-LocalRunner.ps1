@@ -12,9 +12,16 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Stops the task and any runner process started from $Destination (by command line), and nothing else.
+function Stop-LocalRunner {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
+    $Mine = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($Destination, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+    foreach ($P in $Mine) { Write-Host "Stopping runner process $($P.ProcessId)"; Stop-Process -Id $P.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 if ($Uninstall) {
-    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($Task) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false }
+    Stop-LocalRunner
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false }
     Write-Host "Removed the scheduled task '$TaskName'. Run history and config are kept."
     return
 }
@@ -30,6 +37,7 @@ $Source = $PSScriptRoot
 # An MSIX-packaged app (Claude desktop, for one) sees a private copy of AppData; files written there from
 # inside it are invisible to the scheduled task, which runs outside the package.
 if ($env:LOCALAPPDATA -like '*\Packages\*' -or $Config -like '*\Packages\*\LocalCache\*') { Write-Warning "This shell runs inside a packaged app, so AppData is virtualised here. Keep the config outside AppData (the default, $env:USERPROFILE\buildlane-local)." }
+Stop-LocalRunner
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 foreach ($Item in 'buildlane-runner.cjs', 'lib', 'vendor', 'actions', 'runner.example.json', 'README.md') {
     Copy-Item -LiteralPath (Join-Path $Source $Item) -Destination $Destination -Recurse -Force
@@ -54,7 +62,7 @@ $Quote = { param($s) "'" + ($s -replace "'", "''") + "'" }
     "`$Log = $(& $Quote $Log)"
     'Set-Location -LiteralPath (Split-Path -LiteralPath $Script)'
     '"$(Get-Date -Format o) starting" | Out-File -LiteralPath $Log -Append -Encoding utf8'
-    '& $Node $Script serve --config $Config --quiet 2>&1 | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '& $Node $Script serve --config $Config --quiet --parent-pid $PID 2>&1 | Out-File -LiteralPath $Log -Append -Encoding utf8'
     '"$(Get-Date -Format o) exited with $LASTEXITCODE" | Out-File -LiteralPath $Log -Append -Encoding utf8'
     'exit $LASTEXITCODE'
 ) -join "`r`n" | Set-Content -LiteralPath $Launcher -Encoding ASCII
