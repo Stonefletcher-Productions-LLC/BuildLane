@@ -40,6 +40,7 @@ Made by Stonefletcher Productions LLC. The source is available in this repositor
   explicit build checkpoints. Mode changes require fresh backend eligibility and confirmed server readback.
   Full release tests and packaging remain mandatory in both modes.
 - **Keeps several projects apart** — each with its own repository, runner paths and credentials.
+- **Runs your GitHub Actions workflows on this PC** — the [local runner](runner/README.md) watches GitHub, runs the repository's own workflow files here and reports commit statuses back, so the project no longer needs GitHub-hosted Actions.
 - **Remembers how you left it** — window size, divider positions, light or dark, last project.
 
 ## See it

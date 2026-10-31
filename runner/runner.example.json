@@ -1,0 +1,35 @@
+{
+  "repo": "Stonefletcher-Productions-LLC/LifeShare",
+  "repoAliases": ["ProjektPayne/LifeShare"],
+  "root": "E:\\GitHubRunner\\LocalRunner",
+  "mode": "shadow",
+  "tokenFile": [
+    "%APPDATA%\\Buildlane\\Stonefletcher-Productions-LLC_LifeShare\\github.token",
+    "%APPDATA%\\LifeShareLane\\github.token"
+  ],
+  "defaultBranch": "main",
+  "pollSeconds": 60,
+  "pauseFile": "E:\\GitHubRunner\\PAUSED",
+  "commandIssue": 0,
+  "dispatchers": ["ProjektPayne", "stonefletcher"],
+  "skipWorkflows": ["claude-merge-fixer.yml"],
+  "pools": {
+    "hosted": {
+      "labels": ["ubuntu-latest", "windows-latest"],
+      "max": 2
+    },
+    "lane": {
+      "labels": ["self-hosted", "Windows", "lifeshare-lane"],
+      "max": 1,
+      "workRoot": "E:\\GitHubRunner\\LocalRunner\\_work-lane",
+      "shadow": false
+    },
+    "build": {
+      "labels": ["self-hosted", "Windows", "lifeshare"],
+      "max": 1,
+      "workRoot": "E:\\GitHubRunner\\LifeShare\\_work",
+      "shadow": false
+    }
+  },
+  "env": {}
+}
