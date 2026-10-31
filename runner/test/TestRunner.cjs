@@ -279,4 +279,20 @@ const api = process.env.GITHUB_API_URL, repo = process.env.GITHUB_REPOSITORY, H 
   console.log(`PASS e2e: ${runs.length} local runs (push, PR, schedule + cancel-in-progress, workflow_run, dispatch from a job and a comment, artifacts, check runs, statuses, shadow write refusal)`);
 }
 
-(async () => { unit(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
+// Node action inputs: a null default is empty, defaults are expressions, GITHUB_STATE reaches the post
+// step, and two jobs in one pinned workspace run one after the other (found on the build PC).
+async function actionInputs() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bl-act-'));
+  fs.mkdirSync(path.join(dir, 'act'));
+  fs.writeFileSync(path.join(dir, 'act', 'action.yml'), 'name: t\ninputs:\n  filter:\n    default: null\n  other:\n    default: ${{ github.event_name }}\nruns:\n  using: node20\n  main: main.js\n  post: post.js\n');
+  fs.writeFileSync(path.join(dir, 'act', 'main.js'), "const fs=require('fs');if(process.env.INPUT_FILTER!=='')process.exit(1);if(process.env.INPUT_OTHER!=='workflow_dispatch')process.exit(2);if(fs.existsSync('lock'))process.exit(4);fs.writeFileSync('lock','');setTimeout(()=>{fs.unlinkSync('lock');fs.appendFileSync(process.env.GITHUB_STATE,'k=v\\n');},500);");
+  fs.writeFileSync(path.join(dir, 'act', 'post.js'), "if(process.env.STATE_k!=='v')process.exit(3);");
+  fs.writeFileSync(path.join(dir, 'wf.yml'), 'name: NA\non: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./act\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./act\n');
+  const log = console.log; console.log = () => {};
+  let done; try { done = await require('../lib/offline.cjs').exec([path.join(dir, 'wf.yml')], { workspace: dir, quiet: true }); } finally { console.log = log; }
+  assert.strictEqual(done.conclusion, 'success', JSON.stringify(done.jobs.map(j => [j.name, j.steps.map(s => s.conclusion)])));
+  process.exitCode = 0;
+  console.log('PASS action inputs, post-step state, one job at a time in a pinned workspace');
+}
+
+(async () => { unit(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });

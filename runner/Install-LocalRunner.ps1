@@ -40,8 +40,22 @@ if (-not (Test-Path -LiteralPath $Config)) {
 
 $Script = Join-Path $Destination 'buildlane-runner.cjs'
 $Log = Join-Path (Split-Path $Config) 'runner-console.log'
-$Command = "& '$($Node.Source)' '$Script' serve --config '$Config' *>> '$Log'"
-$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$Command`""
+# Task Scheduler mangles quoting and redirection in an inline -Command, so the task runs a small launcher file.
+$Launcher = Join-Path $Destination 'Start-LocalRunner.ps1'
+$Quote = { param($s) "'" + ($s -replace "'", "''") + "'" }
+@(
+    '# Written by Install-LocalRunner.ps1: starts the Buildlane local runner and keeps its console output.'
+    "`$Node = $(& $Quote $Node.Source)"
+    "`$Script = $(& $Quote $Script)"
+    "`$Config = $(& $Quote $Config)"
+    "`$Log = $(& $Quote $Log)"
+    'Set-Location -LiteralPath (Split-Path -LiteralPath $Script)'
+    '"$(Get-Date -Format o) starting" | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '& $Node $Script serve --config $Config --quiet 2>&1 | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '"$(Get-Date -Format o) exited with $LASTEXITCODE" | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    'exit $LASTEXITCODE'
+) -join "`r`n" | Set-Content -LiteralPath $Launcher -Encoding ASCII
+$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Launcher`"" -WorkingDirectory $Destination
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -Priority 7
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'Runs GitHub Actions workflows on this PC (Buildlane local runner).' -Force | Out-Null

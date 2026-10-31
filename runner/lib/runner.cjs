@@ -283,7 +283,11 @@ class LocalRunner {
     return best;
   }
 
-  poolLoad(name) { let n = 0; for (const s of this.active.values()) for (const j of s.jobs.values()) if (j.started && !j.done && j.pool === name) n++; return n; }
+  busyParts(name) { const out = []; for (const s of this.active.values()) for (const e of s.jobs.values()) for (const p of e.parts || []) if (p.started && !p.done && p.pool && p.pool.name === name) out.push(p); return out; }
+  poolLoad(name) { return this.busyParts(name).length; }
+  // A pinned workspace holds one job at a time; otherwise each parallel slot gets its own workspace.
+  poolMax(pool) { return pool.workspace ? 1 : (pool.max || 1); }
+  freeSlot(name) { const used = new Set(this.busyParts(name).map(p => p.slot)); let i = 0; while (used.has(i)) i++; return i; }
 
   runDone(state) {
     const keys = Object.keys(state.wf.jobs);
@@ -350,7 +354,7 @@ class LocalRunner {
         }
         const pool = part.pool.pool;
         if (pool.pausable === true && this.paused()) continue; // the lane and CI workflows read the pause file themselves
-        if (this.poolLoad(part.pool.name) >= (pool.max || 1)) continue;
+        if (this.poolLoad(part.pool.name) >= this.poolMax(pool)) continue;
         if (pool.disabled || (this.mode === 'shadow' && pool.shadow === false)) {
           part.job = this.store.addJob(run, { key: entry.key, name: part.name, labels: [].concat(part.def['runs-on'] || []) });
           Object.assign(part.job, { status: 'completed', conclusion: 'skipped', started_at: new Date().toISOString(), completed_at: new Date().toISOString() });
@@ -375,11 +379,11 @@ class LocalRunner {
     entry.started = true;
     if (run.status !== 'in_progress') { run.status = 'in_progress'; run.run_started_at = run.run_started_at || new Date().toISOString(); this.emitWorkflowRun(state, 'in_progress'); }
     const job = this.store.addJob(run, { key: entry.key, name: part.name, labels: [].concat(part.def['runs-on'] || []) });
-    part.job = job; part.started = true;
+    part.job = job; part.slot = this.freeSlot(part.pool.name); part.started = true;
     job.status = 'in_progress'; job.started_at = new Date().toISOString();
     this.store.save(run);
     this.postStatus(run, job, 'pending');
-    const runner = new JobRunner({ run, wf, jobKey: entry.key, jobDef: part.def, matrix: part.matrix, needs: part.needsCtx, store: this.store, config: this.c, pool: part.pool.pool,
+    const runner = new JobRunner({ run, wf, jobKey: entry.key, jobDef: part.def, matrix: part.matrix, needs: part.needsCtx, store: this.store, config: this.c, pool: part.pool.pool, slot: part.slot,
       apiUrl: this.proxy.url, token: this.c.token, secrets: this.c.secrets || {}, vars: this.c.vars || {}, job, actionCache: this.actionCache,
       onUpdate: () => this.store.save(run) });
     part.runner = runner;

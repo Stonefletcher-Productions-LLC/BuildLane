@@ -55,7 +55,8 @@ class JobRunner {
   prepare() {
     const { run, wf, jobKey, config, store, job } = this.o;
     const pool = this.o.pool || {};
-    const workRoot = pool.workRoot || path.join(config.root, '_work');
+    const baseRoot = pool.workRoot || path.join(config.root, '_work');
+    const workRoot = this.o.slot ? `${baseRoot}-${this.o.slot + 1}` : baseRoot;
     const repoName = run.repository.name;
     this.workspace = pool.workspace || path.join(workRoot, repoName, repoName);
     this.temp = path.join(workRoot, '_temp', String(job.id));
@@ -158,7 +159,10 @@ class JobRunner {
     return env;
   }
 
-  resetFiles() { for (const k of ['GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STEP_SUMMARY']) fs.writeFileSync(this.files[k], ''); }
+  resetFiles() {
+    for (const k of ['GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STEP_SUMMARY']) fs.writeFileSync(this.files[k], '');
+    if (!fs.existsSync(this.files.GITHUB_STATE)) fs.writeFileSync(this.files.GITHUB_STATE, '');
+  }
 
   collectFiles(stepOutputs, actionState) {
     Object.assign(stepOutputs, parseEnvFile(this.files.GITHUB_OUTPUT));
@@ -332,7 +336,7 @@ class JobRunner {
     const inputEnv = {};
     const resolvedInputs = {};
     for (const [k, d] of Object.entries(meta.inputs || {})) {
-      let v = inputs[k] !== undefined ? inputs[k] : (d && d.default !== undefined ? interpolate(String(d.default), ctx) : '');
+      let v = inputs[k] !== undefined ? inputs[k] : (d && d.default !== undefined && d.default !== null ? interpolate(String(d.default), ctx) : '');
       resolvedInputs[k] = str(v);
       inputEnv[`INPUT_${k.replace(/ /g, '_').toUpperCase()}`] = str(v);
     }
