@@ -311,6 +311,10 @@ function retention() {
   const r = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
   r.housekeep();
   assert.ok(!fs.existsSync(mine) && fs.existsSync(other));
+  const rp = new LocalRunner({ repo: 'o/r', root, token: 'x', quiet: true, replacePools: true, pools: { lane: { labels: ['windows', 'lifeshare-lane'], disabled: true }, quick: { labels: ['windows'], jobs: ['ci.yml:quick'] } } });
+  assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'ci.yml', key: 'quick' }).name, 'quick');
+  assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'lane.yml', key: 'quick' }).name, 'lane');
+  assert.strictEqual(rp.poolFor(['self-hosted', 'Windows'], { file: 'ci.yml', key: 'other' }).name, 'lane');
   console.log('PASS retention: old runs pruned, stale temp folders cleared, other folders kept');
 }
 

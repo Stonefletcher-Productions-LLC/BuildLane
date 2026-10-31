@@ -95,7 +95,7 @@ Jobs written for Linux runners (`ubuntu-*` labels) get LF checkouts in their own
 | `root` | Run store, logs, action cache, poll state (`runs\<id>\run.json`, `runs\<id>\logs\<job>.log`) |
 | `mode` | `shadow` (read-only trial) or `live` |
 | `tokenFile` | File, or list of files, holding the GitHub token. Buildlane's saved sign-in is DPAPI-protected and read for the signed-in user. `BUILDLANE_TOKEN`, `GH_TOKEN` and `gh auth token` also work |
-| `pools` | Runner pools. A job goes to the smallest pool whose `labels` contain all of its `runs-on` labels (`self-hosted` is ignored). `max` sets how many jobs run in parallel. `workRoot` sets where workspaces live; reuse an old runner's `_work` folder to keep incremental builds warm. `workspace` pins the folder exactly. `shadow: false` skips the pool in shadow mode, and `pausable: true` honours `pauseFile` |
+| `pools` | Runner pools. A job goes to the smallest pool whose `labels` contain all of its `runs-on` labels (`self-hosted` is ignored). `max` sets how many jobs run in parallel. `workRoot` sets where workspaces live; reuse an old runner's `_work` folder to keep incremental builds warm. `workspace` pins the folder exactly. `shadow: false` skips the pool in shadow mode, and `pausable: true` honours `pauseFile`. `jobs: ["ci.yml:quick"]` makes a pool take only those jobs, ahead of the label match, so one light job can run while its usual pool is `disabled` |
 | `workflows`, `skipWorkflows` | Allow-list or deny-list of workflow file names |
 | `commandIssue`, `dispatchers` | Issue number for `/buildlane` commands, and who may send them |
 | `checkAppId` | App id that local check runs report (default 15368) |
