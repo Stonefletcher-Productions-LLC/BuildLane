@@ -7,6 +7,8 @@
 //   node runner/buildlane-runner.cjs run <workflow.yml> [--ref main] [name=value ...]   queue a manual run
 //   node runner/buildlane-runner.cjs cancel <runId> | rerun <runId> [--failed]
 //   node runner/buildlane-runner.cjs list | show <runId> | log <runId> [job]
+//   node runner/buildlane-runner.cjs hold <workflow.yml> [minutes] | unhold <workflow.yml>
+//        pause schedule and workflow_run starts of one workflow (default 15 minutes); manual runs still start
 //   node runner/buildlane-runner.cjs exec <workflow.yml> [--event push|pull_request|...] [--job id] [name=value ...]
 //        run a workflow from a local checkout without polling (offline check of a workflow on this PC)
 const fs = require('fs');
@@ -123,6 +125,17 @@ async function main() {
     }
     case 'cancel': console.log(JSON.stringify(await waitDone(writeRequest(cfg, { kind: 'cancel', runId: Number(args[0]) }), 30))); return;
     case 'rerun': console.log(JSON.stringify(await waitDone(writeRequest(cfg, { kind: 'rerun', runId: Number(args[0]), failedOnly: !!flags.failed }), 30))); return;
+    case 'hold': case 'unhold': {
+      const file = args.shift(); if (!file) throw new Error(`${cmd} needs a workflow file name`);
+      const r = new LocalRunner(cfg); const f = r.holdFile(file);
+      if (cmd === 'unhold') { fs.rmSync(f, { force: true }); console.log(`${path.basename(file)}: hold released`); return; }
+      const minutes = Number(args[0] || 15); if (!(minutes > 0 && minutes <= 240)) throw new Error('minutes must be 1 to 240');
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      const until = new Date(Date.now() + minutes * 60000).toISOString();
+      fs.writeFileSync(f, JSON.stringify({ until, by: os.userInfo().username }));
+      console.log(`${path.basename(file)}: schedule and workflow_run starts held until ${until}`);
+      return;
+    }
     case 'list': {
       for (const r of store.list().slice(0, Number(flags.limit) || 20)) console.log(`${r.id}  ${(r.conclusion || r.status).padEnd(10)} ${r.name} - ${r.display_title} (${r.event}, ${String(r.head_sha).slice(0, 8)}, ${r.created_at})`);
       return;

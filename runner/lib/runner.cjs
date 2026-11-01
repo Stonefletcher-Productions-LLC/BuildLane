@@ -168,9 +168,21 @@ class LocalRunner {
     for (const wf of wfs) {
       if (!this.allowed(wf.file)) continue;
       if (!workflow.wants(wf, event)) continue;
+      if ((event.name === 'schedule' || event.name === 'workflow_run') && this.held(wf.file)) { this.log(`${wf.file}: ${event.name} skipped while held (buildlane-runner hold)`); continue; }
       runs.push(this.createRun(wf, event));
     }
     return runs;
+  }
+
+  // `buildlane-runner hold <workflow> [minutes]` stops schedule and workflow_run starts of one workflow for a
+  // while (manual dispatches still run), so an operator can read state and dispatch without a scheduled run
+  // changing it in between. Holds expire on their own.
+  holdFile(file) { return path.join(this.c.root, 'holds', `${path.basename(file)}.json`); }
+  held(file, now = Date.now()) {
+    let hold; try { hold = JSON.parse(fs.readFileSync(this.holdFile(file), 'utf8')); } catch { return false; }
+    if (Date.parse(hold.until) > now) return true;
+    try { fs.rmSync(this.holdFile(file), { force: true }); } catch {}
+    return false;
   }
 
   createRun(wf, event, inputs = {}) {

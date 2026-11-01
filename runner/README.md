@@ -113,6 +113,8 @@ node $R log <run> [job]                       # logs
 node $R run lane.yml task=resume              # queue a manual run (workflow_dispatch)
 node $R cancel <run>
 node $R rerun <run> --failed
+node $R hold staging-controller.yml 15            # no schedule/workflow_run starts for 15 min (manual runs still start)
+node $R unhold staging-controller.yml
 node $R exec .github\workflows\lane-regression.yml --job regression --skip-checkout   # try one workflow now, in this folder
 ```
 

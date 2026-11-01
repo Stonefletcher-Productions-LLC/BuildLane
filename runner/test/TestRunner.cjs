@@ -321,7 +321,19 @@ function retention() {
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'ci.yml', key: 'quick' }).name, 'quick');
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows', 'lifeshare-lane'], { file: 'lane.yml', key: 'quick' }).name, 'lane');
   assert.strictEqual(rp.poolFor(['self-hosted', 'Windows'], { file: 'ci.yml', key: 'other' }).name, 'lane');
+  // Holds: schedule and workflow_run starts are skipped while held; dispatches are not; holds expire.
+  const hr = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
+  const wf = require('../lib/workflow.cjs').load('name: C\non:\n  schedule:\n    - cron: "*/5 * * * *"\n  workflow_dispatch:\njobs:\n  c:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n', 'ctl.yml');
+  fs.mkdirSync(path.join(root, 'holds'), { recursive: true });
+  fs.writeFileSync(hr.holdFile('ctl.yml'), JSON.stringify({ until: new Date(Date.now() + 60000).toISOString() }));
+  assert.ok(hr.held('ctl.yml'));
+  return hr.trigger({ name: 'schedule', cron: '*/5 * * * *', ref: 'refs/heads/main', sha: 'a'.repeat(40), branch: 'main', payload: {}, workflows: [wf] }).then(runs => {
+    assert.strictEqual(runs.length, 0, 'held schedule skipped');
+    fs.writeFileSync(hr.holdFile('ctl.yml'), JSON.stringify({ until: new Date(Date.now() - 1000).toISOString() }));
+    assert.ok(!hr.held('ctl.yml') && !fs.existsSync(hr.holdFile('ctl.yml')), 'expired hold removed');
+    for (const s of hr.active.values()) hr.active.delete(s.run.id);
+    console.log('PASS retention, artifact digests and holds: old runs pruned, stale temp folders cleared, other folders kept');
+  });
   console.log('PASS retention and artifact digests: old runs pruned, stale temp folders cleared, other folders kept');
-}
 
-(async () => { unit(); retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
+(async () => { unit(); await retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
