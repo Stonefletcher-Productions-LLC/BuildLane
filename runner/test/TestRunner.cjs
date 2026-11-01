@@ -327,11 +327,20 @@ function retention() {
   fs.mkdirSync(path.join(root, 'holds'), { recursive: true });
   fs.writeFileSync(hr.holdFile('ctl.yml'), JSON.stringify({ until: new Date(Date.now() + 60000).toISOString() }));
   assert.ok(hr.held('ctl.yml'));
+  let order;
   return hr.trigger({ name: 'schedule', cron: '*/5 * * * *', ref: 'refs/heads/main', sha: 'a'.repeat(40), branch: 'main', payload: {}, workflows: [wf] }).then(runs => {
     assert.strictEqual(runs.length, 0, 'held schedule skipped');
     fs.writeFileSync(hr.holdFile('ctl.yml'), JSON.stringify({ until: new Date(Date.now() - 1000).toISOString() }));
     assert.ok(!hr.held('ctl.yml') && !fs.existsSync(hr.holdFile('ctl.yml')), 'expired hold removed');
     for (const s of hr.active.values()) hr.active.delete(s.run.id);
+    // Statuses for one commit and job post in order even when the first request is slow.
+    order = [];
+    hr.gh.post = (url, body) => new Promise(res => setTimeout(() => { order.push(body.state); res({}); }, body.state === 'pending' ? 50 : 0));
+    const runStub = { id: 1, head_sha: 'b'.repeat(40) }, jobStub = { name: 'Quick checks' };
+    hr.postStatus(runStub, jobStub, 'pending');
+    return hr.postStatus(runStub, jobStub, 'success');
+  }).then(() => {
+    assert.deepStrictEqual(order, ['pending', 'success'], 'statuses posted in order');
     console.log('PASS retention, artifact digests and holds: old runs pruned, stale temp folders cleared, other folders kept');
   });
 }
