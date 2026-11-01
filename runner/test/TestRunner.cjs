@@ -341,7 +341,18 @@ function retention() {
     return hr.postStatus(runStub, jobStub, 'success');
   }).then(() => {
     assert.deepStrictEqual(order, ['pending', 'success'], 'statuses posted in order');
-    console.log('PASS retention, artifact digests and holds: old runs pruned, stale temp folders cleared, other folders kept');
+    // `list` keeps an old unfinished run visible behind newer finished ones.
+    const { Store } = require('../lib/store.cjs');
+    const ls = new Store(path.join(root, 'list-store'), { owner: 'o', repo: 'r' });
+    const wfStub = { name: 'W', path: '.github/workflows/w.yml', file: 'w.yml' };
+    const old = ls.create({ workflow: wfStub, event: 'workflow_dispatch', sha: 'c'.repeat(40), branch: 'main', actor: 'a' });
+    old.status = 'in_progress'; ls.save(old);
+    for (let i = 0; i < 25; i++) { const done = ls.create({ workflow: wfStub, event: 'schedule', sha: 'c'.repeat(40), branch: 'main', actor: 'a' }); done.status = 'completed'; done.conclusion = 'success'; ls.save(done); }
+    const shown = ls.listForDisplay();
+    assert.strictEqual(shown.length, 21, 'unfinished run plus the 20 most recent');
+    assert.strictEqual(shown[0].id, old.id, 'old unfinished run listed first');
+    assert.deepStrictEqual(ls.listForDisplay({ active: true }).map(x => x.id), [old.id], '--active shows only unfinished runs');
+    console.log('PASS retention, artifact digests, holds, status order and list: old runs pruned, stale temp folders cleared, other folders kept');
   });
 }
 
