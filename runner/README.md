@@ -107,7 +107,7 @@ Jobs written for Linux runners (`ubuntu-*` labels) get LF checkouts in their own
 
 ```powershell
 $R = "$env:USERPROFILE\buildlane-local\runner\buildlane-runner.cjs"
-node $R list                                  # recent runs
+node $R list                                  # unfinished runs, then the 20 most recent (--limit N, --active for unfinished only)
 node $R show <run>                            # jobs and steps
 node $R log <run> [job]                       # logs
 node $R run lane.yml task=resume              # queue a manual run (workflow_dispatch)

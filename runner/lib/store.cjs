@@ -55,6 +55,13 @@ class Store {
     try { return JSON.parse(fs.readFileSync(path.join(this.runDir(id), 'run.json'), 'utf8')); } catch { return null; }
   }
 
+  // For `list`: unfinished runs first (however many newer runs there are), then the most recent ones.
+  listForDisplay({ limit = 20, active = false } = {}) {
+    const all = this.list();
+    const recent = active ? [] : all.slice(0, Number(limit) || 20);
+    return [...all.filter(r => r.status !== 'completed' && !recent.includes(r)), ...recent];
+  }
+
   list() {
     const out = [];
     for (const name of fs.readdirSync(this.runsDir)) {

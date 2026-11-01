@@ -6,7 +6,7 @@
 //   node runner/buildlane-runner.cjs once    [--config <file>]      one poll + run until idle (testing)
 //   node runner/buildlane-runner.cjs run <workflow.yml> [--ref main] [name=value ...]   queue a manual run
 //   node runner/buildlane-runner.cjs cancel <runId> | rerun <runId> [--failed]
-//   node runner/buildlane-runner.cjs list | show <runId> | log <runId> [job]
+//   node runner/buildlane-runner.cjs list [--active] [--limit N] | show <runId> | log <runId> [job]
 //   node runner/buildlane-runner.cjs hold <workflow.yml> [minutes] | unhold <workflow.yml>
 //        pause schedule and workflow_run starts of one workflow (default 15 minutes); manual runs still start
 //   node runner/buildlane-runner.cjs exec <workflow.yml> [--event push|pull_request|...] [--job id] [name=value ...]
@@ -20,7 +20,7 @@ function parseArgs(argv) {
   const out = { _: [], flags: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); if (v !== undefined) out.flags[k] = v; else if (argv[i + 1] && !argv[i + 1].startsWith('--') && !['failed', 'live', 'quiet'].includes(k)) out.flags[k] = argv[++i]; else out.flags[k] = true; }
+    if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); if (v !== undefined) out.flags[k] = v; else if (argv[i + 1] && !argv[i + 1].startsWith('--') && !['failed', 'live', 'quiet', 'active'].includes(k)) out.flags[k] = argv[++i]; else out.flags[k] = true; }
     else out._.push(a);
   }
   return out;
@@ -137,7 +137,8 @@ async function main() {
       return;
     }
     case 'list': {
-      for (const r of store.list().slice(0, Number(flags.limit) || 20)) console.log(`${r.id}  ${(r.conclusion || r.status).padEnd(10)} ${r.name} - ${r.display_title} (${r.event}, ${String(r.head_sha).slice(0, 8)}, ${r.created_at})`);
+      const shown = store.listForDisplay({ limit: flags.limit, active: !!flags.active });
+      for (const r of shown) console.log(`${r.id}  ${(r.conclusion || r.status).padEnd(10)} ${r.name} - ${r.display_title} (${r.event}, ${String(r.head_sha).slice(0, 8)}, ${r.created_at})`);
       return;
     }
     case 'show': { const r = store.get(args[0]); if (!r) throw new Error('no such run'); console.log(JSON.stringify(store.restRun(r), null, 1)); for (const j of r.jobs) { console.log(`job ${j.id} ${j.name}: ${j.conclusion || j.status}`); for (const s of j.steps) console.log(`   ${String(s.number).padStart(2)} ${(s.conclusion || s.status).padEnd(9)} ${s.name}`); } return; }
