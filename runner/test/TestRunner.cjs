@@ -334,6 +334,6 @@ function retention() {
     for (const s of hr.active.values()) hr.active.delete(s.run.id);
     console.log('PASS retention, artifact digests and holds: old runs pruned, stale temp folders cleared, other folders kept');
   });
-  console.log('PASS retention and artifact digests: old runs pruned, stale temp folders cleared, other folders kept');
+}
 
 (async () => { unit(); await retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
