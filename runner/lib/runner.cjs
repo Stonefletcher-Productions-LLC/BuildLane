@@ -454,8 +454,19 @@ class LocalRunner {
     this.writeHeartbeat();
   }
 
-  async postStatus(run, job, conclusion) {
-    if (this.c.postStatuses === false) return;
+  // Statuses for one commit and context are posted strictly in order: a quick job's pending and success
+  // posted in the same second could otherwise land out of order and leave GitHub showing "pending".
+  postStatus(run, job, conclusion) {
+    if (this.c.postStatuses === false) return Promise.resolve();
+    this.statusChains = this.statusChains || new Map();
+    const key = `${run.head_sha}|${job.name}`;
+    const next = (this.statusChains.get(key) || Promise.resolve()).then(() => this.sendStatus(run, job, conclusion));
+    this.statusChains.set(key, next);
+    next.then(() => { if (this.statusChains.get(key) === next) this.statusChains.delete(key); });
+    return next;
+  }
+
+  async sendStatus(run, job, conclusion) {
     const sha = run.head_sha;
     if (!/^[0-9a-f]{40}$/i.test(sha || '')) return;
     const state = { pending: 'pending', success: 'success', failure: 'failure', cancelled: 'error', skipped: 'success' }[conclusion] || 'error';
