@@ -118,6 +118,46 @@ class LocalRunner {
 
   paused() { return !!(this.c.pauseFile && fs.existsSync(this.c.pauseFile)); }
 
+  anyJobRunning() { for (const s of this.active.values()) for (const e of s.jobs.values()) for (const p of e.parts || []) if (p.started && !p.done) return true; return false; }
+
+  // Shallow checkouts (actions/checkout fetch-depth 1) gain a complete ~tree-sized pack per new commit and never
+  // repack, because checkout disables gc.auto: the Quick checks folder reached 14 GB in a day. While no job runs,
+  // drop remote-tracking refs and reflogs in each such checkout and gc it. The working tree, HEAD, untracked files
+  // and .git/lfs are untouched; the next checkout fetches what it needs. Job starts wait while it runs.
+  gitCheckouts() {
+    const repoName = String(this.c.repo).split('/')[1];
+    const out = new Set();
+    for (const pool of [{}, ...Object.values(this.c.pools || {})]) {
+      if (pool.workspace) { out.add(pool.workspace); continue; }
+      const base = pool.workRoot || path.join(this.c.root, '_work'), dir = path.dirname(base), stem = path.basename(base);
+      let names = []; try { names = fs.readdirSync(dir); } catch {}
+      for (const n of names.filter(n => n.startsWith(stem) && /^(-linux)?(-\d+)?$/.test(n.slice(stem.length)))) out.add(path.join(dir, n, repoName, repoName));
+    }
+    return [...out].filter(w => fs.existsSync(path.join(w, '.git', 'shallow')));
+  }
+
+  async tidyGit({ minPacks = 4, git = 'git' } = {}) {
+    const { execFile } = require('child_process');
+    const run = (cwd, args) => new Promise((resolve, reject) => execFile(git, args, { cwd, timeout: 1800000, maxBuffer: 64 * 1048576, windowsHide: true },
+      (err, stdout) => err ? reject(new Error(`git ${args[0]}: ${err.message}`)) : resolve(String(stdout))));
+    let tidied = 0;
+    for (const w of this.gitCheckouts()) {
+      let packs = 0; try { packs = fs.readdirSync(path.join(w, '.git', 'objects', 'pack')).filter(n => n.endsWith('.pack')).length; } catch {}
+      if (packs < minPacks) continue;
+      const started = Date.now();
+      try {
+        const refs = (await run(w, ['for-each-ref', '--format=%(refname)', 'refs/remotes', 'refs/tags'])).split(/\r?\n/).filter(Boolean);
+        for (const r of refs) await run(w, ['update-ref', '-d', r]);
+        await run(w, ['reflog', 'expire', '--expire=now', '--all']);
+        await run(w, ['-c', 'gc.auto=0', 'gc', '--prune=now', '--quiet']);
+        const after = fs.readdirSync(path.join(w, '.git', 'objects', 'pack')).filter(n => n.endsWith('.pack')).length;
+        this.log(`housekeeping: tidied shallow checkout ${w} (${packs} packs -> ${after}) in ${Math.round((Date.now() - started) / 1000)} s`);
+        tidied++;
+      } catch (e) { this.log(`housekeeping: could not tidy ${w}: ${e.message}`); }
+    }
+    return tidied;
+  }
+
   recoverInterrupted() {
     for (const r of this.store.list()) {
       if (r.status === 'completed') continue;
@@ -394,6 +434,7 @@ class LocalRunner {
           continue;
         }
         const pool = part.pool.pool;
+        if (this.tidying) continue; // a checkout is being tidied; starts wait for it
         if (pool.pausable === true && this.paused()) continue; // the lane and CI workflows read the pause file themselves
         if (this.poolLoad(part.pool.name) >= this.poolMax(pool)) continue;
         if (pool.disabled || (this.mode === 'shadow' && pool.shadow === false)) {
@@ -628,6 +669,10 @@ class LocalRunner {
       try { await this.tick(); } catch (e) { this.log(`tick failed: ${e.stack || e}`); }
       try { this.writeHeartbeat(); } catch {}
       if (Date.now() - (this.lastHousekeep || 0) > 3600000) try { this.housekeep(); } catch (e) { this.log(`housekeeping failed: ${e.message}`); }
+      if (!this.tidying && Date.now() - (this.lastTidy || 0) > 3600000 && !this.anyJobRunning()) {
+        this.lastTidy = Date.now();
+        this.tidying = this.tidyGit().catch(e => this.log(`housekeeping: tidy failed: ${e.message}`)).finally(() => { this.tidying = null; });
+      }
       await new Promise(r => setTimeout(r, 2000));
     }
   }

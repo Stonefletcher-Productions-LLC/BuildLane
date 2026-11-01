@@ -356,4 +356,34 @@ function retention() {
   });
 }
 
-(async () => { unit(); await retention(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
+// Shallow checkouts that gained one pack per depth-1 fetch are tidied back to one pack; HEAD and files stay.
+async function tidyShallow() {
+  const { execFileSync } = require('child_process');
+  const g = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bl-tidy-'));
+  const src = path.join(root, 'src'); fs.mkdirSync(src);
+  g(src, 'init', '-q'); g(src, 'config', 'user.email', 't@t'); g(src, 'config', 'user.name', 't');
+  const ws = path.join(root, '_work', 'r', 'r'); fs.mkdirSync(ws, { recursive: true });
+  g(ws, 'init', '-q'); g(ws, 'remote', 'add', 'origin', src);
+  for (let i = 0; i < 5; i++) {
+    fs.writeFileSync(path.join(src, 'f.txt'), `v${i} ` + 'x'.repeat(5000 + i)); g(src, 'add', '.'); g(src, 'commit', '-qm', `c${i}`);
+    const sha = g(src, 'rev-parse', 'HEAD');
+    g(ws, '-c', 'protocol.file.allow=always', '-c', 'fetch.unpackLimit=1', 'fetch', '-q', '--depth=1', '--no-auto-gc', 'origin', `+${sha}:refs/remotes/origin/c${i}`);
+    g(ws, 'checkout', '-q', '--detach', sha);
+  }
+  const packs = () => fs.readdirSync(path.join(ws, '.git', 'objects', 'pack')).filter(n => n.endsWith('.pack')).length;
+  assert.ok(packs() >= 4, `fixture made ${packs()} packs`);
+  const head = g(ws, 'rev-parse', 'HEAD');
+  const r = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
+  assert.deepStrictEqual(r.gitCheckouts(), [ws]);
+  assert.strictEqual(await r.tidyGit(), 1);
+  assert.strictEqual(packs(), 1, 'one pack after tidy');
+  assert.strictEqual(g(ws, 'rev-parse', 'HEAD'), head);
+  assert.strictEqual(g(ws, 'status', '--porcelain'), '');
+  assert.strictEqual(g(ws, 'cat-file', '-t', head), 'commit');
+  assert.strictEqual(await r.tidyGit(), 0, 'nothing to do the second time');
+  fs.rmSync(root, { recursive: true, force: true });
+  console.log('PASS shallow checkout tidy: packs merged, HEAD and files kept');
+}
+
+(async () => { unit(); await retention(); await tidyShallow(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
