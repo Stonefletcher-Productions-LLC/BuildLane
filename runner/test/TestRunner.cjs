@@ -386,4 +386,24 @@ async function tidyShallow() {
   console.log('PASS shallow checkout tidy: packs merged, HEAD and files kept');
 }
 
-(async () => { unit(); await retention(); await tidyShallow(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });
+// A stalled loop trips the watchdog; a GitHub request with no answer fails after its deadline.
+async function stalls() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bl-stall-'));
+  const r = new LocalRunner({ repo: 'o/r', root, token: 'x', pools: {}, quiet: true });
+  const lines = []; r.log = m => lines.push(m);
+  const now = Date.now();
+  r.loopAt = now - 60000; r.phase = 'tick: run 7';
+  assert.strictEqual(r.watchdog(now), false, 'a recent pass is fine');
+  r.loopAt = now - 16 * 60000;
+  assert.strictEqual(r.watchdog(now), true, 'a 16 min stall trips the default 15 min watchdog');
+  assert.ok(/stalled for 16 min in tick: run 7/.test(lines.join('\n')));
+  const silent = http.createServer(() => {}); await new Promise(res => silent.listen(0, '127.0.0.1', res));
+  const { GitHub } = require('../lib/github.cjs');
+  const g = new GitHub({ token: 'x', api: `http://127.0.0.1:${silent.address().port}`, owner: 'o', repo: 'r', timeoutMs: 300 });
+  await assert.rejects(g.get('/x'), e => e.timeout === true && /no answer within 0.3 s/.test(e.message));
+  silent.closeAllConnections && silent.closeAllConnections(); silent.close();
+  fs.rmSync(root, { recursive: true, force: true });
+  console.log('PASS stalls: loop watchdog trips after 15 min, GitHub requests time out');
+}
+
+(async () => { unit(); await retention(); await tidyShallow(); await stalls(); await actionInputs(); await e2e(); })().catch(e => { console.error(e); process.exit(1); });

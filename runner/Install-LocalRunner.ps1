@@ -61,13 +61,21 @@ $Quote = { param($s) "'" + ($s -replace "'", "''") + "'" }
     "`$Config = $(& $Quote $Config)"
     "`$Log = $(& $Quote $Log)"
     'Set-Location -LiteralPath (Split-Path -LiteralPath $Script)'
-    '"$(Get-Date -Format o) starting" | Out-File -LiteralPath $Log -Append -Encoding utf8'
-    '& $Node $Script serve --config $Config --quiet --parent-pid $PID 2>&1 | Out-File -LiteralPath $Log -Append -Encoding utf8'
-    '"$(Get-Date -Format o) exited with $LASTEXITCODE" | Out-File -LiteralPath $Log -Append -Encoding utf8'
-    'exit $LASTEXITCODE'
+    '# The runner exits on its own only when something is wrong (its watchdog exits 75 when its loop stalls), so'
+    '# start it again after a short pause. Stopping the task stops this launcher and, through --parent-pid, the runner.'
+    'while ($true) {'
+    '    "$(Get-Date -Format o) starting" | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '    & $Node $Script serve --config $Config --quiet --parent-pid $PID 2>&1 | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '    "$(Get-Date -Format o) exited with $LASTEXITCODE; starting again in 20 s" | Out-File -LiteralPath $Log -Append -Encoding utf8'
+    '    Start-Sleep -Seconds 20'
+    '}'
 ) -join "`r`n" | Set-Content -LiteralPath $Launcher -Encoding ASCII
 $Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Launcher`"" -WorkingDirectory $Destination
-$Trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$Trigger = @(
+    New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    # Backstop: every 5 minutes the task is started if it is not running (MultipleInstances IgnoreNew skips it otherwise).
+    New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5)
+)
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -Priority 7
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'Runs GitHub Actions workflows on this PC (Buildlane local runner).' -Force | Out-Null
 Write-Host "Registered '$TaskName' (starts at logon). Config: $Config"

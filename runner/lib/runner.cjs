@@ -376,9 +376,11 @@ class LocalRunner {
   }
 
   async tick() {
+    this.phase = 'tick: workflow_run events';
     await this.flushEvents().catch(e => this.log(`workflow_run events: ${e.message}`));
     for (const state of [...this.active.values()]) {
       if (state.run.status === 'completed') { this.active.delete(state.run.id); continue; }
+      this.phase = `tick: run ${state.run.id}`;
       await this.advance(state);
     }
   }
@@ -657,24 +659,43 @@ class LocalRunner {
     }
   }
 
+  // Exits (for the launcher to restart it) when the loop has not completed a pass for stallMinutes: an await that
+  // never settles otherwise leaves a live process that polls nothing and starts nothing (2026-11-02, 87 min).
+  watchdog(now = Date.now()) {
+    const limit = (this.c.stallMinutes || 15) * 60000;
+    if (!this.loopAt || now - this.loopAt <= limit) return false;
+    this.log(`watchdog: loop stalled for ${Math.round((now - this.loopAt) / 60000)} min in ${this.phase || 'unknown'}; exiting so the launcher restarts the runner`);
+    return true;
+  }
+
   async loop() {
     let lastPoll = 0;
     const pollMs = (this.c.pollSeconds || 60) * 1000;
     this.stopping = false;
-    while (!this.stopping) {
-      if (Date.now() - lastPoll >= pollMs || fs.readdirSync(this.requestsDir).some(n => n.endsWith('.json'))) {
-        lastPoll = Date.now();
-        try { await this.poll(); } catch (e) { this.log(`poll failed: ${e.message}`); }
+    this.loopAt = Date.now();
+    const dog = setInterval(() => { if (this.watchdog()) { try { this.writeHeartbeat({ stalled: this.phase }); } catch {} process.exit(75); } }, 60000);
+    try {
+      while (!this.stopping) {
+        if (Date.now() - lastPoll >= pollMs || fs.readdirSync(this.requestsDir).some(n => n.endsWith('.json'))) {
+          lastPoll = Date.now();
+          this.phase = 'poll';
+          try { await this.poll(); } catch (e) { this.log(`poll failed: ${e.message}`); }
+        }
+        this.phase = 'tick';
+        try { await this.tick(); } catch (e) { this.log(`tick failed: ${e.stack || e}`); }
+        this.phase = 'heartbeat';
+        try { this.writeHeartbeat(); } catch {}
+        this.phase = 'housekeeping';
+        if (Date.now() - (this.lastHousekeep || 0) > 3600000) try { this.housekeep(); } catch (e) { this.log(`housekeeping failed: ${e.message}`); }
+        if (!this.tidying && Date.now() - (this.lastTidy || 0) > 3600000 && !this.anyJobRunning()) {
+          this.lastTidy = Date.now();
+          this.tidying = this.tidyGit().catch(e => this.log(`housekeeping: tidy failed: ${e.message}`)).finally(() => { this.tidying = null; });
+        }
+        this.phase = 'idle';
+        this.loopAt = Date.now();
+        await new Promise(r => setTimeout(r, 2000));
       }
-      try { await this.tick(); } catch (e) { this.log(`tick failed: ${e.stack || e}`); }
-      try { this.writeHeartbeat(); } catch {}
-      if (Date.now() - (this.lastHousekeep || 0) > 3600000) try { this.housekeep(); } catch (e) { this.log(`housekeeping failed: ${e.message}`); }
-      if (!this.tidying && Date.now() - (this.lastTidy || 0) > 3600000 && !this.anyJobRunning()) {
-        this.lastTidy = Date.now();
-        this.tidying = this.tidyGit().catch(e => this.log(`housekeeping: tidy failed: ${e.message}`)).finally(() => { this.tidying = null; });
-      }
-      await new Promise(r => setTimeout(r, 2000));
-    }
+    } finally { clearInterval(dog); }
   }
 }
 

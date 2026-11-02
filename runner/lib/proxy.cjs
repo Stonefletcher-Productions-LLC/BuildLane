@@ -62,7 +62,7 @@ class ApiProxy {
     const body = ['GET', 'HEAD'].includes(req.method) ? undefined : await this.peek(req);
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) if (!['host', 'connection', 'content-length', 'accept-encoding'].includes(k)) headers[k] = v;
-    const r = await fetch(this.upstream + url.pathname + url.search, { method: req.method, headers, body, redirect: 'follow' });
+    const r = await fetch(this.upstream + url.pathname + url.search, { method: req.method, headers, body, redirect: 'follow', signal: AbortSignal.timeout(300000) }); // a stalled upstream must not hang a job forever
     const out = {};
     r.headers.forEach((v, k) => { if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(k)) out[k] = k === 'link' ? v.split(this.upstream).join(this.selfUrl()) : v; });
     const buf = Buffer.from(await r.arrayBuffer());
@@ -73,7 +73,7 @@ class ApiProxy {
   async fetchUpstreamJson(path, req) {
     const headers = { accept: 'application/vnd.github+json', 'user-agent': 'Buildlane-Runner' };
     if (req.headers.authorization) headers.authorization = req.headers.authorization;
-    const r = await fetch(this.upstream + path, { headers });
+    const r = await fetch(this.upstream + path, { headers, signal: AbortSignal.timeout(60000) });
     if (!r.ok) { const e = new Error(`${r.status} ${path}`); e.status = r.status; throw e; }
     return r.json();
   }
