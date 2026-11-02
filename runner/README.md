@@ -81,6 +81,16 @@ The script does three things:
    `runner.example.json`.
 3. It registers a scheduled task, *Buildlane local runner*, that starts at logon and restarts if it stops.
 
+The runner recovers on its own:
+- Every GitHub request has a deadline (60 s, or 5 min for requests jobs send through the local API), so a stalled
+  connection can't freeze it.
+- If its loop still completes no pass for `stallMinutes` (default 15), it logs `watchdog: loop stalled ... in <phase>`
+  and exits with code 75.
+- The task's launcher starts it again 20 s after any exit (see `runner-console.log`).
+- A second task trigger every 5 minutes starts the task if it isn't running.
+- To keep the runner off, disable the task (`Disable-ScheduledTask 'Buildlane local runner'`). Just stopping it
+  lasts at most 5 minutes.
+
 Remove the task with `-Uninstall`.
 
 Everything lives outside AppData on purpose. Apps packaged as MSIX, Claude desktop among them, see a private copy of AppData. A config written from inside one would be invisible to the scheduled task. The installer warns you when it runs in such a shell.
@@ -94,6 +104,7 @@ Jobs written for Linux runners (`ubuntu-*` labels) get LF checkouts in their own
 | `repo`, `repoAliases` | `owner/name`, plus older names that GitHub still redirects |
 | `root` | Run store, logs, action cache, poll state (`runs\<id>\run.json`, `runs\<id>\logs\<job>.log`) |
 | `mode` | `shadow` (read-only trial) or `live` |
+| `stallMinutes` | Minutes without a completed loop pass before the runner exits for a restart (default 15) |
 | `tokenFile` | File, or list of files, holding the GitHub token. Buildlane's saved sign-in is DPAPI-protected and read for the signed-in user. `BUILDLANE_TOKEN`, `GH_TOKEN` and `gh auth token` also work |
 | `pools` | Runner pools. A job goes to the smallest pool whose `labels` contain all of its `runs-on` labels (`self-hosted` is ignored). `max` sets how many jobs run in parallel. `workRoot` sets where workspaces live; reuse an old runner's `_work` folder to keep incremental builds warm. `workspace` pins the folder exactly. `shadow: false` skips the pool in shadow mode, and `pausable: true` honours `pauseFile`. `jobs: ["ci.yml:quick"]` makes a pool take only those jobs, ahead of the label match, so one light job can run while its usual pool is `disabled` |
 | `workflows`, `skipWorkflows` | Allow-list or deny-list of workflow file names |
