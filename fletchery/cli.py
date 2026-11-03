@@ -202,9 +202,21 @@ def harbor_context(cfg: Config, tmp: Path, serve_delay: float) -> Context:
                "Edit src/settings/ThemePicker.tsx", "$ npm test -- theme", "$ git commit -m \"Settings: dark theme\""]
     rt = FakeRuntime({}, cost_usd=0.9, delay_s=serve_delay, actions=actions)
     live = Live()
-    return Context(cfg, gh, FakeRepo(tmp / "worktrees"), rt,
-                   run_gates=lambda cmds, cwd, **kw: [g.GateResult(c, True, "RESULT: PASS") for c in cmds],
-                   log=lambda line: (print(line), live.log(line)), live=live)
+    ctx = Context(cfg, gh, FakeRepo(tmp / "worktrees"), rt,
+                  run_gates=lambda cmds, cwd, **kw: [g.GateResult(c, True, "RESULT: PASS") for c in cmds],
+                  log=lambda line: (print(line), live.log(line)), live=live)
+    _demo_agents(cfg, ctx, tmp, rt)
+    return ctx
+
+
+def _demo_agents(cfg: Config, ctx: Context, tmp: Path, rt) -> None:
+    if cfg.agents is None:  # the demo shows several agents (all fake) unless the profile names its own
+        cfg.agents, cfg.routing = DEMO_AGENTS, DEMO_ROUTING
+    if cfg.agents:
+        ctx.agents = agent_pool(cfg, tmp, None, fake=rt)
+        for spec in ctx.agents.specs.values():
+            if spec.enabled:
+                ctx.agents.accounts[spec.name] = {"ok": True, "message": "demo: signed in", "at": ""}
 
 
 def demo_context(cfg: Config, tmp: Path, serve_delay: float = 0.0) -> Context:
@@ -235,21 +247,17 @@ def demo_context(cfg: Config, tmp: Path, serve_delay: float = 0.0) -> Context:
     live = Live()
     ctx = Context(cfg, gh, repo, rt, run_gates=lambda cmds, cwd, **kw: [g.GateResult(c, True, "RESULT: PASS") for c in cmds],
                   log=lambda line: (print(line), live.log(line)), live=live)
-    if cfg.agents is None:  # the demo shows several agents (all fake) unless the profile names its own
-        cfg.agents, cfg.routing = DEMO_AGENTS, DEMO_ROUTING
-    if cfg.agents:
-        ctx.agents = agent_pool(cfg, tmp, None, fake=rt)
-        for spec in ctx.agents.specs.values():
-            if spec.enabled:
-                ctx.agents.accounts[spec.name] = {"ok": True, "message": "demo: signed in", "at": ""}
+    _demo_agents(cfg, ctx, tmp, rt)
     return ctx
 
 
-DEMO_AGENTS = [{"name": "claude", "kind": "claude", "tier": 4, "vendor": "anthropic"},
-               {"name": "codex", "kind": "codex", "tier": 3, "vendor": "openai", "enabled": False},
+DEMO_AGENTS = [{"name": "opus", "kind": "claude", "model": "claude-opus-5-5", "tier": 5, "vendor": "anthropic"},
+               {"name": "sonnet", "kind": "claude", "model": "claude-sonnet-5-5", "tier": 4, "vendor": "anthropic"},
+               {"name": "codex-astra", "kind": "codex", "model": "gpt-6-astra", "tier": 4, "vendor": "openai", "enabled": False},
+               {"name": "codex-luna", "kind": "codex", "model": "gpt-6-luna", "tier": 1, "vendor": "openai", "enabled": False},
                {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
-               {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
-               {"name": "deepseek", "kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"}]
+               {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 3, "vendor": "deepseek"},
+               {"name": "deepseek", "kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "tier": 2, "vendor": "deepseek"}]
 DEMO_ROUTING = {"mode": "scores"}
 
 

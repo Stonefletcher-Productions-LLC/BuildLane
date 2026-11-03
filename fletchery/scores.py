@@ -130,6 +130,15 @@ def seed(kind: str, model: str, tier: int, catalog: dict) -> dict:
     return out
 
 
+def tier_for(kind: str, model: str, catalog: dict) -> int:
+    """The Strength (1-5) a new agent gets from its model's benchmark score: the inverse of the fallback below, so a
+    model the list knows lands where its score puts it. 2 when no benchmark lists the model."""
+    sd = seed(kind, model, 2, catalog)
+    if sd["from"] != "benchmarks":
+        return 2
+    return max(1, min(5, int(round((sd["coding"] - 20) / 15))))
+
+
 def _clip(v: float) -> int:
     return int(round(max(0.0, min(100.0, v))))
 

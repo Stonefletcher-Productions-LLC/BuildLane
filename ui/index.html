@@ -325,7 +325,55 @@
   details.keys > summary h3 { display: inline; }
   details.keys > summary .chev { display: inline-block; transition: transform .15s; font-size: 11px; color: var(--muted); margin-right: 4px; }
   details.keys[open] > summary .chev { transform: rotate(90deg); }
-  .ag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .ag-grid { display: flex; flex-direction: column; gap: 12px; }
+  .prov { border: 1.5px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .prov > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+    padding: 10px 14px; background: color-mix(in srgb, var(--muted) 7%, var(--panel)); }
+  .prov > summary::-webkit-details-marker { display: none; }
+  .prov > summary .pn { font-weight: 800; font-size: 16px; }
+  .prov > summary .pw { color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+  .prov > summary .sp { flex: 1; }
+  .prov > summary .chip { font-size: 13px; padding: 2px 9px; }
+  .chev { display: inline-block; transition: transform .15s; font-size: 11px; color: var(--muted); }
+  details[open] > summary > .chev, details[open] > summary .mr > .chev { transform: rotate(90deg); }
+  .mrow { border-top: 1px solid var(--rule); }
+  .mrow.off { background: color-mix(in srgb, var(--muted) 6%, var(--panel)); color: var(--muted); }
+  .mrow > summary { list-style: none; cursor: pointer; }
+  .mrow > summary::-webkit-details-marker { display: none; }
+  .mrow > summary:focus-visible, .prov > summary:focus-visible { outline: 2px solid var(--accent, #0a7d55); outline-offset: -2px; }
+  .mr { display: grid; grid-template-columns: 14px minmax(90px, 150px) minmax(120px, 230px) minmax(140px, 300px) 1fr auto;
+    grid-template-areas: "c n m o s w"; gap: 6px 14px; align-items: center; padding: 8px 14px; font-size: 14px; }
+  .mr > .chev { grid-area: c; } .mr .nm { grid-area: n; } .mr .model { grid-area: m; } .mr .ov { grid-area: o; }
+  .mr .chip { grid-area: s; } .mr .switch { grid-area: w; }
+  .mr .nm { font-weight: 700; font-size: 15px; }
+  .mr .model { font-family: var(--mono); font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .mr .ov { display: grid; grid-template-columns: 1fr 2.2em; gap: 8px; align-items: center; }
+  .mr .ov b { text-align: right; font-variant-numeric: tabular-nums; }
+  .mr .chip { font-size: 13px; padding: 2px 9px; justify-self: start; }
+  .mr .switch { min-height: 30px; padding: 2px 12px; font-size: 13.5px; }
+  .mx { padding: 2px 14px 12px 40px; display: flex; flex-direction: column; gap: 8px; }
+  .mx .rates { font-size: 13.5px; color: var(--muted); } .mx .rates b { color: var(--ink); }
+  .bar { height: 7px; border-radius: 4px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent, #0a7d55); border-radius: 4px; }
+  .bar i.you { background: #2563eb; }
+  .mx .sc { display: grid; grid-template-columns: auto minmax(80px, 260px) 2.2em auto; gap: 3px 10px; align-items: center; font-size: 13px; color: var(--muted); }
+  .mx .sc b { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .mx .sc .src { font-size: 12px; white-space: nowrap; }
+  .mx .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .mx .row2 button { min-height: 32px; padding: 3px 10px; font-size: 13.5px; }
+  .acct-prov { border: 1.5px solid var(--rule); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+  .acct-prov .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .acct-prov .hd .pn { font-weight: 800; font-size: 16px; } .acct-prov .hd .sp { flex: 1; }
+  .acct-prov .hd .pw { color: var(--muted); font-size: 13.5px; }
+  .acct-prov table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+  .acct-prov td { padding: 6px 8px 6px 0; border-top: 1px solid var(--rule); vertical-align: middle; }
+  .acct-prov td.n { font-weight: 700; white-space: nowrap; } .acct-prov td.m { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .acct-prov td.s { font-size: 13.5px; overflow-wrap: anywhere; } .acct-prov td.r { text-align: right; white-space: nowrap; }
+  .acct-prov .chip { font-size: 12.5px; padding: 1px 8px; white-space: nowrap; }
+  @media (max-width: 760px) {
+    .mr { grid-template-columns: 14px minmax(0, 1fr) auto; grid-template-areas: "c n w" ". m m" ". o s"; }
+    .mx { padding-left: 14px; } .acct-prov td.m { display: none; } .acct-prov table { table-layout: auto; } .acct-prov td.n { white-space: normal; }
+  }
   .ag { border: 1.5px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .ag.off { background: #F4F6F8; color: var(--muted); }
   .ag .top { display: flex; align-items: center; gap: 8px; }
@@ -338,7 +386,7 @@
   .ag .acct { font-size: 13.5px; overflow-wrap: anywhere; }
   .ag .rates { font-size: 13.5px; color: var(--muted); }
   .ag .rates b { color: var(--ink); }
-  .ag .sc { display: grid; grid-template-columns: auto 1fr 2.2em auto; gap: 3px 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .ag-old .sc { display: grid; grid-template-columns: auto 1fr 2.2em auto; gap: 3px 8px; align-items: center; font-size: 13px; color: var(--muted); }
   .ag .sc .bar { height: 7px; border-radius: 4px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
   .ag .sc .bar i { display: block; height: 100%; background: var(--accent, #0a7d55); border-radius: 4px; }
   .ag .sc .bar i.you { background: #2563eb; }
@@ -447,20 +495,16 @@
       <span class="ag-sum" id="agSum" role="status"></span>
       <span class="sp"></span>
       <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
-      <button type="button" id="agCheck">Check sign-ins</button>
+      <button type="button" id="agAccounts" title="Sign-ins, plan or API key, and the API keys (Settings > Accounts)">Accounts &amp; keys</button>
       <button type="button" id="agRefresh">Refresh benchmarks</button>
       <button type="button" id="agAdd">Add agent</button>
     </div>
     <div class="ag-body" id="agBody">
-    <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes.</p>
+    <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes. Open a model for its scores. Sign-ins, plan or API key, and the keys themselves are in <a href="#" id="agAcctLink">Settings &gt; Accounts</a>.</p>
     <p class="ag-route" id="agRoute"></p>
     <div class="slots-scroll" id="agBox" tabindex="-1"><div class="ag-grid" id="agGrid"></div></div>
     <div class="grip" data-resize="agBox" data-key="agents" role="separator" aria-orientation="horizontal" tabindex="0"
          aria-label="Resize Agents: drag, or use the up and down arrow keys" title="Drag to resize; double-click to reset"></div>
-    <details class="keys" id="keysBox">
-      <summary><span class="chev" aria-hidden="true">▶</span><h3>API keys</h3> <span id="keysCount" style="color:var(--muted)"></span> <span style="color:var(--muted);font-weight:400">kept in Windows Credential Manager, never shown again</span></summary>
-      <table><tbody id="keyRows"></tbody></table>
-    </details>
     </div>
   </section>
 
@@ -533,7 +577,19 @@
     <p class="hint" id="set-where"></p>
     <div class="set-tabs" role="tablist">
       <button type="button" role="tab" id="tab-project" aria-selected="true" data-tab="project">This project</button>
+      <button type="button" role="tab" id="tab-accounts" aria-selected="false" data-tab="accounts">Accounts</button>
       <button type="button" role="tab" id="tab-projects" aria-selected="false" data-tab="projects">Projects</button>
+    </div>
+    <div id="pane-accounts" role="tabpanel" aria-labelledby="tab-accounts" hidden>
+      <p class="set-note">Where each agent's work is billed. On its <b>plan</b> an agent uses your own sign-in (a Claude plan, ChatGPT, OpenCode Go) and shares that account's limits with every other agent on it. On an <b>API key</b> it is billed per token. Agents on one sign-in pause together when the account hits a limit.</p>
+      <div class="row" style="justify-content:flex-start;margin:0 0 12px"><button type="button" id="agCheck">Check sign-ins</button></div>
+      <div id="acctList"></div>
+      <div class="keys" id="keysBox">
+        <h3>API keys <span id="keysCount" style="color:var(--muted);font-weight:400"></span></h3>
+        <p class="set-note" style="margin:0 0 6px">Kept in Windows Credential Manager. Fletchery shows only the last 4 characters and never logs them.</p>
+        <table><tbody id="keyRows"></tbody></table>
+      </div>
+      <div class="row"><span class="sp" style="flex:1"></span><button type="button" id="acct-close">Close</button></div>
     </div>
     <div id="pane-project" role="tabpanel" aria-labelledby="tab-project">
       <div id="set-fields"></div>
@@ -588,7 +644,7 @@
 <dialog id="agDlg" aria-labelledby="agdh">
   <form id="agForm" method="dialog">
     <h2 id="agdh">Add an agent</h2>
-    <p class="hint">Pick the model first; the name and company fill in from it. An OpenCode agent reaches any model OpenCode is signed in to.</p>
+    <p class="hint">Pick the model first; the name and company fill in from it, and its scores come from public benchmarks (change them later with Edit scores). An OpenCode agent reaches any model OpenCode is signed in to.</p>
     <label for="a-kind">Kind</label>
     <select id="a-kind"><option value="opencode">OpenCode</option><option value="codex">Codex</option><option value="claude">Claude</option></select>
     <label for="a-model">Model <small>e.g. opencode-go/claude-haiku-5-5; empty for Codex's or Claude's default</small></label>
@@ -596,8 +652,6 @@
     <datalist id="a-models"></datalist>
     <label for="a-name">Name <small>short, shown on the cards, e.g. haiku</small></label>
     <input id="a-name" required maxlength="32" autocomplete="off" placeholder="haiku">
-    <label for="a-tier">Strength <small>1 cheapest … 5 strongest; failed work moves up</small></label>
-    <input id="a-tier" type="number" min="1" max="5" value="2">
     <label for="a-vendor">Company <small>reviews come from a different one than the writer</small></label>
     <input id="a-vendor" maxlength="40" autocomplete="off" placeholder="filled in from the model">
     <label for="a-keys">Keys it needs <small>optional, e.g. MOONSHOT_API_KEY</small></label>
@@ -1072,35 +1126,28 @@ function renderAgents(d) {
   } else
   $("agRoute").innerHTML = `<b>Easy</b> ${rl("easy")} · <b>Medium</b> ${rl("medium")} · <b>Hard</b> ${rl("hard")} · <b>Reviews</b> ${rl("reviewers")}` +
     " <span>(an agent that is off, out of its limit or not signed in is skipped; one that keeps passing a level is tried first)</span>";
-  $("agGrid").innerHTML = A.list.map(a => {
-    let chip, cls;
-    if (!a.enabled) { chip = "Off"; cls = "idle"; }
-    else if (a.paused_until) { chip = "Paused until " + clockTime(a.paused_until); cls = "paused"; }
-    else if (a.signed_in === false) { chip = "Not signed in"; cls = "out"; }
-    else if (a.busy) { chip = `Working (${a.busy})`; cls = "working"; }
-    else if (a.signed_in === true) { chip = "Ready"; cls = "ready"; }
-    else { chip = "Not checked yet"; cls = "idle"; }
-    const rates = ["easy", "medium", "hard"].filter(l => a[l] && a[l].tried).map(l => `${l} <b>${Math.round(a[l].rate * 100)}%</b> of ${a[l].tried}`);
-    const acct = a.paused_until ? a.paused_reason : a.account;
-    return `<div class="ag${a.enabled ? "" : " off"}">
-      <div class="top"><span class="nm">${esc(a.name)}</span><span class="chip ${cls}">${esc(chip)}</span></div>
-      <div class="model">${esc(a.kind)} · ${a.model ? esc(a.model) : (a.scores && a.scores.seed.model_key ? esc(a.scores.seed.model_key) + " (the CLI's default)" : "the CLI's default model")} · ${esc(a.vendor)}</div>
-      ${a.scores ? scoreRows(a) : ""}
-      ${acct ? `<div class="acct">${esc(acct)}</div>` : ""}
-      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : ""}</div>
-      <div class="row2"><span class="rates">Runs on</span>
-        <span class="seg" role="group" aria-label="${esc(a.name)} runs on">
-          <button type="button" data-ag-auth="plan" data-ag="${esc(a.name)}" aria-pressed="${a.auth !== "key"}" title="${esc(PLAN_NAME[a.kind] || "its own sign-in")}">${esc(PLAN_LABEL[a.kind] || "Plan")}</button>
-          <button type="button" data-ag-auth="key" data-ag="${esc(a.name)}" aria-pressed="${a.auth === "key"}" title="${a.api_key ? "Billed per token through " + esc(a.api_key) : "Add the key this model takes first"}">API key</button>
-        </span></div>
-      ${a.key_env && a.key_env.length ? `<div class="rates">Uses key ${a.key_env.map(esc).join(", ")}</div>` : ""}
-      <div class="row2">
-        <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button>
-        ${a.kind !== "fake" ? `<button type="button" data-ag-login="${esc(a.name)}">Sign in</button>` : ""}
-        ${a.scores ? `<button type="button" data-ag-scores="${esc(a.name)}">Edit scores</button>` : ""}
-        <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
-      </div></div>`;
+  const groups = [];
+  A.list.forEach(a => {
+    const k = provKey(a); let g = groups.find(x => x.key === k);
+    if (!g) groups.push(g = {key: k, kind: a.kind, list: []});
+    g.list.push(a);
+  });
+  groups.sort((x, y) => provOrder(x) - provOrder(y));
+  const closed = provClosed();
+  $("agGrid").innerHTML = groups.map(g => {
+    const P = provInfo(g), on = g.list.filter(a => a.enabled), work = on.reduce((n, a) => n + (a.busy || 0), 0),
+          paused = on.find(a => a.paused_until), out = on.filter(a => a.signed_in === false && !a.paused_until);
+    let tag;
+    if (!on.length) tag = `<span class="chip idle">All off</span>`;
+    else if (out.length) tag = `<button type="button" class="chip out" data-acct-open="1" title="Open Settings > Accounts to sign in">Not signed in · sign in</button>`;
+    else if (paused) tag = `<span class="chip paused" title="${esc(paused.paused_reason)}">Paused until ${esc(clockTime(paused.paused_until))}</span>`;
+    else if (work) tag = `<span class="chip working">${work} working</span>`;
+    else tag = `<span class="chip ready">${on.length} of ${g.list.length} on</span>`;
+    return `<details class="prov" data-prov="${esc(g.key)}"${closed.includes(g.key) ? "" : " open"}>
+      <summary><span class="chev" aria-hidden="true">▶</span><span class="pn">${esc(P.name)}</span><span class="pw">${esc(P.via)}</span><span class="sp"></span>${tag}</summary>
+      ${g.list.map(a => modelRow(a, A)).join("")}</details>`;
   }).join("");
+  renderAccounts(groups, A);
   const kset = (A.keys || []).filter(k => k.set).length;
   $("keysCount").textContent = `· ${kset} of ${(A.keys || []).length} set`;
   const on = A.list.filter(a => a.enabled), work = on.filter(a => a.busy), paused = on.filter(a => a.paused_until),
@@ -1114,6 +1161,62 @@ function renderAgents(d) {
       <td class="b"><button type="button" data-key-set="${esc(k.name)}">${k.set ? "Replace" : "Set"}</button>
       ${k.set ? `<button type="button" data-key-clear="${esc(k.name)}">Remove</button>` : ""}</td></tr>`).join("") +
     `<tr><td colspan="4" class="b" style="text-align:left"><button type="button" class="linkbtn" data-key-set="">Add another key</button></td></tr>`;
+}
+function provKey(a) { return a.kind === "opencode" ? "opencode:" + ((a.model || "").split("/")[0] || "opencode") : a.kind; }
+function provOrder(g) { return {claude: 0, codex: 1}[g.kind] ?? (g.kind === "opencode" ? 2 : 3); }
+function provInfo(g) {
+  if (g.kind === "claude") return {name: "Anthropic", via: "Claude Code"};
+  if (g.kind === "codex") return {name: "OpenAI", via: "Codex CLI"};
+  if (g.kind === "opencode") {
+    const p = g.key.split(":")[1] || "";
+    const nice = {"opencode-go": "OpenCode Go", "opencode": "OpenCode Zen", "anthropic": "Anthropic API", "openai": "OpenAI API", "deepseek": "DeepSeek API"}[p];
+    return {name: nice || "OpenCode · " + p, via: "OpenCode" + (p ? " (" + p + "/…)" : "")};
+  }
+  return {name: g.kind, via: "its own command"};
+}
+function provClosed() { try { return JSON.parse(localStorage.getItem("fletchery.provClosed") || "[]"); } catch (e) { return []; } }
+function agentChip(a) {
+  if (!a.enabled) return ["Off", "idle"];
+  if (a.paused_until) return ["Paused until " + clockTime(a.paused_until), "paused"];
+  if (a.signed_in === false) return ["Not signed in", "out"];
+  if (a.busy) return [`Working (${a.busy})`, "working"];
+  if (a.signed_in === true) return ["Ready", "ready"];
+  return ["Not checked yet", "idle"];
+}
+function modelName(a) { return a.model ? a.model.split("/").pop() : (a.scores && a.scores.seed.model_key ? a.scores.seed.model_key + " (CLI default)" : "the CLI's default model"); }
+function modelRow(a, A) {
+  const [chip, cls] = agentChip(a), S = a.scores;
+  const rates = ["easy", "medium", "hard"].filter(l => a[l] && a[l].tried).map(l => `${l} <b>${Math.round(a[l].rate * 100)}%</b> of ${a[l].tried}`);
+  const spent = A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : "";
+  const ov = S ? `<span class="ov" title="Overall: the average of its four coding scores. Open the row for each one."><span class="bar" role="img" aria-label="overall ${S.overall} of 100"><i style="width:${S.overall}%"></i></span><b>${S.overall}</b></span>` : "<span></span>";
+  const runs = a.auth === "key" ? `API key${a.api_key ? " " + a.api_key : ""}` : (PLAN_LABEL[a.kind] || "its own sign-in");
+  return `<details class="mrow${a.enabled ? "" : " off"}" data-sc="${esc(a.name)}"${scoresOpen().includes(a.name) ? " open" : ""}>
+    <summary aria-label="${esc(a.name)}, ${esc(modelName(a))}, ${esc(chip)}${S ? ", overall " + S.overall : ""}. Show its scores">
+      <div class="mr"><span class="chev" aria-hidden="true">▶</span><span class="nm">${esc(a.name)}</span><span class="model">${esc(modelName(a))}</span>${ov}
+        <span class="chip ${cls}" ${a.paused_until ? `title="${esc(a.paused_reason)}"` : ""}>${esc(chip)}</span>
+        <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button></div>
+    </summary>
+    <div class="mx">
+      ${S ? scoreRows(a) : ""}
+      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${spent} · vendor ${esc(a.vendor)} · runs on <a href="#" data-acct-link="1">${esc(runs)}</a></div>
+      <div class="row2">
+        ${S ? `<button type="button" data-ag-scores="${esc(a.name)}">Edit scores</button>` : ""}
+        <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
+      </div></div></details>`;
+}
+function renderAccounts(groups, A) {
+  $("acctList").innerHTML = groups.map(g => {
+    const P = provInfo(g), first = g.list[0];
+    const signed = g.list.find(a => a.auth !== "key" && a.account) || first;
+    return `<div class="acct-prov"><div class="hd"><span class="pn">${esc(P.name)}</span><span class="pw">${esc(P.via)}${signed && signed.account ? " · " + esc(signed.account) : ""}</span><span class="sp"></span>
+      ${first.kind !== "fake" ? `<button type="button" data-ag-login="${esc(first.name)}">Sign in</button>` : ""}</div>
+      <table><colgroup><col style="width:22%"><col style="width:26%"><col><col style="width:250px"></colgroup><tbody>${g.list.map(a => { const [chip, cls] = agentChip(a); return `<tr><td class="n">${esc(a.name)}</td><td class="m">${esc(modelName(a))}</td>
+        <td class="s"><span class="chip ${cls}">${esc(chip)}</span>${a.key_env && a.key_env.length ? ` <span style="color:var(--muted)">uses ${a.key_env.map(esc).join(", ")}</span>` : ""}</td>
+        <td class="r"><span class="seg" role="group" aria-label="${esc(a.name)} runs on">
+          <button type="button" data-ag-auth="plan" data-ag="${esc(a.name)}" aria-pressed="${a.auth !== "key"}" title="${esc(PLAN_NAME[a.kind] || "its own sign-in")}">${esc(PLAN_LABEL[a.kind] || "Plan")}</button>
+          <button type="button" data-ag-auth="key" data-ag="${esc(a.name)}" aria-pressed="${a.auth === "key"}" title="${a.api_key ? "Billed per token through " + esc(a.api_key) : "Add the key this model takes first"}">API key</button>
+        </span></td></tr>`; }).join("")}</tbody></table></div>`;
+  }).join("");
 }
 const SKILL_NAMES = {cpp: "C++ / Unreal", scripts: "Python & tools", ui: "UI", docs: "Docs & data", review: "Review"};
 function scoreSource(r, seed) {
@@ -1132,16 +1235,8 @@ function scoreRows(a) {
   });
   const price = seed.price ? `$${seed.price[0]} / $${seed.price[1]} per million tokens` : "no price listed, so guessed from its Strength";
   rows.push(`<span>Cheapness</span><span class="bar" role="img" aria-label="${S.cost} of 100"><i class="${S.cost_from === "you" ? "you" : ""}" style="width:${S.cost}%"></i></span><b>${S.cost}</b><span class="src" title="${esc(S.cost_from === "you" ? "You set this score." : "From the list price: " + price + ". Higher is cheaper.")}">${S.cost_from === "you" ? "you set it" : S.cost_from === "price" ? "list price" : "estimate"}</span>`);
-  const open = scoresOpen().includes(a.name);
-  const how = `Overall = the average of its C++ / Unreal, Python & tools, UI and Docs & data scores (${["cpp", "scripts", "ui", "docs"].map(k => S.skills[k].score).join(", ")}). Review and Cheapness are kept apart: the router uses the score for each task's own kind, not this average.`;
-  const tags = [...new Set(["cpp", "scripts", "ui", "docs"].map(k => scoreSource(S.skills[k], seed)[0].replace(/^\d+\/\d+ passed$/, "results")))];
-  return `<details class="scd" data-sc="${esc(a.name)}"${open ? " open" : ""}>
-    <summary title="${esc(how)}" aria-label="${esc(a.name)} overall score ${S.overall} of 100; show the score for each kind of work">
-      <div class="sc"><span><span class="chev" aria-hidden="true">▶</span> Overall</span><span class="bar" role="img" aria-label="${S.overall} of 100"><i style="width:${S.overall}%"></i></span><b>${S.overall}</b><span class="src">${esc(tags.join(" + "))}</span></div>
-    </summary>
-    <div class="sc">${rows.join("")}</div>
-    <div class="rates" style="margin:4px 0 0 14px">Overall is the average of the four kinds of coding; each task uses the score for its own kind.</div>
-  </details>`;
+  return `<div class="sc">${rows.join("")}</div>
+    <div class="rates">Overall (${S.overall}) is the average of the four kinds of coding; each task uses the score for its own kind.</div>`;
 }
 function foldPref(key, dflt) { try { const v = localStorage.getItem(key); return v === null ? dflt : v === "1"; } catch (e) { return dflt; } }
 function savePref(key, on) { try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* not remembered */ } }
@@ -1152,12 +1247,15 @@ function setAgentsOpen(open, save) {
 setAgentsOpen(foldPref("fletchery.agentsOpen", true), false);
 $("agFold").onclick = () => setAgentsOpen($("agents").classList.contains("folded"), true);
 $("agh").onclick = () => setAgentsOpen($("agents").classList.contains("folded"), true);
-$("keysBox").open = foldPref("fletchery.keysOpen", false);
-$("keysBox").addEventListener("toggle", () => savePref("fletchery.keysOpen", $("keysBox").open));
+document.addEventListener("toggle", ev => {
+  const d = ev.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.prov) return;
+  const set = new Set(provClosed()); d.open ? set.delete(d.dataset.prov) : set.add(d.dataset.prov);
+  try { localStorage.setItem("fletchery.provClosed", JSON.stringify([...set])); } catch (e) { /* this view only */ }
+}, true);
 // ---- Settings ----
 let SET = null;
 function showTab(t) {
-  ["project", "projects"].forEach(x => { $("tab-" + x).setAttribute("aria-selected", String(x === t)); $("pane-" + x).hidden = x !== t; });
+  ["project", "accounts", "projects"].forEach(x => { $("tab-" + x).setAttribute("aria-selected", String(x === t)); $("pane-" + x).hidden = x !== t; });
 }
 document.querySelectorAll(".set-tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function fieldHtml(f, v) {
@@ -1174,7 +1272,7 @@ function renderSettings() {
     const basic = SET.fields.filter(f => f.group === g && !f.advanced), adv = SET.fields.filter(f => f.group === g && f.advanced);
     return `<h3 class="set-group">${esc(g)}</h3><div class="set-grid">${basic.map(f => fieldHtml(f, SET.values[f.key])).join("")}</div>` +
       (adv.length ? `<details class="set-adv"><summary>More ${esc(g.toLowerCase())} settings</summary><div class="set-grid">${adv.map(f => fieldHtml(f, SET.values[f.key])).join("")}</div></details>` : "");
-  }).join("") + `<p class="set-note">Agents and their scores are set in the Agents panel. Which checks run, and your project's rules for workers, live in the repository's <code>.fletchery/</code> folder.</p>`;
+  }).join("") + `<p class="set-note">Agents and their scores are set in the Agents panel; their sign-ins and API keys in the Accounts tab. Which checks run, and your project's rules for workers, live in the repository's <code>.fletchery/</code> folder.</p>`;
   $("set-where").innerHTML = `Saved in <code>${esc(SET.profile || "(no file)")}</code>. Fletchery's own state for this project: <code>${esc(SET.state_dir)}</code>.`;
   $("set-pdir").textContent = SET.projects_dir;
   $("set-projects").innerHTML = SET.projects.map(p => `<div class="proj"><span class="nm">${esc(p.name)}</span><span class="rp">${esc(p.repo || "no repository yet")}</span><span class="sp"></span>
@@ -1273,8 +1371,11 @@ async function agentCall(path, body, msg) {
   try { const r = await post(path, body); if (r && r.message) $("state").textContent = r.message; await refresh(); return r; }
   catch (e) { alert(e.message); }
 }
-$("agents").addEventListener("click", ev => {
+function agentClick(ev) {
+  if (ev.target.closest("[data-acct-link]")) { ev.preventDefault(); openSettings("accounts"); return; }
   const b = ev.target.closest("button"); if (!b) return;
+  if (b.closest("summary")) ev.preventDefault();  // a button on a row doesn't open or close the row
+  if (b.dataset.acctOpen) { openSettings("accounts"); return; }
   if (b.dataset.agAuth) {
     if (b.getAttribute("aria-pressed") === "true") return;
     if (b.dataset.agAuth === "key" && !confirm(`Run ${b.dataset.ag} on its API key? Its sessions are then billed per token. Running sessions finish as they are.`)) return;
@@ -1291,7 +1392,12 @@ $("agents").addEventListener("click", ev => {
     $("k-name").value = b.dataset.keySet; $("k-name").readOnly = !!b.dataset.keySet; $("k-val").value = ""; $("k-msg").textContent = "";
     $("k-target").textContent = "Fletchery/" + (b.dataset.keySet || "…"); $("keyDlg").showModal(); (b.dataset.keySet ? $("k-val") : $("k-name")).focus();
   }
-});
+}
+$("agents").addEventListener("click", agentClick);
+$("pane-accounts").addEventListener("click", ev => { if (ev.target.id !== "agCheck") agentClick(ev); });
+$("agAccounts").onclick = () => openSettings("accounts");
+$("agAcctLink").onclick = ev => { ev.preventDefault(); openSettings("accounts"); };
+$("acct-close").onclick = () => $("setDlg").close();
 $("escBtn").onclick = () => agentCall("/api/agents/escalate", {on: $("escBtn").getAttribute("aria-pressed") !== "true"});
 $("agCheck").onclick = async () => { await agentCall("/api/agents/check", {}); $("state").textContent = "Checking every agent's sign-in…"; setTimeout(refresh, 4000); };
 const VENDOR_WORDS = [[/claude|haiku|sonnet|opus|fable/, "anthropic"], [/gpt|codex|^o\d/, "openai"], [/deepseek/, "deepseek"],
@@ -1320,7 +1426,7 @@ $("agForm").onsubmit = async ev => {
   ev.preventDefault();
   try {
     await post("/api/agents/add", {name: $("a-name").value, kind: $("a-kind").value, model: $("a-model").value,
-      tier: +$("a-tier").value, vendor: $("a-vendor").value, keyEnv: $("a-keys").value});
+      vendor: $("a-vendor").value, keyEnv: $("a-keys").value});
     $("agDlg").close(); refresh();
   } catch (e) { $("a-msg").textContent = e.message; }
 };

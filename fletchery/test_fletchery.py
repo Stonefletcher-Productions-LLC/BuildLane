@@ -1025,8 +1025,11 @@ try:
     raise AssertionError("a model OpenCode doesn't offer was accepted")
 except ValueError as e:
     assert "opencode-go/claude-haiku-5-5" in str(e), e
-dash.add_agent({"name": "Haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3})
+dash.add_agent({"name": "Haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5"})  # no Strength picked
 assert "haiku" in ctx.agents.specs and ctx.agents.specs["haiku"].vendor == "anthropic"
+import scores as _sc  # noqa: E402
+_hk = _sc.seed("opencode", "opencode-go/claude-haiku-5-5", 2, _sc.load_catalog())
+assert _hk["from"] == "benchmarks" and ctx.agents.specs["haiku"].tier == max(1, min(5, round((_hk["coding"] - 20) / 15))), ctx.agents.specs["haiku"].tier
 dash.remove_agent({"name": "haiku"})
 dash.add_agent({"name": "opencode-go/kimi-k3", "kind": "opencode"})  # the model typed into the name box
 assert ctx.agents.specs["kimi-k3"].model == "opencode-go/kimi-k3" and ctx.agents.specs["kimi-k3"].vendor == "moonshot"
