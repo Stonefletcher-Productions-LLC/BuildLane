@@ -29,6 +29,10 @@ try {
         @{ Name = 'build-lane.png'; Path = '?only=lane'; W = 1400; H = 520 },
         @{ Name = 'usage-week.png'; Path = '?open=week'; W = 1400; H = 900 },
         @{ Name = 'add-task.png'; Path = '?open=add'; W = 1400; H = 900 },
+        @{ Name = 'agents.png'; Path = '?only=agents&scores=opus'; W = 1400; H = 1000 },
+        @{ Name = 'accounts.png'; Path = '?open=accounts'; W = 1400; H = 1000 },
+        @{ Name = 'settings.png'; Path = '?open=settings'; W = 1400; H = 1000 },
+        @{ Name = 'projects.png'; Path = '?open=projects'; W = 1400; H = 1000 },
         @{ Name = 'phone.png'; Path = ''; W = 420; H = 1500 }
     )
     foreach ($S in $Shots) {
