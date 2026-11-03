@@ -16,6 +16,7 @@
     POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
     POST /api/agents/scores   {name, scores: {cpp|scripts|ui|docs|review|cost: 0-100 or null}}: your own scores
     POST /api/agents/refresh-scores  fetch the newest benchmark catalog (model_scores.json) from Fletchery's main branch
+    POST /api/agents/refresh  lift usage-limit pauses, re-read OpenCode's models, check every sign-in again
     POST /api/settings/get    the Settings page: this project's settings, and every project
     POST /api/settings/save   {changes: {field: value}}: validate and save into the profile
     POST /api/settings/check  {repo, project_root, base_branch}: can GitHub see it, is the clone that repo
@@ -299,6 +300,24 @@ class Dashboard:
         self.fm.ctx.log(f"agent {name} removed from the dashboard")
         return {"name": name}
 
+    def refresh_agents(self, data: dict) -> dict:
+        """After a plan upgrade or a new sign-in: lift every usage-limit pause, forget the cached model list and check
+        every sign-in again. An agent still at its limit pauses again at its next session."""
+        pool = self._pool()
+        gone = pool.unpause()
+        st = self.fm.state
+        was_all = bool(st.paused_until)
+        st.paused_until, st.paused_reason = "", ""
+        import clis
+        clis._models_cache.clear()
+        self.fm.check_accounts(force=True)
+        msg = ("Lifted the usage-limit pause on " + ", ".join(gone) + ". " if gone else
+               "No agent was paused. ") + ("Fletchery's own limit pause is lifted too. " if was_all else "") + \
+              "Checking every sign-in again; the panel updates in a few seconds."
+        self.fm.ctx.log("agents refreshed from the app" + (f": unpaused {', '.join(gone)}" if gone else ""))
+        self.fm.wake()
+        return {"unpaused": gone, "message": msg}
+
     def login_agent(self, data: dict) -> dict:
         import clis
         pool = self._pool()
@@ -535,7 +554,7 @@ class Dashboard:
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
                               "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores,
-                              "/api/agents/refresh-scores": dash.refresh_scores,
+                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents,
                               "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,

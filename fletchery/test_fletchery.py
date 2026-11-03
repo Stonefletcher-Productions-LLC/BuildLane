@@ -1068,6 +1068,15 @@ dash.remove_agent({"name": "haiku"})
 dash.add_agent({"name": "opencode-go/kimi-k3", "kind": "opencode"})  # the model typed into the name box
 assert ctx.agents.specs["kimi-k3"].model == "opencode-go/kimi-k3" and ctx.agents.specs["kimi-k3"].vendor == "moonshot"
 dash.remove_agent({"name": "kimi-k3"})
+# Refresh agents: a plan upgrade lifts usage-limit pauses at once (shared ones too) and re-checks sign-ins
+_some = [n for n in ctx.agents.specs][:1]
+assert _some, "the dashboard test pool has agents"
+ctx.agents.pause(_some[0], 300, "5-hour usage limit")
+assert _some[0] in ctx.agents.paused
+_r = dash.refresh_agents({})
+assert _some[0] in _r["unpaused"] and not ctx.agents.paused, _r
+assert "Lifted" in _r["message"]
+assert dash.refresh_agents({})["unpaused"] == []
 _clis._models_cache.clear()
 assert "kimi" not in ctx.agents.specs
 from agents import AgentSpec as _Spec  # noqa: E402

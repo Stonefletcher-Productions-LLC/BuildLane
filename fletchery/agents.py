@@ -393,6 +393,14 @@ class AgentPool:
     def any_available(self, role: str = "worker", besides: str = "") -> bool:
         return any(self.available(s.name, role) for s in self.ordered() if s.name != besides)
 
+    def unpause(self, names: list[str] | None = None) -> list[str]:
+        """Lift limit pauses now (all, or the named agents), e.g. after a plan upgrade. Returns who was paused. If the
+        limit still holds, the next session meets it and the agent pauses again."""
+        gone = [k for k in list(self.paused) if names is None or k in names]
+        for k in gone:
+            del self.paused[k]
+        return gone
+
     def clear_expired(self) -> None:
         n = _now()
         for k in [k for k, v in self.paused.items() if n >= _parse(v.get("until", ""))]:

@@ -223,7 +223,7 @@ Releases, the integration mode, timing history and merge controls are still in t
 | You see | What to do |
 |---|---|
 | "Not signed in" on a provider | **Settings > Accounts**, **Sign in**, then **Check sign-ins**. Work resumes on the next check |
-| An agent says "Paused until…" | It hit a usage limit. Its tasks go to the other agents; it comes back by itself |
+| An agent says "Paused until…" | It hit a usage limit. Its tasks go to the other agents; it comes back by itself. Upgraded the plan? Press **Refresh agents** (or the chip) to lift the pause now |
 | Nothing new starts | Check *Workers* is not at 0, the daily cap is not reached, and **Pause** is not on |
 | "Can't reach Fletchery's backend" | The app restarts it by itself. If it stays, quit from the tray and reopen; the log is under **Open log folder** in the tray menu |
 | A task keeps landing under **Needs you** | Read the last comment on its issue: it says what a person must decide |

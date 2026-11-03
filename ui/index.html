@@ -178,6 +178,7 @@
   .lane-head h2 { margin: 0; font-size: 18px; }
   .lane-sub { margin: 4px 0 0; color: var(--muted); font-size: 14.5px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; padding: 3px 10px; border-radius: 99px; }
+  button.chip { border: 0; min-height: 0; cursor: pointer; }
   .chip.building { background: var(--running-bg); color: var(--running); }
   .chip.passed { background: var(--running-bg); color: var(--running); }
   .chip.failed { background: var(--blocked-bg); color: var(--blocked); }
@@ -511,6 +512,7 @@
       <span class="ag-sum" id="agSum" role="status"></span>
       <span class="sp"></span>
       <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
+      <button type="button" id="agReload" title="Changed a plan or signed in again? Lifts usage-limit pauses and checks every sign-in now">Refresh agents</button>
       <button type="button" id="agAccounts" title="Sign-ins, plan or API key, and the API keys (Settings > Accounts)">Accounts &amp; keys</button>
       <button type="button" id="agRefresh">Refresh benchmarks</button>
       <button type="button" id="agAdd">Add agent</button>
@@ -614,7 +616,8 @@
     </div>
     <div id="pane-accounts" role="tabpanel" aria-labelledby="tab-accounts" hidden>
       <p class="set-note">Where each agent's work is billed. On its <b>plan</b> an agent uses your own sign-in (a Claude plan, ChatGPT, OpenCode Go) and shares that account's limits with every other agent on it. On an <b>API key</b> it is billed per token. Agents on one sign-in pause together when the account hits a limit.</p>
-      <div class="row" style="justify-content:flex-start;margin:0 0 12px"><button type="button" id="agCheck">Check sign-ins</button></div>
+      <div class="row" style="justify-content:flex-start;margin:0 0 12px"><button type="button" id="agCheck" title="Lifts usage-limit pauses and checks every sign-in now">Refresh sign-ins and limits</button>
+        <span class="set-note" style="margin:0">Use it after you upgrade a plan or sign in again.</span></div>
       <div id="acctList"></div>
       <div class="keys" id="keysBox">
         <h3>API keys <span id="keysCount" style="color:var(--muted);font-weight:400"></span></h3>
@@ -1172,7 +1175,7 @@ function renderAgents(d) {
     let tag;
     if (!on.length) tag = `<span class="chip idle">All off</span>`;
     else if (out.length) tag = `<button type="button" class="chip out" data-acct-open="1" title="Open Settings > Accounts to sign in">Not signed in · sign in</button>`;
-    else if (paused) tag = `<span class="chip paused" title="${esc(paused.paused_reason)}">Paused until ${esc(clockTime(paused.paused_until))}</span>`;
+    else if (paused) tag = `<button type="button" class="chip paused" data-ag-refresh="1" title="${esc(paused.paused_reason)}. Upgraded the plan? Press to lift the pause now.">Paused until ${esc(clockTime(paused.paused_until))} · lift</button>`;
     else if (work) tag = `<span class="chip working">${work} working</span>`;
     else tag = `<span class="chip ready">${on.length} of ${g.list.length} on</span>`;
     return `<details class="prov" data-prov="${esc(g.key)}"${closed.includes(g.key) ? "" : " open"}>
@@ -1408,6 +1411,7 @@ function agentClick(ev) {
   const b = ev.target.closest("button"); if (!b) return;
   if (b.closest("summary")) ev.preventDefault();  // a button on a row doesn't open or close the row
   if (b.dataset.acctOpen) { openSettings("accounts"); return; }
+  if (b.dataset.agRefresh) { refreshAgents(); return; }
   if (b.dataset.agAuth) {
     if (b.getAttribute("aria-pressed") === "true") return;
     if (b.dataset.agAuth === "key" && !confirm(`Run ${b.dataset.ag} on its API key? Its sessions are then billed per token. Running sessions finish as they are.`)) return;
@@ -1431,7 +1435,11 @@ $("agAccounts").onclick = () => openSettings("accounts");
 $("agAcctLink").onclick = ev => { ev.preventDefault(); openSettings("accounts"); };
 $("acct-close").onclick = () => $("setDlg").close();
 $("escBtn").onclick = () => agentCall("/api/agents/escalate", {on: $("escBtn").getAttribute("aria-pressed") !== "true"});
-$("agCheck").onclick = async () => { await agentCall("/api/agents/check", {}); $("state").textContent = "Checking every agent's sign-in…"; setTimeout(refresh, 4000); };
+async function refreshAgents() {
+  const r = await agentCall("/api/agents/refresh", {});
+  if (r) { $("state").textContent = r.message; setTimeout(refresh, 4000); setTimeout(refresh, 10000); }
+}
+$("agCheck").onclick = $("agReload").onclick = refreshAgents;
 const VENDOR_WORDS = [[/claude|haiku|sonnet|opus|fable/, "anthropic"], [/gpt|codex|^o\d/, "openai"], [/deepseek/, "deepseek"],
   [/kimi|moonshot/, "moonshot"], [/glm|zhipu/, "zhipu"], [/qwen/, "alibaba"], [/gemini/, "google"], [/grok/, "xai"],
   [/minimax/, "minimax"], [/mimo/, "xiaomi"], [/mistral/, "mistral"]];
