@@ -1,4 +1,4 @@
-"""Git for the pipeline: one worktree per task under `worktree_root`, branched from `origin/<base>`, LFS smudge off.
+﻿"""Git for the pipeline: one worktree per task under `worktree_root`, branched from `origin/<base>`, LFS smudge off.
 `FakeRepo` keeps the same surface in memory for tests and dry runs. Never prunes worktrees (PC rule): a worktree whose
 folder went missing is repaired, not pruned."""
 from __future__ import annotations
@@ -17,7 +17,7 @@ class Repo:
         self.env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
-        p = subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, env=self.env)
+        p = subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, encoding="utf-8", errors="replace", env=self.env)
         if check and p.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)}: {p.stderr.strip()}")
         return p.stdout.strip()

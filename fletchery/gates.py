@@ -1,4 +1,4 @@
-"""Gates: checks Fletchery runs itself on a worker's branch, chosen by the project's rules (.fletchery/gates.json) from
+﻿"""Gates: checks Fletchery runs itself on a worker's branch, chosen by the project's rules (.fletchery/gates.json) from
 the files the branch changed. A worker cannot skip them because it does not run them. They are quick checks; the
 project's full build is the Build Lane's job."""
 from __future__ import annotations
@@ -59,7 +59,7 @@ def run(cmds: list[str], cwd: Path, timeout: int = 900, fallback_root: Path | st
     out: list[GateResult] = []
     for c in cmds:
         try:
-            p = subprocess.run(resolve(localise(c, cwd, fallback_root)), shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            p = subprocess.run(resolve(localise(c, cwd, fallback_root)), shell=True, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             text = (p.stdout + p.stderr).strip()
             out.append(GateResult(c, p.returncode == 0, text[-4000:]))
         except subprocess.TimeoutExpired:
