@@ -33,12 +33,12 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
 | `name` | What Fletchery calls the agent on the dashboard, in logs and in PR bodies; also what `Agent:` lines name |
 | `kind` | `claude` (Claude Agent SDK), `codex` (`codex exec`), or `opencode` (`opencode run`) |
 | `model` | Empty means the CLI's own default. For OpenCode it is `provider/model`; `opencode models` lists them |
-| `tier` | Strength, 1 (cheapest) to 5. A failed task moves up to the next tier that is on |
+| `tier` | Strength, 1 (cheapest) to 5. Optional: an agent added in the app gets it from its model's benchmark score (2 when no benchmark lists the model). Used only in `lists` routing and as the fallback score below |
 | `vendor` | The company behind the model. A reviewer always comes from a different vendor than the writer when one is on |
 | `enabled` | Off means nothing new goes to it. The **On/Off** switch on the dashboard changes this |
 | `maxParallel` | Optional: how many tasks this agent may run at once |
 | `keyEnv` | Optional: stored API keys this agent's sessions receive, such as `["DEEPSEEK_API_KEY"]` |
-| `auth` | `plan` (default): the CLI's own sign-in (Claude plan, ChatGPT for Codex, OpenCode's sign-in). `key`: the agent's API key from the key store instead, billed per token. Switch it on the agent's card ("Runs on"). |
+| `auth` | `plan` (default): the CLI's own sign-in (Claude plan, ChatGPT for Codex, OpenCode's sign-in). `key`: the agent's API key from the key store instead, billed per token. Switch it in Settings > Accounts ("Runs on"). |
 | `timeoutMinutes` | Optional, for Codex and OpenCode, which have no turn limit: `{"worker": 60, "reviewer": 20}` |
 
 ## How a task gets its agent
@@ -71,7 +71,7 @@ With `"routing": {"mode": "scores"}` (the default when the profile names no per-
 
 Where a score comes from, strongest first:
 
-1. **You**: set it on the card (Edit scores), saved as `scores` on the agent in the profile.
+1. **You**: open the model's row in the Agents panel and choose Edit scores, saved as `scores` on the agent in the profile.
 2. **Fletchery's results**: each pass at a level counts as that level's bar + 15, and each fail as the bar - 25. These results are blended with the seed, which counts as six tasks.
 3. **Benchmarks**: `fletchery/model_scores.json` lists public numbers per model, each with its source page and date: Terminal-Bench 4.0 + 25, SWE-bench Pro + 10, and SWE-bench Verified - 30 at half weight. Benchmarks don't split C++ from Python, so every kind starts from the same number. Cheapness comes from the list price per million output tokens.
 4. **Strength** (1-5): used when no benchmark names the model, as 20 + 15 × Strength.
@@ -96,15 +96,23 @@ Where a score comes from, strongest first:
 
 ## The Agents panel
 
+Agents are grouped by where they come from: **Anthropic** (Claude Code), **OpenAI** (Codex CLI), and each OpenCode
+provider such as **OpenCode Go**. Each provider shows one row per model: its name, model, overall score, status and an
+On/Off switch. Open a row for its score in each kind of work, its pass rates, **Edit scores** and **Remove**. Open or
+close a provider to tidy the list; the panel remembers it.
+
+Sign-ins, plan or API key, and the keys themselves live in **Settings > Accounts** (or **Accounts & keys** on the
+panel). When an agent needs signing in, its provider shows **Not signed in · sign in**, which opens that tab.
+
 - **On / Off** per agent, saved in the profile. At least one agent has to stay on.
 - **Status:** Ready, Working (n), Paused until …, Not signed in, Off. It also shows what the sign-in check said, and the
   pass rate by difficulty.
-- **Sign in** opens the agent's own sign-in in a console window on the PC: `claude` (then `/login`), `codex login`, or
+- **Sign in** (Settings > Accounts, one per provider) opens the CLI's own sign-in in a console window on the PC: `claude` (then `/login`), `codex login`, or
   `opencode auth login`.
 - **Add agent** adds any model OpenCode, Codex or Claude can reach. **Remove** deletes one; use Off to keep its
   settings.
 - **API keys** are stored in Windows Credential Manager as `Fletchery/<NAME>`, never in the profile or the repository.
-  The panel shows only the last four characters. A session receives a key only if its agent lists it in `keyEnv`
+  Settings > Accounts shows only the last four characters. A session receives a key only if its agent lists it in `keyEnv`
   (`ANTHROPIC_API_KEY` is also what **API key** mode uses). Plans and sign-ins need no key: Claude on a Claude plan,
   Codex on ChatGPT, OpenCode on OpenCode Go.
 - Each worker card shows which agent is on the task, and whether it is writing or reviewing. Finished sessions show

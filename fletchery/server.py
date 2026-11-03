@@ -9,7 +9,7 @@
     POST /api/lane/pause   pause the Build Lane (the same PAUSED file as Tools/CI/Pause.ps1)
     POST /api/lane/resume
     POST /api/agents/toggle   {name, on}: switch one coding agent on or off (saved in the profile)
-    POST /api/agents/add      {name, kind, model, tier, vendor, keyEnv}: a new agent (saved in the profile)
+    POST /api/agents/add      {name, kind, model, vendor, keyEnv; tier optional, else from benchmarks}: a new agent (saved in the profile)
     POST /api/agents/remove   {name}
     POST /api/agents/check    check every agent's sign-in now
     POST /api/agents/login    {name}: open that agent's own sign-in in a console window on this PC
@@ -204,7 +204,7 @@ class Dashboard:
         if kind not in ("claude", "codex", "opencode"):
             raise ValueError("Kind is claude, codex or opencode.")
         try:
-            tier = int(data.get("tier") or 2)
+            tier = int(data["tier"]) if data.get("tier") not in (None, "") else 0
         except (TypeError, ValueError):
             raise ValueError("Tier is a whole number, 1 (cheapest) to 5.")
         if kind == "opencode" and "/" not in model:
@@ -219,6 +219,9 @@ class Dashboard:
                 near = (near or difflib.get_close_matches(model, known, n=3, cutoff=0.5))[:3]
                 raise ValueError(f"OpenCode doesn't offer {model}." + (f" Did you mean {' or '.join(near)}?" if near
                                  else " Run `opencode models` for the list."))
+        if not tier:  # nobody picks a strength: it follows the model's benchmark score (2 when no benchmark lists it)
+            import scores
+            tier = scores.tier_for(kind, model, scores.load_catalog(getattr(pool, "catalog_override", None)))
         key_env = [k.strip() for k in str(data.get("keyEnv", "")).split(",") if k.strip()]
         raw = {"name": name, "kind": kind, "model": model, "tier": max(1, min(5, tier)),
                "vendor": str(data.get("vendor", "")).strip().lower() or guess_vendor(kind, model), "enabled": True, "keyEnv": key_env}
