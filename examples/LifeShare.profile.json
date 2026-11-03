@@ -62,9 +62,9 @@
         "deepseek-pro"
       ],
       "medium": [
-        "codex",
+        "deepseek-pro",
         "claude",
-        "deepseek-pro"
+        "codex"
       ],
       "hard": [
         "claude",

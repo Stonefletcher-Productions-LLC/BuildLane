@@ -83,17 +83,22 @@ def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
 
 # ---- difficulty ----
 
-# Signs that a task is hard: work a cheap model gets subtly wrong and the Build Lane catches late. LifeShare-flavoured
-# defaults; a profile replaces them with `routing.hardPatterns` / `routing.easyPatterns`.
+# Signs that a task is hard, with weights: work a cheap model gets subtly wrong and the Build Lane catches late. A task
+# is hard at HARD_SCORE points. LifeShare issues name proof steps ("strict NavCheck", "Lane-Imports:", "replicated")
+# almost every time, so one such mention alone is worth 1 and does not make a task hard. Threading and multiplayer
+# races are worth 2, saves and migrations 3. A profile replaces these with `routing.hardPatterns` ([regex, weight] or
+# a bare regex, worth 2) and the threshold with `routing.hardScore`.
+HARD_SCORE = 3
 HARD_PATTERNS = [
-    r"\bsave (version|format|game)|\bmigration\b|SaveVersion",
-    r"\breplicat|\bmultiplayer\b|\bnetwork(ing)?\b|\bRPC\b|\bonline\b|\bsession\b",
-    r"\bnav(mesh|check)\b|\bNavCheck\b|\bpathfinding\b",
-    r"\bthread(s|ing)?\b|\basync\b|\brace\b|\bdeadlock\b",
-    r"\bperformance\b|\bperf\b|\bmemory leak\b|\bGC\b",
-    r"\b(Folk|Folks) (sim|AI|brain|needs|autonomy)\b|\bautonomy\b|\butility AI\b",
-    r"\bLane-Imports\s*:",
-    r"\barchitecture\b|\brefactor\b|\bredesign\b",
+    [r"\bsave ?(version|format)\b|\bmigration\b", 3],
+    [r"\bmultiplayer\b|\btwo-player\b|\bclient and server\b|\bRPC\b", 2],
+    [r"\brace condition\b|\bdeadlock\b|\bthread-?safe|\bworker thread\b", 2],
+    [r"\bmemory leak\b|\bframe time\b|\bhitch\b|\bprofil(e|ing)\b", 1],
+    [r"\breplicat", 1],
+    [r"\bnav(mesh|check)\b|\bNavCheck\b|\bpathfinding\b", 1],
+    [r"\bLane-Imports\s*:", 1],
+    [r"\b(Folk|Folks) (sim|AI|brain|needs)\b|\bautonomy\b|\butility AI\b", 1],
+    [r"\barchitecture\b|\brefactor\b|\bredesign\b", 1],
 ]
 EASY_PATTERNS = [
     r"\btypo\b|\bspelling\b|\bwording\b|\bcopy (change|edit)\b|\brename\b",
@@ -108,9 +113,10 @@ _AGENT_LINE = re.compile(r"^\s*agent\s*:\s*([\w.\-]+)", re.IGNORECASE | re.MULTI
 _CODE_REF = re.compile(r"\b[\w/]+\.(cpp|h|hpp|cs|ts|tsx|js|cjs|py|ps1)\b")
 
 
-def classify(title: str, body: str, labels: list[str], hard: list[str] | None = None,
-             easy: list[str] | None = None, depends: int = 0) -> tuple[str, str]:
-    """(difficulty, why). Rules in order: an explicit level, a hard sign, a big issue, easy signs, else medium."""
+def classify(title: str, body: str, labels: list[str], hard: list | None = None,
+             easy: list[str] | None = None, depends: int = 0, hard_score: int | None = None) -> tuple[str, str]:
+    """(difficulty, why). An explicit level wins; otherwise hard signs and size add up to a score: hard at
+    `hard_score`, easy when nothing scored and easy signs show on a short issue with no C++, else medium."""
     for l in labels:
         if l.lower().startswith("difficulty:") and l.split(":", 1)[1].lower() in LEVELS:
             return l.split(":", 1)[1].lower(), f"label {l}"
@@ -118,19 +124,33 @@ def classify(title: str, body: str, labels: list[str], hard: list[str] | None = 
     if m:
         return m.group(1).lower(), "Difficulty line"
     text = f"{title}\n{body or ''}"
-    for p in (hard if hard is not None else HARD_PATTERNS):
-        hit = re.search(p, text, re.IGNORECASE)
+    score, hits = 0, []
+    for item in (hard if hard is not None else HARD_PATTERNS):
+        pat, weight = (item[0], int(item[1])) if isinstance(item, (list, tuple)) else (item, 2)
+        hit = re.search(pat, text, re.IGNORECASE)
         if hit:
-            return HARD, f"mentions \"{hit.group(0).strip()}\""
+            score += weight
+            hits.append(hit.group(0).strip())
     files = {m.group(0) for m in _CODE_REF.finditer(text)}
     native = [f for f in files if f.endswith((".cpp", ".h", ".hpp"))]
-    if len(text) > 4000 or len(native) >= 4 or depends >= 3:
-        return HARD, f"big task ({len(text)} chars, {len(native)} C++ files, {depends} dependencies)"
+    if len(text) > 4000:
+        score += 2
+        hits.append(f"{len(text)} chars")
+    if len(native) >= 4:
+        score += 2
+        hits.append(f"{len(native)} C++ files")
+    if depends >= 3:
+        score += 1
+        hits.append(f"{depends} dependencies")
+    need = HARD_SCORE if hard_score is None else hard_score
+    named = ", ".join(f'"{h}"' if not h[0].isdigit() else h for h in hits[:4])
+    if score >= need:
+        return HARD, f"score {score}: {named}"
     easy_hits = [h.group(0).strip() for p in (easy if easy is not None else EASY_PATTERNS)
                  for h in [re.search(p, text, re.IGNORECASE)] if h]
-    if easy_hits and not native and len(text) < 2500:
+    if score == 0 and easy_hits and not native and len(text) < 2500:
         return EASY, "looks small: " + ", ".join(f'"{h}"' for h in easy_hits[:3])
-    return MEDIUM, "ordinary change" + (f" ({len(native)} C++ files)" if native else "")
+    return MEDIUM, (f"score {score}: {named}" if score else "ordinary change") + (f" ({len(native)} C++ files)" if native and len(native) < 4 else "")
 
 
 def override(body: str, labels: list[str]) -> str:
@@ -299,7 +319,7 @@ class AgentPool:
     def choose(self, title: str, body: str, labels: list[str], depends: int = 0, stats: Stats | None = None,
                role: str = "worker") -> Choice | None:
         level, why = classify(title, body, labels, self.routing.get("hardPatterns"), self.routing.get("easyPatterns"),
-                              depends)
+                              depends, self.routing.get("hardScore"))
         forced = override(body, labels)
         if forced and forced in self.specs:
             if self.available(forced, role):
