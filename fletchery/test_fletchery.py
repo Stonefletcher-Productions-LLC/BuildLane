@@ -736,4 +736,28 @@ rich = w.enrich(fb[0].text, "preview-receipt")
 assert "Expected mocked launch" in rich and "Failing step:" in rich, rich
 assert wmod.make(Config(name="T", repo="o/r"), FakeGitHub()) is None  # the fake has nothing to watch
 
+# "Gate: none" adds no check (it used to run `node none` and block LifeShare #846-#848)
+from rules import Rules as _Rules  # noqa: E402
+_r = _Rules(always=["python3 .fletchery/check_conventions.py"])
+assert _r.checks_for([], ["none"]) == ["python3 .fletchery/check_conventions.py"]
+assert _r.checks_for([], ["None.", "`none`", "n/a"]) == ["python3 .fletchery/check_conventions.py"]
+assert _r.checks_for([], ["Tools/x.py"])[-1] == "python3 Tools/x.py"
+
+# the merge fixer workflow's jobs ("find", "fix (855, ...)") fix other PRs; they are no verdict on this one (#829)
+class _FixerJobsGH(_RealGH):
+    def api(self, path, method="GET", body=None, paginate=False):
+        if path.endswith("/comments?per_page=100"):
+            return []
+        if "/check-runs" in path:
+            return {"check_runs": [
+                {"name": "fix (853, claude/foreman-845-x, #845 Characters: sharper F...", "conclusion": "failure",
+                 "completed_at": "2026-11-03T05:37:10Z", "html_url": "u"},
+                {"name": "find", "conclusion": "failure", "completed_at": "2026-11-03T05:37:10Z", "html_url": "u"},
+                {"name": "Quick checks", "conclusion": "failure", "completed_at": "2026-11-03T05:37:10Z", "html_url": "u"}]}
+        if path.endswith("/status"):
+            return {"statuses": []}
+        raise AssertionError(path)
+fb = _FixerJobsGH("o/r").feedback_since(PullRequest(829, "t", "h", "b", "s" * 40, ["foreman"]), None)
+assert [f.text.split("`")[1] for f in fb] == ["Quick checks"], fb
+
 print("RESULT: PASS (Fletchery engine checks)")
