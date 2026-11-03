@@ -304,7 +304,7 @@
   <div class="banner hold" id="holdBanner" role="status"></div>
   <div class="banner down" id="downBanner" role="alert"></div>
 
-  <section class="tasks" aria-labelledby="tqh">
+  <section class="tasks" id="queue" aria-labelledby="tqh">
     <div class="sec-head"><h2 id="tqh">Task queue</h2><span class="counts" id="tqCounts"></span></div>
     <p class="sec-sub">GitHub issues labelled <b class="lbl">fletchery</b>, oldest first. When a worker is free, it takes the first ready one. Add one with <b>Add task</b>, or label any issue <b class="lbl">fletchery</b> on GitHub.</p>
     <div class="tq" id="tq">
@@ -317,7 +317,7 @@
          aria-label="Resize the task queue: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </section>
 
-  <section class="now" aria-labelledby="nowh">
+  <section class="now" id="workers" aria-labelledby="nowh">
     <div class="now-head">
       <h2 id="nowh">Workers</h2>
       <span class="wcount" role="group" aria-label="Number of workers">
@@ -783,7 +783,13 @@ $("taskForm").onsubmit = async ev => {
   finally { save.disabled = false; }
 };
 
-refresh();
+// ?open=week|add opens that dialog, and #<section id> scrolls to it, once the first data is in (docs screenshots).
+const params = new URLSearchParams(location.search);
+refresh().then(() => {
+  if (params.get("open") === "week" && last) { renderWeek(last); $("weekDlg").showModal(); }
+  if (params.get("open") === "add") { $("dlg").showModal(); }
+  if (location.hash) { const el = document.getElementById(location.hash.slice(1)); if (el) el.scrollIntoView(); }
+});
 setInterval(refresh, 3000);
 </script>
 </body>

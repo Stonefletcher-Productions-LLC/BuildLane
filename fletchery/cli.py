@@ -151,6 +151,38 @@ def check_auth(cfg: Config) -> None:
     print(msg + (" (ANTHROPIC_API_KEY ignored)" if cfg.auth == "subscription" else ""), flush=True)
 
 
+HARBOR = [  # the neutral demo project used for docs and screenshots
+    (101, "Add a dark theme to Settings", "", "queued", "2026-10-30T09:00:00Z"),
+    (102, "Fix a crash when opening an empty notebook", "", "queued", "2026-10-30T09:01:00Z"),
+    (103, "Export a notebook as Markdown", "", "queued", "2026-10-30T09:02:00Z"),
+    (104, "Keyboard shortcuts for the sidebar", "Depends on: #101", "queued", "2026-10-30T09:03:00Z"),
+    (105, "Show sync errors in the status bar", "", "queued", "2026-10-30T09:04:00Z"),
+    (106, "Spell-check in the editor", "", "queued", "2026-10-30T09:05:00Z"),
+    (107, "Search inside attachments", "Depends on: #103", "queued", "2026-10-30T09:06:00Z"),
+    (108, "Undo for deleted pages", "", "pr", "2026-10-29T09:00:00Z"),
+    (109, "Ask before sending crash reports", "", "blocked", "2026-10-29T09:01:00Z"),
+    (110, "Remember the last open notebook", "", "queued", "2026-10-30T09:07:00Z"),
+    (111, "Tidy the About window", "", "queued", "2026-10-30T09:08:00Z"),
+]
+
+
+def harbor_context(cfg: Config, tmp: Path, serve_delay: float) -> Context:
+    from graph import Task
+    from github import Feedback, PullRequest
+    import gates as g
+    graph.PREFIX = "fletchery"
+    tasks = {n: Task(n, t, b, ["fletchery", graph.label_for(st)], created_at=c) for n, t, b, st, c in HARBOR}
+    gh = FakeGitHub(tasks)
+    gh.prs.append(PullRequest(212, "#108 Undo for deleted pages", tasks[108].branch, "main", "abc", ["fletchery", "ready"], "Closes #108"))
+    actions = ["Read src/settings/ThemePicker.tsx", "Grep useTheme", "Read src/theme/tokens.ts", "Edit src/theme/tokens.ts",
+               "Edit src/settings/ThemePicker.tsx", "$ npm test -- theme", "$ git commit -m \"Settings: dark theme\""]
+    rt = FakeRuntime({}, cost_usd=0.9, delay_s=serve_delay, actions=actions)
+    live = Live()
+    return Context(cfg, gh, FakeRepo(tmp / "worktrees"), rt,
+                   run_gates=lambda cmds, cwd, **kw: [g.GateResult(c, True, "RESULT: PASS") for c in cmds],
+                   log=lambda line: (print(line), live.log(line)), live=live)
+
+
 def demo_context(cfg: Config, tmp: Path, serve_delay: float = 0.0) -> Context:
     """Six tasks with dependencies, one PR already in the lane with feedback, fake workers. See `demo`."""
     from graph import Task, PR
@@ -201,6 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--profile", "--config", dest="profile", type=Path, default=None,
                     help="the project profile (.json); old Foreman configs load too")
     ap.add_argument("--serve", action="store_true", help="demo: serve the dashboard on the demo data and keep running")
+    ap.add_argument("--fixture", choices=["lifeshare", "harbor"], default="lifeshare",
+                    help="demo: which made-up project (harbor is the neutral one used for docs and screenshots)")
     a = ap.parse_args(argv)
     cfg = Config.load(a.profile)
     graph.PREFIX = cfg.label
@@ -212,15 +246,33 @@ def main(argv: list[str] | None = None) -> int:
     if a.command == "demo" and a.serve:
         import tempfile
         d = Path(tempfile.mkdtemp())
-        cfg.repo = cfg.repo or "Stonefletcher-Productions-LLC/LifeShare"
-        graph.PREFIX = "foreman"
-        ctx = demo_context(cfg, d, serve_delay=40.0)
+        if a.fixture == "harbor":
+            import json as _js
+            from datetime import datetime as _dt2, timedelta as _td2, timezone as _tz2
+            cfg.repo, cfg.name, cfg.base_branch = "example/harbor", "Harbor", "main"
+            n2 = _dt2.now(_tz2.utc)
+            (d / "status.json").write_text(_js.dumps({
+                "what": "batch #212, #214", "step": "Tests: integration", "detail": "9 of 14 done", "done": "", "phase": 4,
+                "phases": ["Wait for the PC", "Quick checks", "Compile", "Package assets", "Tests", "Package"],
+                "progress": {"done": 9, "total": 14}, "started": (n2 - _td2(minutes=23)).isoformat(),
+                "updated": (n2 - _td2(seconds=40)).isoformat(), "runUrl": "https://github.com/example/harbor/actions",
+                "issueUrl": "https://github.com/example/harbor/issues", "notes": [],
+                "queue": [{"number": 212, "title": "#108 Undo for deleted pages", "state": "in the batch"},
+                          {"number": 214, "title": "Faster startup on large notebooks", "state": "in the batch"},
+                          {"number": 215, "title": "Update the bundled fonts", "state": "waiting for review"},
+                          {"number": 216, "title": "Print a page range", "state": "waits for the next batch"}]}), encoding="utf-8")
+            cfg.lane_status_file, cfg.lane_pause_file, cfg.lane_drive = str(d / "status.json"), str(d / "PAUSED"), cfg.lane_drive or ""
+            ctx = harbor_context(cfg, d, serve_delay=600.0)
+        else:
+            cfg.repo = cfg.repo or "Stonefletcher-Productions-LLC/LifeShare"
+            graph.PREFIX = "foreman"
+            ctx = demo_context(cfg, d, serve_delay=40.0)
         fm = Engine(ctx, d / "state")
         import json as _j
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         (d / "state").mkdir(parents=True, exist_ok=True)
         with (d / "state" / "ledger.jsonl").open("w", encoding="utf-8") as f:
-            for back, cost, n in [(6, 6.4, 3), (5, 11.2, 5), (4, 0, 0), (3, 18.9, 8), (2, 9.5, 4), (1, 22.3, 9), (0, 4.1, 2)]:
+            for back, cost, n in [(6, 6.4, 3), (5, 11.2, 5), (4, 0, 0), (3, 18.9, 8), (2, 9.5, 4), (1, 22.3, 9), (0, 4.1, 2)]:  # made up
                 day = _dt.now(_tz.utc) - _td(days=back)
                 fm.state.spent[day.strftime("%Y-%m-%d")] = cost
                 for k in range(n):
