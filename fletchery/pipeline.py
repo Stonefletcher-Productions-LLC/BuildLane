@@ -101,11 +101,12 @@ def _paused(ctx: "Context", out: Outcome, e: Limited, what: str) -> bool:
         return False
     minutes = ctx.cfg.limit_backoff_minutes if kind == "limited" else max(120, ctx.cfg.limit_backoff_minutes)
     reason = ("usage limit: " if kind == "limited" else "needs signing in again: ") + str(e.args[0])[:160]
-    pool.pause(agent, minutes, reason)
+    who = pool.pause(agent, minutes, reason, shared=kind == "limited")
     if not pool.any_available(besides=agent):
         return False
     out.result, out.detail, out.agent = "agent_paused", f"{agent} paused ({reason})", agent
-    ctx.log(f"{what}: {agent} paused for {minutes} min ({reason}); other agents carry on")
+    also = f" (and {', '.join(who[1:])} on the same account)" if len(who) > 1 else ""
+    ctx.log(f"{what}: {agent}{also} paused for {minutes} min ({reason}); other agents carry on")
     return True
 
 
