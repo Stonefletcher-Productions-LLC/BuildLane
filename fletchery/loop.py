@@ -82,14 +82,34 @@ class Engine:
         self.passing = False
         self._wake: asyncio.Event | None = None
         self.active: set[int] = set()   # tasks a session of THIS process is working on right now
+        self.jobs: dict = {}            # asyncio job -> (task number, PR number or None, the PR's last seen feedback)
+        self.recent: list[Outcome] = []
+        self._tasks: dict = {}
+        self._prs: dict = {}
+        self._waiting: dict = {}
         self._aloop: asyncio.AbstractEventLoop | None = None
 
     # ---- the pass ----
     async def once(self) -> list[Outcome]:
+        """One batch: dispatch what fits, wait for all of it, write the status. `foreman once` and the tests use this;
+        the running app uses `run_forever`, which refills a slot the moment a session ends."""
+        self.dispatch()
+        outcomes: list[Outcome] = []
+        while self.jobs:
+            outcomes += await self._wait_for_jobs(None)
+        self.publish(outcomes)
+        return outcomes
+
+    # ---- dispatch: sync with GitHub and start sessions in the free slots (never waits for them) ----
+    def dispatch(self, draining: bool = False) -> None:
         gh, cfg, st = self.ctx.gh, self.cfg, self.state
         self.last_plan = []
-        tasks = gh.open_tasks()
-        prs = {p.number: p for p in gh.open_prs()}
+        self.passing = True
+        try:
+            tasks = gh.open_tasks()
+            prs = {p.number: p for p in gh.open_prs()}
+        finally:
+            self.passing = False
         # A task labelled running that this process is not running was orphaned by a stop, crash or reboot (one loop
         # per PC, so no other Fletchery has it). Back to the queue; the next worker continues from its commits.
         if not self.dry_run:
@@ -100,11 +120,6 @@ class Engine:
                     st.running.pop(str(t.number), None)
                     self.ctx.log(f"#{t.number} was left running by an earlier Fletchery; back in the queue")
         by_pr = _tasks_by_pr(tasks, prs)
-        outcomes: list[Outcome] = []
-        jobs = []
-        job_tasks: list[tuple[int, int | None]] = []  # (task, pr) per job, to account for a job that crashed
-        prior_seen: dict[int, str | None] = {}
-        self.passing = True
         limit_paused = bool(st.paused_until) and now() < st.paused_until
         if not limit_paused and st.paused_until:
             st.paused_until, st.paused_reason = "", ""
@@ -116,37 +131,37 @@ class Engine:
                 st.signed_out = ""
             else:
                 st.signed_out = msg
-        paused = limit_paused or st.held or bool(st.signed_out)
+        paused = limit_paused or st.held or bool(st.signed_out) or draining
 
-        # 1. feedback on open PRs -> fixers
+        # 1. feedback on open PRs -> fixers (one per task at a time)
         for pr_num, task in by_pr.items():
+            if task.number in self.active:
+                continue
             pr = prs[pr_num]
             fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
-            if not fb:
+            if not fb or paused or self.free_slots() <= 0:
                 continue
             attempt = st.fix_attempts.get(str(pr_num), 0) + 1
-            if paused:
-                continue
             self.last_plan.append(f"fix PR #{pr_num} (task #{task.number}, attempt {attempt}): {fb[0].text[:80]}")
             if self.dry_run:
                 continue
-            prior_seen[pr_num] = st.seen.get(str(pr_num))
+            prior = st.seen.get(str(pr_num))
             st.seen[str(pr_num)] = max(f.at for f in fb)
             st.fix_attempts[str(pr_num)] = attempt
-            jobs.append(fix_pr(task, pr, fb, attempt, self.ctx))
-            job_tasks.append((task.number, pr_num))
+            self._start(fix_pr(task, pr, fb, attempt, self.ctx), task.number, pr_num, prior)
 
         # 2. ready tasks -> workers, within slots and budget
-        running_now = [t for t in tasks.values() if t.status == RUNNING and t.number in self.active]
         closed_deps = {d for t in tasks.values() for d in t.depends_on if d not in tasks and gh.issue_closed(d)}
         rd = readiness(tasks, closed_deps)
-        free = cfg.max_parallel - len(running_now) - len(jobs)
+        rd.ready = [t for t in rd.ready if t.number not in self.active]
         spent = st.spent.get(today(), 0.0)
         budget_left = spent < cfg.daily_budget_usd
-        chosen = pick(rd.ready, free) if budget_left and not paused else []
+        chosen = pick(rd.ready, self.free_slots()) if budget_left and not paused else []
         for t in rd.ready:
             if t in chosen:
                 self.last_plan.append(f"run #{t.number} {t.title} on {t.branch}")
+            elif draining:
+                rd.waiting[t.number] = "on hold: Fletchery is restarting on new code"
             elif st.signed_out:
                 rd.waiting[t.number] = "on hold: Claude needs signing in again"
             elif st.held:
@@ -157,96 +172,133 @@ class Engine:
                 rd.waiting[t.number] = "daily budget spent" if not budget_left else f"no free slot ({cfg.max_parallel})"
         if not self.dry_run:
             for t in chosen:
-                self.active.add(t.number)
                 st.running[str(t.number)] = now()
                 t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
-                jobs.append(run_task(t, self.ctx))
-                job_tasks.append((t.number, None))
+                self._start(run_task(t, self.ctx), t.number, None, None)
             st.save(self.state_dir / "state.json")
-            # The board fills in now, not when the slowest session of this pass ends.
-            self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
-            results = await asyncio.gather(*jobs, return_exceptions=True) if jobs else []
-            outcomes = []
-            for (n, pr_n), r in zip(job_tasks, results):
-                if isinstance(r, BaseException):  # a bug or a crash in one job must not lose the others' results
-                    self.ctx.log(f"#{n} crashed: {type(r).__name__}: {r}")
-                    try:
-                        gh.set_status(n, QUEUED if pr_n is None else PR)
-                    except Exception:
-                        pass
-                    r = Outcome(n, "requeue", f"crashed: {type(r).__name__}: {r}", pr_number=pr_n)
-                outcomes.append(r)
-            for o in outcomes:
-                st.running.pop(str(o.task), None)
-                self.active.discard(o.task)
-                st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
-                self._ledger(o)
-                if o.result == "fixed" and o.pr_number is not None:
-                    st.seen[str(o.pr_number)] = now()
-                if o.result == "signed_out":
-                    if o.pr_number is not None and o.pr_number in prior_seen:
-                        st.fix_attempts[str(o.pr_number)] = max(0, st.fix_attempts.get(str(o.pr_number), 1) - 1)
-                        if prior_seen[o.pr_number] is None:
-                            st.seen.pop(str(o.pr_number), None)
-                        else:
-                            st.seen[str(o.pr_number)] = prior_seen[o.pr_number]
-                    import auth
-                    st.signed_out = auth.check(cfg.auth, getattr(self.ctx.runtime, "saved_key", None))[1] or o.detail
-                if o.result == "limited":
-                    if o.pr_number is not None and o.pr_number in prior_seen:  # retry this fix later, uncounted
-                        st.fix_attempts[str(o.pr_number)] = max(0, st.fix_attempts.get(str(o.pr_number), 1) - 1)
-                        if prior_seen[o.pr_number] is None:
-                            st.seen.pop(str(o.pr_number), None)
-                        else:
-                            st.seen[str(o.pr_number)] = prior_seen[o.pr_number]
-                    until = datetime.now(timezone.utc) + timedelta(minutes=cfg.limit_backoff_minutes)
-                    st.paused_until = until.isoformat(timespec="seconds")
-                    st.paused_reason = o.detail
-        st.last_pass = now()
+        self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
+        self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
-        # 3. status
+    def free_slots(self) -> int:
+        return self.cfg.max_parallel - len(self.jobs)
+
+    def _start(self, coro, task_no: int, pr_no: int | None, prior_seen) -> None:
+        self.active.add(task_no)
+        job = asyncio.ensure_future(coro)
+        self.jobs[job] = (task_no, pr_no, prior_seen)
+
+    async def _wait_for_jobs(self, timeout: float | None) -> list[Outcome]:
+        """Wait until at least one session ends (or `timeout`), and account for every one that has."""
+        if not self.jobs:
+            return []
+        done, _ = await asyncio.wait(list(self.jobs), timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        return self._settle(done)
+
+    def _settle(self, done) -> list[Outcome]:
+        gh, cfg, st = self.ctx.gh, self.cfg, self.state
+        outcomes = []
+        for job in done:
+            n, pr_n, prior = self.jobs.pop(job)
+            self.active.discard(n)
+            exc = job.exception() if not job.cancelled() else asyncio.CancelledError()
+            if exc is not None:  # a bug or a crash in one job must not lose the others' results
+                self.ctx.log(f"#{n} crashed: {type(exc).__name__}: {exc}")
+                try:
+                    gh.set_status(n, QUEUED if pr_n is None else PR)
+                except Exception:
+                    pass
+                o = Outcome(n, "requeue", f"crashed: {type(exc).__name__}: {exc}", pr_number=pr_n)
+            else:
+                o = job.result()
+            outcomes.append(o)
+            st.running.pop(str(o.task), None)
+            st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
+            self._ledger(o)
+            if o.result == "fixed" and o.pr_number is not None:
+                st.seen[str(o.pr_number)] = now()
+            if o.result in ("signed_out", "limited") and pr_n is not None:  # retry this fix later, uncounted
+                st.fix_attempts[str(pr_n)] = max(0, st.fix_attempts.get(str(pr_n), 1) - 1)
+                if prior is None:
+                    st.seen.pop(str(pr_n), None)
+                else:
+                    st.seen[str(pr_n)] = prior
+            if o.result == "signed_out":
+                import auth
+                st.signed_out = auth.check(cfg.auth, getattr(self.ctx.runtime, "saved_key", None))[1] or o.detail
+            if o.result == "limited":
+                until = datetime.now(timezone.utc) + timedelta(minutes=cfg.limit_backoff_minutes)
+                st.paused_until = until.isoformat(timespec="seconds")
+                st.paused_reason = o.detail
+        self.recent = (outcomes + self.recent)[:20]
+        if not self.dry_run:
+            st.save(self.state_dir / "state.json")
+        return outcomes
+
+    def publish(self, outcomes: list[Outcome]) -> None:
+        """Rewrite the status issue and status.md, and refresh the board, from GitHub as it is now."""
+        gh, st = self.ctx.gh, self.state
+        st.last_pass = now()
+        tasks, prs = self._tasks, self._prs
         if not self.dry_run:
             tasks = gh.open_tasks()
             prs = {p.number: p for p in gh.open_prs()}
             _tasks_by_pr(tasks, prs)
-        text = self.status_text(tasks, prs, rd.waiting, outcomes)
-        self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, outcomes)
-        self.passing = False
+            for t in tasks.values():  # what this process runs right now shows as running, whatever GitHub says yet
+                if t.number in self.active:
+                    t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
+        waiting = {n: w for n, w in self._waiting.items() if n in tasks}
+        text = self.status_text(tasks, prs, waiting, outcomes)
+        self.snapshot = self.make_snapshot(tasks, prs, waiting, outcomes)
         if not self.dry_run:
             gh.write_status(text)
             (self.state_dir / "status.md").parent.mkdir(parents=True, exist_ok=True)
             (self.state_dir / "status.md").write_text(text, encoding="utf-8")
             st.save(self.state_dir / "state.json")
-        return outcomes
 
     async def run_forever(self, code_changed=None) -> None:
-        """Pass, wait, repeat. `code_changed()` is asked between passes, never during one: when it says yes the loop
-        returns, so the launcher can restart Fletchery on the new code without cutting a session off."""
+        """Keep every slot busy: dispatch, then wait for a session to end, a wake (Check now, Resume, a new task) or the
+        poll interval, and dispatch again. When `code_changed()` says yes, start nothing new, let running sessions
+        finish, and return, so the launcher restarts Fletchery on the new code without cutting a session off."""
         self._aloop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        draining = False
         while True:
+            if not draining and code_changed and code_changed():
+                draining = True
+                self.ctx.log("Fletchery's code changed on disk; restarting once running sessions finish")
             try:
-                await self.once()
-            except Exception as e:  # one bad pass (GitHub down, say) must not end the loop
+                self.dispatch(draining=draining)
+                self.publish([])
+            except Exception as e:  # one bad sync (GitHub down, say) must not end the loop
                 self.passing = False
-                self.ctx.log(f"pass failed: {type(e).__name__}: {e}")
-            if code_changed and code_changed():
-                self.ctx.log("Fletchery's code changed on disk; restarting between passes")
+                self.ctx.log(f"check failed: {type(e).__name__}: {e}")
+            if draining and not self.jobs:
                 return
             wait = self.cfg.poll_minutes * 60
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
                                                        timezone.utc).isoformat(timespec="seconds")
-            deadline = asyncio.get_running_loop().time() + wait
+            deadline = loop.time() + wait
             while True:
-                left = deadline - asyncio.get_running_loop().time()
+                left = deadline - loop.time()
                 if left <= 0:
                     break
-                try:
-                    await asyncio.wait_for(self._wake.wait(), timeout=min(left, 60))
+                waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs)
+                done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
+                if waits[0] not in done:
+                    waits[0].cancel()
+                ended = [j for j in done if j in self.jobs]
+                if ended:
+                    outcomes = self._settle(ended)
+                    try:
+                        self.publish(outcomes)
+                    except Exception as e:
+                        self.ctx.log(f"status update failed: {type(e).__name__}: {e}")
+                    break  # a slot is free: dispatch again now
+                if self._wake.is_set():
                     break
-                except asyncio.TimeoutError:
-                    if code_changed and code_changed():
-                        break
+                if not draining and code_changed and code_changed():
+                    break
             self._wake.clear()
 
     # ---- controls (called from the dashboard's thread) ----

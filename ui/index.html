@@ -141,7 +141,11 @@
   }
   .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 14px; }
   .now h2 { font-size: 18px; font-weight: 700; margin: 0; color: #fff; }
-  .now-head p { margin: 0; color: #A9B8C7; font-size: 14.5px; max-width: 80ch; }
+  .now-head p { margin: 0; color: #A9B8C7; font-size: 14.5px; max-width: 80ch; flex-basis: 100%; }
+  .wcount { display: inline-flex; align-items: center; gap: 8px; color: #DCE5EE; font-variant-numeric: tabular-nums; }
+  .wcount b { min-width: 1ch; text-align: center; font-size: 17px; }
+  .step.dark { background: transparent; color: #fff; border-color: #6F8296; }
+  .step.dark:hover { background: #fff; color: var(--ink); }
   .now-head p b { color: #DCE5EE; font-weight: 700; }
   .slot .what { color: #DCE5EE; font-size: 15px; line-height: 1.45; }
   .slot .branch { font-family: var(--mono); font-size: 12.5px; color: #8597A8; overflow-wrap: anywhere; }
@@ -316,6 +320,11 @@
   <section class="now" aria-labelledby="nowh">
     <div class="now-head">
       <h2 id="nowh">Workers</h2>
+      <span class="wcount" role="group" aria-label="Number of workers">
+        <button type="button" class="step dark" id="wDown" aria-label="One worker fewer">−</button>
+        <b id="wVal">2</b>
+        <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
+      </span>
       <p>Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
     <div class="slots" id="slots"></div>
@@ -525,6 +534,7 @@ function render(d) {
   renderLane(d);
   renderQueue(d);
   renderUsage(d);
+  renderWorkers(d);
   document.querySelectorAll(".lbl").forEach(e => e.textContent = d.label || "fletchery");
   $("projName").textContent = d.project ? "/ " + d.project : "";
   document.title = d.project ? `Fletchery: ${d.project}` : "Fletchery";
@@ -537,6 +547,14 @@ function render(d) {
 
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
+function renderWorkers(d) {
+  $("wVal").textContent = d.max_parallel;
+  $("wDown").disabled = d.max_parallel <= 1;
+  $("wUp").disabled = d.max_parallel >= 6;
+}
+async function setWorkers(v) {
+  try { await post("/api/workers", {max_parallel: v}); await refresh(); } catch (e) { alert(e.message); }
+}
 function renderUsage(d) {
   const plan = d.auth !== "api";
   $("usage").innerHTML = `About <b>$${(d.spent_today || 0).toFixed(2)}</b> today${plan ? " (estimate)" : ""} of a`;
@@ -725,6 +743,8 @@ $("hold").onclick = async () => {
   try { await post(last && last.held ? "/api/resume" : "/api/pause"); await refresh(); }
   catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
+$("wDown").onclick = () => setWorkers(last.max_parallel - 1);
+$("wUp").onclick = () => setWorkers(last.max_parallel + 1);
 $("capDown").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.max(0, v - CAP_STEP(v - 1))); };
 $("capUp").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.min(1000, v + CAP_STEP(v))); };
 async function switchAuth(to) {

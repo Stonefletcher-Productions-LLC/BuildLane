@@ -35,7 +35,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --- copy the app ---
-Copy-Item (Join-Path $PSScriptRoot 'bin\*') $Dest -Force
+# Only files that changed. A file in use (Fletchery.exe and its DLLs while the app is open) cannot be overwritten but can
+# be renamed: move it aside and copy the new one in; the window keeps running the old one until it is reopened.
+Get-ChildItem $Dest -Filter '*.old' -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+$Reopen = $false
+foreach ($F in Get-ChildItem (Join-Path $PSScriptRoot 'bin') -File) {
+    $T = Join-Path $Dest $F.Name
+    if ((Test-Path $T) -and (Get-FileHash $T).Hash -eq (Get-FileHash $F.FullName).Hash) { continue }
+    try { Copy-Item $F.FullName $T -Force -ErrorAction Stop }
+    catch {
+        Move-Item $T "$T.$([guid]::NewGuid().ToString('N').Substring(0, 8)).old" -Force
+        Copy-Item $F.FullName $T -Force
+        $Reopen = $true
+    }
+}
 foreach ($Part in 'fletchery', 'ui') {
     $Target = Join-Path $Dest $Part
     New-Item -ItemType Directory -Force $Target | Out-Null
@@ -72,4 +85,5 @@ if (-not $NoShortcuts) {
     }
 }
 Write-Host "Installed Fletchery in $Dest (Python $Ver at $Python; profile $($Settings.profile))"
+if ($Reopen) { Write-Host 'Fletchery.exe was open: quit it from the tray and open it again to use the new window. The backend and screens are already updated.' }
 if ($Start) { Start-Process (Join-Path $Dest 'Fletchery.exe') }

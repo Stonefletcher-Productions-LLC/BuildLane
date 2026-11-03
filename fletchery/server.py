@@ -92,6 +92,20 @@ class Dashboard:
         self.fm.wake()
         return {"daily_budget": v}
 
+    def set_workers(self, data: dict) -> dict:
+        try:
+            v = int(data.get("max_parallel"))
+        except (TypeError, ValueError):
+            raise ValueError("The number of workers is a whole number.")
+        if not 1 <= v <= 6:
+            raise ValueError("Workers go from 1 to 6. On a Claude plan, more workers use your plan's limits faster.")
+        self.fm.cfg.save(max_parallel=v)
+        if self.fm.snapshot:
+            self.fm.snapshot["max_parallel"] = v
+        self.fm.ctx.log(f"workers set to {v} from the app")
+        self.fm.wake()  # more workers start now; fewer: running ones finish, no new one starts until below the limit
+        return {"max_parallel": v}
+
     def set_auth(self, data: dict) -> dict:
         import auth
         want = str(data.get("auth", ""))
@@ -179,6 +193,8 @@ class Dashboard:
                         return self._json(200, dash.add_task(data))
                     if self.path == "/api/budget":
                         return self._json(200, dash.set_budget(data))
+                    if self.path == "/api/workers":
+                        return self._json(200, dash.set_workers(data))
                     if self.path == "/api/auth":
                         return self._json(200, dash.set_auth(data))
                     if self.path in ("/api/lane/pause", "/api/lane/resume"):

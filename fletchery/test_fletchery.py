@@ -571,4 +571,48 @@ try:
 finally:
     auth_mod.check = real_check2
 
+# ---- slots refill as soon as a session ends (the app's loop), not when the whole batch ends ----
+import time as _time
+ctx, tmp = ctx_with({n: T(n, f"t{n}", created=f"2026-11-01T00:00:{n:02d}Z") for n in range(1, 5)},
+                    cfg=Config(max_parallel=2, daily_budget_usd=60, base_branch="Test-Staging"))
+fm = Foreman(ctx, tmp / "state")
+fm.cfg.poll_minutes = 10
+slow = {1: 0.6, 2: 0.05, 3: 0.05, 4: 0.05}
+starts = {}
+orig_run = ctx.runtime.run
+async def timed(role, prompt, cwd, budget, turns, on_action=None):
+    import re as _re
+    n = int(_re.search(r"Issue #(\d+)", prompt).group(1))
+    if role == "worker":
+        starts.setdefault(n, _time.monotonic())
+        await asyncio.sleep(slow[n])
+    return await orig_run(role, prompt, cwd, budget, turns, on_action=on_action)
+ctx.runtime.run = timed
+done_flag = {"n": 0}
+def changed():  # stop once all four have PRs
+    return all(ctx.gh.tasks[n].status == PR for n in range(1, 5))
+asyncio.run(asyncio.wait_for(fm.run_forever(code_changed=changed), timeout=20))
+assert all(ctx.gh.tasks[n].status == PR for n in range(1, 5))
+assert starts[3] < starts[1] + slow[1], "task 3 started in task 2's freed slot while task 1 was still running"
+assert fm.jobs == {} and fm.active == set()
+
+# ---- the worker count is set from the app, saved, and limited ----
+cfgdir2 = Path(tempfile.mkdtemp()); cf2 = cfgdir2 / "p.json"
+cf2.write_text(_json.dumps({"name": "P", "repo": "a/b", "statusFile": "", "workers": {"maxParallel": 2}}), encoding="utf-8")
+ctx, tmp = ctx_with({1: T(1, "a")}, cfg=Config.load(cf2))
+ctx.live = Live()
+fm, out = run_once(ctx, tmp)
+with socket.socket() as so:
+    so.bind(("127.0.0.1", 0)); port = so.getsockname()[1]
+dash = Dashboard(fm, port); dash.start()
+try:
+    assert call("/api/workers", "POST", {"max_parallel": 3}, token=dash.token)[0] == 200
+    assert fm.cfg.max_parallel == 3 and _json.loads(cf2.read_text())["workers"]["maxParallel"] == 3, "saved in the profile's workers block"
+    assert _json.loads(call("/api/status")[1])["max_parallel"] == 3
+    assert call("/api/workers", "POST", {"max_parallel": 0}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 7}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
+finally:
+    dash.stop()
+
 print("RESULT: PASS (Fletchery engine checks)")
