@@ -25,6 +25,8 @@
     POST /api/agents/auth     {name, mode: plan|key}: run that agent on its plan sign-in or on its stored API key
     POST /api/keys/set        {name, value}: store an API key in Windows Credential Manager (never shown again)
     POST /api/keys/clear      {name}
+POST /api/issue/get       {number}: the issue and its comments (the Needs you reader)
+POST /api/issue/reply     {number, body, requeue=true}: comment on it and put it back in the queue
 
 Every POST needs the header X-Fletchery-Token: a random value made at start and written only into the served page, so a
 web page from anywhere else cannot press the buttons. Requests whose Host is not this machine are refused (DNS
@@ -98,6 +100,45 @@ class Dashboard:
         self.fm.ctx.log(f"#{n} added from the dashboard: {title}")
         self.fm.wake()
         return {"number": n, "url": f"https://github.com/{self.fm.cfg.repo}/issues/{n}"}
+
+    @staticmethod
+    def _issue_number(data: dict) -> int:
+        try:
+            n = int(data.get("number"))
+        except (TypeError, ValueError):
+            raise ValueError("Which issue? Give its number.")
+        if n <= 0:
+            raise ValueError("Which issue? Give its number.")
+        return n
+
+    def issue_get(self, data: dict) -> dict:
+        """The issue and its comments, for the Needs you reader."""
+        return self.fm.ctx.gh.issue_thread(self._issue_number(data))
+
+    def issue_reply(self, data: dict) -> dict:
+        """Answer a task that needs you: post the comment (if any) and put the task back in the queue straight away, so
+        the next worker reads the answer with the issue (pipeline gives workers every comment people left)."""
+        n = self._issue_number(data)
+        body = str(data.get("body", "")).strip()
+        requeue = data.get("requeue", True) is not False
+        if len(body) > 20000:
+            raise ValueError("The answer is too long (20,000 characters at most).")
+        if not body and not requeue:
+            raise ValueError("Write an answer, or re-queue it.")
+        gh = self.fm.ctx.gh
+        if body:
+            gh.comment(n, body)
+        if requeue:
+            import graph
+            gh.set_status(n, graph.QUEUED)
+        self.fm.ctx.log(f"#{n} " + ("answered and re-queued" if body and requeue else "answered" if body else "re-queued")
+                        + " from the dashboard")
+        if requeue:
+            for t in (self.fm.snapshot or {}).get("tasks", []):  # leave Needs you now, not at the next pass
+                if t.get("number") == n:
+                    t["status"], t["why"] = graph.QUEUED, "ready"
+            self.fm.wake()
+        return {"number": n, "commented": bool(body), "requeued": requeue}
 
     def set_budget(self, data: dict) -> dict:
         try:
@@ -498,7 +539,8 @@ class Dashboard:
                               "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,
-                              "/api/keys/clear": dash.clear_key}
+                              "/api/keys/clear": dash.clear_key, "/api/issue/get": dash.issue_get,
+                              "/api/issue/reply": dash.issue_reply}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))
                     if self.path == "/api/agents/check":
