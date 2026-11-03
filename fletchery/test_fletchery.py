@@ -532,7 +532,13 @@ asyncio.run(asyncio.wait_for(fm.run_forever(code_changed=lambda: next(flips, Tru
 assert ctx.gh.tasks[1].status == PR, "the pass that was running finished before the loop returned"
 import cli as fmod2
 fp = fmod2.code_fingerprint()
-assert "loop.py:" in fp and "worker.md:" in fp and fp == fmod2.code_fingerprint()
+assert len(fp) == 64 and fp == fmod2.code_fingerprint()
+# Re-dating the same code (a reinstall, a checkout) is not a code change; editing a file is.
+_loop = Path(fmod2.__file__).parent / "loop.py"
+_st = _loop.stat()
+os.utime(_loop, (_st.st_atime, _st.st_mtime + 120))
+assert fmod2.code_fingerprint() == fp, "re-dated files must not look like new code"
+os.utime(_loop, (_st.st_atime, _st.st_mtime))
 
 # ---- check scripts a task folder lacks run from Foreman's own checkout, on the task folder ----
 import gates as g2

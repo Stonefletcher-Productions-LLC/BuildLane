@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -72,16 +73,17 @@ RESTART_EXIT = 75  # the app (or Start-Fletchery.ps1) starts Fletchery again whe
 
 
 def code_fingerprint() -> str:
-    """Size and time of every file Fletchery runs from; a change means new code was pulled."""
+    """What every file Fletchery runs from contains; a change means new code was installed. Contents, not dates:
+    reinstalling or checking out the same code re-dates the files, and that must not drain the workers for nothing."""
     here = Path(__file__).parent
-    parts = []
+    digest = hashlib.sha256()
     for f in sorted(list(here.glob("*.py")) + list((here / "roles").glob("*.md"))):  # the UI is read per request
         try:
-            st = f.stat()
-            parts.append(f"{f.name}:{st.st_size}:{int(st.st_mtime)}")
+            data = f.read_bytes()
         except OSError:
-            pass
-    return "|".join(parts)
+            continue
+        digest.update(f.name.encode() + b"\0" + hashlib.sha256(data).digest())
+    return digest.hexdigest()
 
 
 def take_lock(state_dir: Path) -> Path:
