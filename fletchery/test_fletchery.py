@@ -899,6 +899,7 @@ led = [_json_mod.loads(l) for l in (tmp / "state" / "ledger.jsonl").read_text().
 assert led[-1]["agent"] == "deepseek-pro" and len(led[-1]["attempts"]) == 2
 assert fm.stats().rate("deepseek", "easy") == (0.0, 1) and fm.stats().rate("deepseek-pro", "easy") == (1.0, 1)
 assert fm.snapshot["agents"]["multi"] and fm.snapshot["tasks"][0]["agent"] == "deepseek-pro"
+assert fm.snapshot["agents"]["spent_today"] == {"deepseek": 1.0, "deepseek-pro": 1.0, "claude": 1.0}, fm.snapshot["agents"]["spent_today"]
 assert "## Agents" in ctx.gh.status_text and "**codex**" in ctx.gh.status_text
 
 # the strongest fails too: blocked, naming every agent tried
@@ -1010,5 +1011,24 @@ dash.add_agent({"name": "kimi", "kind": "opencode", "model": "opencode-go/kimi-k
 assert "kimi" in ctx.agents.specs and any(a["name"] == "kimi" for a in _json_mod.loads(prof.read_text())["workers"]["agents"])
 dash.remove_agent({"name": "kimi"})
 assert "kimi" not in ctx.agents.specs
+from agents import AgentSpec as _Spec  # noqa: E402
+assert _Spec("c", "claude").api_key_name == "ANTHROPIC_API_KEY" and _Spec("x", "codex").api_key_name == "OPENAI_API_KEY"
+assert _Spec("d", "opencode", model="deepseek/deepseek-chat").api_key_name == "DEEPSEEK_API_KEY"
+# each agent runs on its plan sign-in or its stored API key, switched from its card
+try:
+    dash.set_agent_auth({"name": "codex", "mode": "key"})
+    raise AssertionError("switched to a key that isn't stored")
+except ValueError:
+    pass
+ctx.agents.specs["codex"].key_env = ["OPENAI_API_KEY"]
+_keys.set_key("OPENAI_API_KEY", "sk-openai-abcd1234")
+dash.set_agent_auth({"name": "codex", "mode": "key"})
+assert ctx.agents.specs["codex"].auth == "key" and ctx.agents.specs["codex"].api_key_name == "OPENAI_API_KEY"
+assert next(a for a in _json_mod.loads(prof.read_text())["workers"]["agents"] if a["name"] == "codex")["auth"] == "key"
+row = next(a for a in ctx.agents.view() if a["name"] == "codex")
+assert row["auth"] == "key" and row["api_key"] == "OPENAI_API_KEY" and "sk-openai" not in _json_mod.dumps(ctx.agents.view())
+dash.set_agent_auth({"name": "codex", "mode": "plan"})
+assert ctx.agents.specs["codex"].auth == "plan"
+_keys.delete("OPENAI_API_KEY")
 
 print("RESULT: PASS (Fletchery engine checks)")

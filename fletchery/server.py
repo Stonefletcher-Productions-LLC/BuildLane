@@ -14,6 +14,7 @@
     POST /api/agents/check    check every agent's sign-in now
     POST /api/agents/login    {name}: open that agent's own sign-in in a console window on this PC
     POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
+    POST /api/agents/auth     {name, mode: plan|key}: run that agent on its plan sign-in or on its stored API key
     POST /api/keys/set        {name, value}: store an API key in Windows Credential Manager (never shown again)
     POST /api/keys/clear      {name}
 
@@ -145,7 +146,8 @@ class Dashboard:
         out = []
         for spec in pool.specs.values():
             a = raw.get(spec.name, {"name": spec.name})
-            a.update({"kind": spec.kind, "tier": spec.tier, "vendor": spec.vendor, "enabled": spec.enabled})
+            a.update({"kind": spec.kind, "tier": spec.tier, "vendor": spec.vendor, "enabled": spec.enabled,
+                      "auth": spec.auth})
             if spec.model:
                 a["model"] = spec.model
             if spec.key_env:
@@ -223,6 +225,38 @@ class Dashboard:
         msg = clis.open_login(pool.specs[name])
         pool.accounts.pop(name, None)
         return {"message": msg + " Press Check sign-ins when you are done."}
+
+    def set_agent_auth(self, data: dict) -> dict:
+        import keys
+        pool = self._pool()
+        name, mode = str(data.get("name", "")), str(data.get("mode", ""))
+        if name not in pool.specs:
+            raise ValueError(f"No agent called {name}.")
+        if mode not in ("plan", "key"):
+            raise ValueError("Run on plan or key.")
+        spec = pool.specs[name]
+        if mode == "key":
+            key = spec.api_key_name
+            if not key:
+                raise ValueError(f"Fletchery doesn't know which key {name}'s model takes. Add it under Keys it needs.")
+            stored = keys.get(key)
+            if not stored and spec.kind == "claude":
+                import auth
+                stored = auth.api_key()
+            if not stored:
+                raise ValueError(f"Store {key} first (API keys, below), then switch {name} to it.")
+        spec.auth = mode
+        pool._runtimes.pop(name, None)  # the next session starts on the new sign-in; running ones finish
+        if spec.kind == "claude":
+            rt = self.fm.ctx.runtime
+            if hasattr(rt, "set_auth"):
+                rt.set_auth("api" if mode == "key" else "subscription")
+            self.fm.cfg.save(auth="api" if mode == "key" else "subscription")
+        pool.accounts.pop(name, None)
+        self._save_agents()
+        self.fm.check_accounts(force=True)
+        self.fm.ctx.log(f"agent {name} now runs on {'its API key' if mode == 'key' else 'its plan sign-in'} (from the dashboard)")
+        return {"name": name, "mode": mode}
 
     def set_escalate(self, data: dict) -> dict:
         on = bool(data.get("on"))
@@ -325,7 +359,7 @@ class Dashboard:
                         return self._json(200, dash.set_auth(data))
                     routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
-                              "/api/agents/escalate": dash.set_escalate, "/api/keys/set": dash.set_key,
+                              "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))

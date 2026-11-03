@@ -48,6 +48,12 @@ class AgentSpec:
     roles: list = None              # roles it may take; None = all
     timeout_minutes: dict = None    # role -> minutes, for CLIs without a turn limit
     key_env: list = None            # stored keys (keys.py) this agent's sessions get, e.g. ["DEEPSEEK_API_KEY"]
+    auth: str = "plan"              # plan: the CLI's own sign-in (Claude plan, ChatGPT, OpenCode Go); key: an API key
+
+    @property
+    def api_key_name(self) -> str:
+        """The stored key this agent runs on when `auth` is key."""
+        return api_key_name(self)
 
     @property
     def label(self) -> str:
@@ -59,8 +65,23 @@ class AgentSpec:
 
 _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", "vendor": "vendor", "enabled": "enabled",
               "maxParallel": "max_parallel", "command": "command", "roles": "roles", "timeoutMinutes": "timeout_minutes",
-              "keyEnv": "key_env"}
+              "keyEnv": "key_env", "auth": "auth"}
 DEFAULT_VENDOR = {"claude": "anthropic", "codex": "openai"}
+
+
+# OpenCode provider -> the key its API takes
+PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY", "moonshotai": "MOONSHOT_API_KEY",
+                 "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+
+
+def api_key_name(spec: "AgentSpec") -> str:
+    if spec.key_env:
+        return spec.key_env[0]
+    if spec.kind == "claude":
+        return "ANTHROPIC_API_KEY"
+    if spec.kind == "codex":
+        return "OPENAI_API_KEY"
+    return PROVIDER_KEYS.get((spec.model or "").split("/")[0], "")
 
 
 def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
@@ -373,7 +394,8 @@ class AgentPool:
                    "enabled": s.enabled, "busy": self.busy.get(s.name, 0), "max_parallel": s.max_parallel,
                    "paused_until": paused["until"] if paused else "", "paused_reason": paused["reason"] if paused else "",
                    "signed_in": acct.get("ok"), "account": acct.get("message", ""), "checked": acct.get("at", ""),
-                   "key_env": list(s.key_env or []), "available": self.available(s.name)}
+                   "key_env": list(s.key_env or []), "available": self.available(s.name),
+                   "auth": s.auth, "api_key": s.api_key_name}
             if stats:
                 for lv in LEVELS:
                     r, k = stats.rate(s.name, lv)

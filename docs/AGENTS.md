@@ -38,6 +38,7 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
 | `enabled` | Off means nothing new goes to it. The **On/Off** switch on the dashboard changes this |
 | `maxParallel` | Optional: how many tasks this agent may run at once |
 | `keyEnv` | Optional: stored API keys this agent's sessions receive, such as `["DEEPSEEK_API_KEY"]` |
+| `auth` | `plan` (default): the CLI's own sign-in (Claude plan, ChatGPT for Codex, OpenCode's sign-in). `key`: the agent's API key from the key store instead, billed per token. Switch it on the agent's card ("Runs on"). |
 | `timeoutMinutes` | Optional, for Codex and OpenCode, which have no turn limit: `{"worker": 60, "reviewer": 20}` |
 
 ## How a task gets its agent
