@@ -354,6 +354,18 @@ try:
     assert call("/api/task", "POST", {"title": ""}, token=dash.token)[0] == 400
     assert call("/api/task", "POST", {"title": "x", "depends": ["abc"]}, token=dash.token)[0] == 400
     assert call("/api/run-now", "POST", {}, token=dash.token)[0] == 200
+    # Needs you: read the issue here, answer, and Send comments and re-queues at once
+    ctx.gh.set_status(3, BLOCKED); ctx.gh.notes[3] = [("alex", "2026-11-03T20:00:00Z", "an earlier note")]
+    code, th = call("/api/issue/get", "POST", {"number": 3}, token=dash.token); th = _json.loads(th)
+    assert code == 200 and th["number"] == 3 and th["comments"][0]["body"] == "an earlier note", th
+    code, r = call("/api/issue/reply", "POST", {"number": 3, "body": "Use the station-aware target."}, token=dash.token)
+    assert code == 200 and _json.loads(r)["requeued"] and ctx.gh.tasks[3].status == QUEUED
+    assert ctx.gh.comments[3][-1] == "Use the station-aware target."
+    ctx.gh.set_status(3, BLOCKED)
+    assert call("/api/issue/reply", "POST", {"number": 3, "body": ""}, token=dash.token)[0] == 200 and ctx.gh.tasks[3].status == QUEUED, "re-queue without answering"
+    assert len(ctx.gh.comments[3]) == 1, "no empty comment posted"
+    assert call("/api/issue/reply", "POST", {"number": "x"}, token=dash.token)[0] == 400
+    assert call("/api/issue/reply", "POST", {"number": 3, "body": "hi"})[0] == 403, "needs the page's token"
     code, ico = call("/favicon.ico"); assert code == 200 and ico[:4] == b"\x00\x00\x01\x00"
     assert call("/api/nope", "POST", {}, token=dash.token)[0] == 404 and call("/nope")[0] == 404
 finally:

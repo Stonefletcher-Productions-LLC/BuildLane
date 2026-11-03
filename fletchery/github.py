@@ -106,6 +106,16 @@ class GitHub:
         items = self.api(f"repos/{self.repo}/issues/{number}/comments?per_page=100", paginate=True) or []
         return [(c["user"]["login"], c["created_at"], c.get("body") or "") for c in items if not _is_foreman(c.get("body") or "")]
 
+    def issue_thread(self, number: int) -> dict:
+        """The issue as a person reads it: title, body, labels and every comment (Fletchery's own marked), for the
+        dashboard's reader so an answer doesn't need a trip to GitHub."""
+        it = self.api(f"repos/{self.repo}/issues/{number}") or {}
+        items = self.api(f"repos/{self.repo}/issues/{number}/comments?per_page=100", paginate=True) or []
+        return {"number": number, "title": it.get("title", ""), "body": it.get("body") or "", "state": it.get("state", ""),
+                "labels": [l["name"] for l in it.get("labels", [])], "url": it.get("html_url", ""),
+                "comments": [{"author": c["user"]["login"], "at": c["created_at"], "body": c.get("body") or "",
+                              "fletchery": _is_foreman(c.get("body") or "")} for c in items]}
+
     def create_issue(self, title: str, body: str, labels: list[str]) -> int:
         it = self.api(f"repos/{self.repo}/issues", "POST", {"title": title, "body": body, "labels": labels})
         return it["number"]
@@ -262,6 +272,13 @@ class FakeGitHub:
 
     def issue_notes(self, number):
         return list(self.notes.get(number, []))
+
+    def issue_thread(self, number):
+        t = self.tasks[number]
+        notes = [{"author": a, "at": at, "body": b, "fletchery": False} for a, at, b in self.notes.get(number, [])]
+        mine = [{"author": "fletchery", "at": _now(), "body": c, "fletchery": True} for c in self.comments.get(number, [])]
+        return {"number": number, "title": t.title, "body": t.body, "state": "closed" if t.closed else "open",
+                "labels": list(t.labels), "url": f"https://github.com/example/repo/issues/{number}", "comments": notes + mine}
 
     def create_issue(self, title, body, labels):
         n = self._next_issue

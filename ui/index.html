@@ -277,6 +277,22 @@
   /* ---- settings ---- */
   dialog.wide { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; overflow: auto; }
   dialog.wide form { padding: 22px 26px; }
+  /* Needs you reader: the issue and its comments, an answer box, Send = comment + re-queue */
+  .col li button.t { all: unset; cursor: pointer; font-weight: 700; display: block; color: var(--ink); }
+  .col li button.t:hover .ttl, .col li button.t:focus-visible .ttl { text-decoration: underline; }
+  .col li button.t:focus-visible { outline: 3px solid var(--lane); outline-offset: 2px; border-radius: 4px; }
+  #nyDlg { width: min(820px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+  #nyDlg .ny-sub { margin: 0 0 12px; font-size: 14px; color: var(--muted); }
+  #nyDlg .ny-thread { border: 1px solid #E3E9EF; border-radius: var(--r-lg); max-height: 46vh; overflow: auto; padding: 4px 14px; }
+  #nyDlg .ny-c { padding: 10px 0; border-top: 1px solid #E3E9EF; }
+  #nyDlg .ny-c:first-child { border-top: 0; }
+  #nyDlg .ny-c .who { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  #nyDlg .ny-c .who b { color: var(--ink); }
+  #nyDlg .ny-c.fl { background: var(--hold-bg); margin: 0 -14px; padding: 10px 14px; }
+  #nyDlg .txt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; }
+  #nyDlg .txt code { background: #EEF2F6; padding: 0 3px; border-radius: 3px; }
+  #nyDlg details.ny-task summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+  #nyDlg textarea { min-height: 120px; }
   .set-tabs { display: flex; gap: 6px; margin: 10px 0 14px; border-bottom: 1.5px solid var(--rule); }
   .set-tabs button { border: 0; background: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 12px; font-weight: 600; color: var(--muted); }
   .set-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent, #0a7d55); }
@@ -571,6 +587,22 @@
   </form>
 </dialog>
 
+<dialog id="nyDlg" aria-labelledby="nyh">
+  <form id="nyForm" method="dialog">
+    <h2 id="nyh">Needs you</h2>
+    <p class="ny-sub" id="nySub"></p>
+    <div class="ny-thread" id="nyThread" tabindex="0" aria-label="The issue and its comments">Loading…</div>
+    <label for="ny-body">Your answer <small>posted on the issue as a comment; the next worker reads it</small></label>
+    <textarea id="ny-body" placeholder="Answer the question above. Ctrl+Enter sends."></textarea>
+    <div class="row">
+      <span class="msg" id="ny-msg" role="alert"></span>
+      <button type="button" id="ny-cancel">Close</button>
+      <button type="button" id="ny-requeue">Re-queue without answering</button>
+      <button type="submit" class="primary" id="ny-send">Send and re-queue</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="setDlg" class="wide" aria-labelledby="setdh">
   <form id="setForm" method="dialog">
     <h2 id="setdh">Settings</h2>
@@ -852,7 +884,7 @@ function render(d) {
         why = a ? `${esc(a.stage)}, started ${ago(a.since)} ago` : (t.since ? "Started " + ago(t.since) + " ago" : "");
       }
       if (k === "pr") why = t.pr ? `<a href="${esc(t.pr_url)}" target="_blank" rel="noopener">PR #${t.pr}</a>` + (t.fix_attempts ? `, fixed ${t.fix_attempts}×` : "") : "PR open";
-      if (k === "blocked") why = "Answer on the issue, then re-queue it";
+      if (k === "blocked") return `<li><button type="button" class="t" data-ny="${t.number}"><span class="num">#${t.number}</span> <span class="ttl">${esc(t.title)}</span></button><span class="why">Click to read and answer. Send re-queues it.</span></li>`;
       return `<li><a class="t" href="${esc(t.url)}" target="_blank" rel="noopener"><span class="num">#${t.number}</span> ${esc(t.title)}</a><span class="why">${why}</span></li>`;
     }).join("") : `<li class="empty">${empty[k]}</li>`;
   }
@@ -1495,6 +1527,47 @@ $("taskForm").onsubmit = async ev => {
   } catch (e) { $("f-msg").textContent = e.message; }
   finally { save.disabled = false; }
 };
+
+// Needs you: read the issue and its comments here, answer, and Send posts the answer and re-queues the task at once.
+let nyNum = 0;
+function nyText(t) {  // plain text with `code` and **bold**; everything else escaped
+  return esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+}
+async function openNeedsYou(n) {
+  nyNum = n;
+  const t = (last && last.tasks || []).find(x => x.number === n) || {};
+  $("nyh").textContent = `#${n} ${t.title || ""}`;
+  $("nySub").innerHTML = `<a href="${esc(t.url || (last.repo_url + "/issues/" + n))}" target="_blank" rel="noopener">Open on GitHub</a>`;
+  $("nyThread").textContent = "Loading…"; $("ny-msg").textContent = "";
+  $("nyDlg").showModal(); $("ny-body").focus();
+  try {
+    const d = await post("/api/issue/get", {number: n});
+    if (nyNum !== n) return;
+    const who = c => `<div class="who"><b>${esc(c.fletchery ? "Fletchery" : c.author)}</b> · ${esc(stamp(c.at))}</div>`;
+    $("nyThread").innerHTML =
+      `<details class="ny-task"><summary>The task</summary><div class="txt">${nyText(d.body || "(no description)")}</div></details>` +
+      d.comments.map(c => `<div class="ny-c${c.fletchery ? " fl" : ""}">${who(c)}<div class="txt">${nyText(c.body)}</div></div>`).join("");
+    const lastFl = [...$("nyThread").querySelectorAll(".ny-c.fl")].pop();
+    if (lastFl) lastFl.scrollIntoView({block: "start"});
+  } catch (e) { $("nyThread").textContent = "Couldn't load the issue: " + e.message; }
+}
+async function nyReply(requeueOnly) {
+  const body = requeueOnly ? "" : $("ny-body").value.trim();
+  if (!requeueOnly && !body) { $("ny-msg").textContent = "Write an answer first, or use Re-queue without answering."; return; }
+  const btns = [$("ny-send"), $("ny-requeue")]; btns.forEach(b => b.disabled = true); $("ny-msg").textContent = "";
+  try {
+    await post("/api/issue/reply", {number: nyNum, body, requeue: true});
+    $("ny-body").value = ""; $("nyDlg").close();
+    $("state").innerHTML = `#${nyNum} ${body ? "answered and " : ""}re-queued. Checking for work…`;
+    refresh();
+  } catch (e) { $("ny-msg").textContent = e.message; }
+  finally { btns.forEach(b => b.disabled = false); }
+}
+$("c-blocked").addEventListener("click", e => { const b = e.target.closest("[data-ny]"); if (b) openNeedsYou(+b.dataset.ny); });
+$("ny-cancel").onclick = () => $("nyDlg").close();
+$("ny-requeue").onclick = () => nyReply(true);
+$("nyForm").onsubmit = ev => { ev.preventDefault(); nyReply(false); };
+$("ny-body").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); nyReply(false); } });
 
 // ?open=week|add|settings|accounts|projects opens that dialog, ?scores=<agent> opens that agent's scores, and #<section id> scrolls to it, once the first data is in (docs screenshots).
 const params = new URLSearchParams(location.search);
