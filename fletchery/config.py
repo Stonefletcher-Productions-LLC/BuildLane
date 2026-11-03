@@ -40,6 +40,8 @@ WORKER_KEYS = {
     "workerMaxTurns": "worker_max_turns", "reviewerMaxTurns": "reviewer_max_turns", "fixerMaxTurns": "fixer_max_turns",
     "plannerMaxTurns": "planner_max_turns", "fixerAttempts": "fixer_attempts", "codeFreeze": "code_freeze",
     "gateTimeoutSeconds": "gate_timeout_s", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
+    "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
+    "watchMinutes": "watch_minutes",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -78,6 +80,11 @@ class Config:
     code_freeze: bool = False                # True tells every worker and fixer the project is under a code freeze
     gate_timeout_s: int = 900
     plugin: str = ""                         # a Claude Code plugin folder, relative to the project root
+    # the lane watcher (watcher.py): failed builds outside workers' PRs become tasks
+    watch_failures: bool = True
+    runner_root: str = ""                    # the local runner's run store; "" = from its runner.json, else GitHub Actions
+    watch_skip_workflows: list = None        # workflow file names never filed (e.g. advisory ones)
+    watch_minutes: float = 5
     # the Build Lane, from the profile; "" hides the panel
     lane_status_file: str = ""
     lane_pause_file: str = ""
