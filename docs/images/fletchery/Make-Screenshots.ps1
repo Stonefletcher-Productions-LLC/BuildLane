@@ -24,9 +24,9 @@ try {
     Start-Sleep 4  # the two demo workers get going, so the Workers strip has something to show
     $Shots = @(
         @{ Name = 'overview.png'; Path = ''; W = 1400; H = 1000 },
-        @{ Name = 'queue.png'; Path = '#queue'; W = 1400; H = 520 },
-        @{ Name = 'workers.png'; Path = '#workers'; W = 1400; H = 480 },
-        @{ Name = 'build-lane.png'; Path = '#lane'; W = 1400; H = 520 },
+        @{ Name = 'queue.png'; Path = '?only=queue'; W = 1400; H = 640 },
+        @{ Name = 'workers.png'; Path = '?only=workers'; W = 1400; H = 460 },
+        @{ Name = 'build-lane.png'; Path = '?only=lane'; W = 1400; H = 520 },
         @{ Name = 'usage-week.png'; Path = '?open=week'; W = 1400; H = 900 },
         @{ Name = 'add-task.png'; Path = '?open=add'; W = 1400; H = 900 },
         @{ Name = 'phone.png'; Path = ''; W = 420; H = 1500 }

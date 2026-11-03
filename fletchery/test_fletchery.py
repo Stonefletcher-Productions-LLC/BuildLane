@@ -325,6 +325,7 @@ def call(path, method="GET", body=None, token=None, host=None):
 try:
     code, page = call("/")
     assert code == 200 and dash.token.encode() in page and b"__FLETCHERY_TOKEN__" not in page
+    assert call("/?open=week")[0] == 200 and call("/api/status?x=1")[0] == 200, "a query string does not change the page"
     code, st = call("/api/status"); st = _json.loads(st)
     assert code == 200 and {t["number"]: t["status"] for t in st["tasks"]} == {1: "pr", 2: "queued"}
     assert st["tasks"][1]["why"] == "waits for #1" and st["max_parallel"] == 4 and st["history"][0]["task"] == 1

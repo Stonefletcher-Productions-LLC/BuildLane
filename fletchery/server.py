@@ -156,6 +156,7 @@ class Dashboard:
                 self._send(code, json.dumps(obj).encode("utf-8"))
 
             def do_GET(self):
+                self.path = self.path.split("?", 1)[0].split("#", 1)[0]  # the page reads its own query (?open=, ?only=)
                 if not self._host_ok():
                     return self._json(403, {"error": "Open the dashboard at http://127.0.0.1:%d" % dash.port})
                 if self.path in ("/", "/index.html"):

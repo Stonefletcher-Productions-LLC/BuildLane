@@ -785,6 +785,12 @@ $("taskForm").onsubmit = async ev => {
 
 // ?open=week|add opens that dialog, and #<section id> scrolls to it, once the first data is in (docs screenshots).
 const params = new URLSearchParams(location.search);
+// ?only=queue|workers|lane|board shows just that part (the docs' section screenshots)
+const only = params.get("only");
+if (only) {
+  const keep = $(only);
+  document.querySelectorAll(".wrap > *").forEach(el => { if (el !== keep && !el.contains(keep)) el.style.display = "none"; });
+}
 refresh().then(() => {
   if (params.get("open") === "week" && last) { renderWeek(last); $("weekDlg").showModal(); }
   if (params.get("open") === "add") { $("dlg").showModal(); }
