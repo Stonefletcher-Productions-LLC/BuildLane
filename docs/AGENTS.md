@@ -107,6 +107,9 @@ panel). When an agent needs signing in, its provider shows **Not signed in · si
 - **On / Off** per agent, saved in the profile. At least one agent has to stay on.
 - **Status:** Ready, Working (n), Paused until …, Not signed in, Off. It also shows what the sign-in check said, and the
   pass rate by difficulty.
+- **Refresh agents** (Agents panel; **Refresh sign-ins and limits** in Settings > Accounts) lifts every usage-limit
+  pause, re-reads OpenCode's model list and checks every sign-in again: use it after upgrading a plan. An agent still
+  at its limit pauses again at its next session.
 - **Sign in** (Settings > Accounts, one per provider) opens the CLI's own sign-in in a console window on the PC: `claude` (then `/login`), `codex login`, or
   `opencode auth login`.
 - **Add agent** adds any model OpenCode, Codex or Claude can reach. **Remove** deletes one; use Off to keep its
