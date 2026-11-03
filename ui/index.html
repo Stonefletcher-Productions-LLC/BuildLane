@@ -981,7 +981,7 @@ function renderAgents(d) {
     const acct = a.paused_until ? a.paused_reason : a.account;
     return `<div class="ag${a.enabled ? "" : " off"}">
       <div class="top"><span class="nm">${esc(a.name)}</span><span class="chip ${cls}">${esc(chip)}</span></div>
-      <div class="model">${esc(a.kind)}${a.model ? " · " + esc(a.model) : ""} · ${esc(a.vendor)}</div>
+      <div class="model">${esc(a.kind)} · ${a.model ? esc(a.model) : (a.scores && a.scores.seed.model_key ? esc(a.scores.seed.model_key) + " (the CLI's default)" : "the CLI's default model")} · ${esc(a.vendor)}</div>
       ${a.scores ? scoreRows(a) : ""}
       ${acct ? `<div class="acct">${esc(acct)}</div>` : ""}
       <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : ""}</div>
