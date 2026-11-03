@@ -1,219 +1,193 @@
-﻿<p align="center">
-  <img src="docs/images/logo.png" width="112" alt="BuildLane">
+<p align="center">
+  <img src="docs/images/fletchery/icon.png" width="96" alt="">
 </p>
 
-<h1 align="center">BuildLane</h1>
+<h1 align="center">Fletchery</h1>
 
-<p align="center"><strong>Watch the build, land the changes, ship the release — from one window.</strong></p>
+<p align="center"><strong>Turn GitHub issues into finished, tested pull requests while you do something else.</strong></p>
 
-BuildLane is a small Windows app for a self-hosted build lane. It shows what the PC is building right now, which
-changes are waiting, and which release is next, so you do not have to keep a PowerShell window open or watch GitHub
-in a browser tab.
+Fletchery is a Windows app for one person and a team of Claude workers. You write what you want as GitHub issues.
+Claude writes each change on its own branch, Fletchery checks it, a second Claude reviews it, and it becomes a pull
+request. Your build lane then builds, tests and merges it. One window shows all of it, and nothing merges without passing
+your checks.
 
-![The Overview tab while a batch runs tests: step 5 of 6, both progress bars, the steps so far, and the queue with each change's state](docs/images/overview.png)
+![Fletchery with a queue of tasks, two workers writing code, and their pull requests (illustrative data)](docs/images/fletchery/overview.png)
 
-Made by Stonefletcher Productions LLC. The source is available in this repository.
+<sub>Every screenshot here is the real app showing a made-up project, "Harbor". See [where the pictures come from](#where-the-pictures-come-from).</sub>
 
-**Jump to:** [Install](#install) · [First five minutes](#first-five-minutes) · [The tabs](#the-tabs) · [Everyday tasks](#everyday-tasks) · [Where settings live](#where-your-settings-live) · [Something looks wrong](#if-something-looks-wrong) · [Developers](#for-developers)
+**Jump to:** [How it works](#how-it-works) · [Install](#install) · [First ten minutes](#first-ten-minutes) ·
+[Everyday tasks](#everyday-tasks) · [Costs and limits](#costs-and-limits) · [Project rules](#project-rules) ·
+[Something looks wrong](#something-looks-wrong) · [For developers](#for-developers)
 
-## What it does
+## How it works
 
-- **Shows the truth about the current build** — which step, how far through, how long it has been running, and the
-  exact run it belongs to. A green test run never makes an unreported Package step look finished.
-- **Shows the queue in human words** — "Waiting for v0.2.6 to finish", "held: main is red", "waits for the next batch:
-  it conflicts with #408". Waiting is grey; a real blocker is orange; work in progress is blue.
-- **Pauses everything** — including the option to stop the build that is already running.
-- **Handles releases** — group pull requests into a release, queue its package build, and see the cut time it has to
-  ship by.
-- **Moves pull requests in bulk**, in the background, and keeps the ones that failed selected so you can retry.
-- **Keeps several projects apart** — each with its own repository, runner paths and credentials.
-- **Remembers how you left it** — window size, divider positions, light or dark, last project.
+```
+ GitHub issues ──▶ Workers ──────────────────────────────▶ Pull request ──▶ Build Lane ──▶ merged
+ (your tasks)     Claude writes it, Fletchery checks it,          ▲         builds and tests
+                  a second Claude reviews it                      │         on your PC
+                                                                  └── fixer ◀── sent back
+```
 
-## See it
+| Part | What you see | What it does |
+|---|---|---|
+| **Task queue** | Issues with the project's label, oldest first, the next one marked | Waits for a free worker. A task that says `Depends on: #12` waits until #12 is done |
+| **Workers** | Each worker's task, its step (write, check, review, open PR) and the last thing it did | Claude sessions writing code on their own branches. They never build, merge or touch your other work |
+| **Workers' PRs** and **Needs you** | The pull requests workers opened, and tasks that stopped for a decision | A PR the lane sends back goes to a fixer automatically, twice at most; after that it asks you |
+| **Build Lane** | What is building, which step, how far, and the PRs waiting | Your own build machine, as before. Fletchery shows it and can pause it |
 
 <p>
-  <img src="docs/images/releases.png" width="48%" alt="The Releases tab: a queued release with the time it ships by, an open release, a packaged one, and the pull request list with move controls">
-  <img src="docs/images/overview-dark.png" width="48%" alt="The same dashboard in dark mode">
+  <img src="docs/images/fletchery/workers.png" alt="Two workers: each shows its task, a four-step progress track and the file it is editing">
 </p>
-
-Left: **Releases** — a queued release says when it has to ship, and pull requests can be moved in bulk. Right: the same
-dashboard in **dark mode**.
-
-BuildLane is a front end for a build system you already have. It does not create a runner, and it does not supply a
-CI pipeline: your runner writes a small status file and the app draws it. See
-[Connect your build system](docs/INTEGRATION.md) for that contract.
 
 ## Install
 
-**You need:** Windows 10 or 11, Windows PowerShell 5.1 (already installed), and the .NET Framework compiler that ships
-with Windows. GitHub CLI is optional — the app also accepts a GitHub token.
+**You need:** Windows 10 or 11, [Python 3.10 or newer](https://www.python.org/downloads/) (tick *Add python.exe to PATH*),
+[Git](https://git-scm.com/download/win), the [GitHub CLI](https://cli.github.com/) signed in (`gh auth login`), and
+[Claude Code](https://docs.claude.com/en/docs/claude-code/overview) signed in to your Claude plan (run `claude`, then
+`/login`). Microsoft Edge's WebView2, which draws the window, is already part of Windows 10 and 11.
 
-1. **Get the code.** Clone the repository, or use **Code → Download ZIP** and extract it.
-2. **Open Windows PowerShell in that folder.** In Explorer, shift-right-click the folder and choose *Open PowerShell
-   window here*, or `cd` into it.
-3. **Run the installer:**
+1. **Get the code:** clone this repository, or use **Code → Download ZIP** and extract it.
+2. **Describe your project** in a profile. Copy [`examples/Example.profile.json`](examples/Example.profile.json) and fill
+   in the repository and the folder of a local clone; [First ten minutes](#first-ten-minutes) walks through it.
+3. **Run the installer** in Windows PowerShell, in the repository folder:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\app\InstallLaneApp.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\shell\Install-Fletchery.ps1 -Profile C:\path\to\MyProject.profile.json
    ```
 
-4. **Open BuildLane** from the new desktop icon. The PowerShell window that started it can be closed.
+   It builds `Fletchery.exe` with the compiler that comes with Windows, installs the Claude Agent SDK for Python if it
+   is missing, copies the app to `%LOCALAPPDATA%\Programs\Fletchery`, and adds **Fletchery** to the desktop and the
+   Start menu. No administrator rights.
 
-![A filled first-run screen: project name, repository link and the three runner paths, with the three numbered steps at the top](docs/images/setup.png)
+4. **Open Fletchery.** To update later, pull this repository and run the installer again. Fletchery picks up the new
+   version between tasks, never in the middle of one.
 
-The app installs into `%LOCALAPPDATA%\Programs\Buildlane`. Upgrading keeps your saved projects; a new install starts on
-a neutral setup screen. The optional [LifeShare example profile](examples/LifeShare.profile.json) can be imported if you
-want to see a filled-in project.
+## First ten minutes
 
-The [illustrated setup guide](docs/GETTING-STARTED.md) explains every field, switching projects and sharing profiles.
+**1. The profile.** One small file per project:
 
-## First five minutes
+```json
+{
+  "name": "Harbor",
+  "repo": "example/harbor",
+  "workers": {
+    "projectRoot": "C:\\Code\\harbor",
+    "baseBranch": "main",
+    "label": "fletchery",
+    "maxParallel": 2,
+    "dailyBudgetUsd": 20
+  }
+}
+```
 
-The setup screen walks the same three steps the app shows at the top:
+- `repo` is `owner/name` from the GitHub address.
+- `projectRoot` is a local clone that Fletchery can make branches from; it never edits your checked-out files.
+- Issues with `label` are tasks.
+- `baseBranch` is where pull requests go.
+- If you also have a Build Lane, add its `statusFile`, `pauseFile` and `drive` (the same fields the classic app uses), and the Build Lane panel appears.
 
-1. **Choose a repository.** Paste the GitHub URL — `https://github.com/acme/desktop` — not the `git@` clone URL. The
-   app stores `acme/desktop`.
-2. **Point to your runner.** Three paths, all on the machine that builds:
-   - *Status file* — what the runner writes while it works, e.g. `C:\BuildRunner\Acme\status.json`
-   - *Pause file* — the app creates this file when you press **Pause builds**, e.g. `C:\BuildRunner\Acme\PAUSED`
-   - *Runner folder* — the lane's working folder, used for disk checks and the log helpers
-3. **Save and use**, then **Connect GitHub**. The app uses your `gh` CLI login if it has one, otherwise paste a token.
-   The token is encrypted with Windows DPAPI and stored for your Windows user only.
+**2. Give it a task.** Press **Add task** (or label any issue `fletchery` on GitHub). Write it like you would for a
+colleague: what to change, what not to touch, and how to tell it worked.
 
-Press **Refresh** on Releases and the tab fills in. If the status file is missing, Overview says *No build has
-reported yet* — that is a path problem, not a crash.
+<p><img src="docs/images/fletchery/add-task.png" width="70%" alt="The Add a task dialog: a title, what to do, and which issues it waits for"></p>
 
-## The tabs
+**3. Watch it.** Within a minute a worker takes it. The **Workers** section shows its step and the file it is working
+on; when it is done, a pull request appears under **Workers' PRs**, and Windows tells you.
 
-| Tab | What you do there |
-|---|---|
-| **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
-| **Releases** | Milestones become releases. Queue a release build, unqueue or close it, and see which pull requests are in it. Tick pull requests and move them to another release in one go. |
-| **Build choices** | Preview Auto/Focused/Full test scope and compilation choices for fixed source/base commits. Previews are advisory and never start a build. |
-| **Timing history** | Job and step times for reported runs, with source commit, attempt and result. Failed and cancelled attempts stay visible. |
-| **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
-| **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |
+**4. Steer it.** Comment on the task's issue: every worker reads the issue and all its comments before it starts. If a
+task lands under **Needs you**, its issue says what it needs; answer in a comment, then change its label from
+`fletchery:blocked` to `fletchery:queued`.
 
 ## Everyday tasks
 
 | I want to… | Do this |
 |---|---|
-| Stop new builds starting | **Pause builds**. If something is building, it asks whether to stop that too. |
-| Let builds run again | **Resume builds** — the same button. |
-| Ship a release | Releases → pick it → **▶ Queue release build**. It lands that release's ready pull requests first, then packages. |
-| See when a queued release ships | The release row shows `queued: ships by HH:MM`. |
-| Move changes to another release | Tick them in the pull request list, pick a release, press **Move**. |
-| Check why a build failed | Overview → **Open live log** (GitHub) or **Show step log** (the step's log in the window). |
-| Switch project | Projects → **Use selected**. |
-| Change the look | **Use dark mode** / **Use light mode** in the top bar. |
+| Add work | **Add task**, or label an issue on GitHub. `Depends on: #12` in the description makes it wait for #12 |
+| Stop new work for a while | **Pause** (top right). Workers already running finish; nothing new starts until **Resume** |
+| Run more or fewer workers at once | **−** / **+** next to *Workers* (1 to 6) |
+| Spend less | **−** next to the daily cap. At the cap no new work starts that day |
+| See this week's usage | **This week** under the cap |
+| Switch between my Claude plan and an API key | **Claude plan** / **API key** under the cap (applies to the next session) |
+| Stop builds on the build PC | **Pause builds** in the Build Lane panel. A build already running finishes |
+| Close the window but keep working | Close it. Fletchery stays in the tray; right-click the tray icon to quit |
+| Make the task list taller | Drag the handle under the Task queue (or focus it and use the arrow keys) |
 
-Resume and stop requests show pending feedback immediately while GitHub responds in the background. A request
-accepted by GitHub does not mean a build has started: the app shows the latest observed lane controller separately
-from the runner's status report. An uncertain response asks you to check GitHub before retrying; commands are never
-automatically resent. Project switching and overlapping writes are blocked while a lane request is in flight.
+## Costs and limits
 
-Local reports refresh every second, releases every 15 seconds while their tab is open, and machine health is checked
-in the background every 30 seconds. GitHub reads are coalesced and respect retry delays. The app cannot show a phase
-before the runner writes it; the report timestamp and run identity remain visible. Release creation, queue preparation, milestone changes, and connection verification also run in the background.
-Confirmed partial writes remain visible after a failure; uncertain writes are never automatically retried.
+- **On your Claude plan** (the default), workers use the same plan as your own Claude chats, so their usage counts
+  against the plan's limits. The amounts Fletchery shows are estimates, not a bill. When a limit is reached, Fletchery
+  pauses by itself, and the task goes back in the queue with its work kept.
+- **On an API key**, set `ANTHROPIC_API_KEY` for your Windows user and switch to **API key**. Sessions are billed per
+  token, and the amounts shown are what they cost.
+- Two guards apply either way: a **daily cap** (no new work after it) and a **per-session budget**. If Claude's sign-in
+  expires, Fletchery pauses and tells you to run `claude` and `/login`.
 
-The Overview shows the runner's waiting reason, detail, and blocking run when reported. If the backend has not
-provided a reason, the app says so. It does not infer that a package or another PR is blocking the current run.
+<p><img src="docs/images/fletchery/usage-week.png" width="70%" alt="Usage over the last seven days as columns, with the daily cap marked and the same numbers as a table"></p>
 
-**Timing history** loads GitHub jobs and step durations for run IDs reported by this project. It retains the last
-20 completed attempts locally, including failures and cancellations, with source commit and attempt identity.
-Select a run to inspect individual steps; skipped steps have no execution duration. Parallel job durations are not
-summed into wall time. History is collected as runs are encountered, rather than backfilling the repository; a
-successful entry does not certify another build or release. A rerun's waiting time excludes the gap since the
-original run was created. Reads share one background worker and respect retry delays; timings refresh no more than
-once every 30 seconds. No build is launched by viewing history.
+## Project rules
 
-**Build choices** is available when Projects > Advanced settings has a planning workflow configured. Enter a PR
-number, commit or branch and the comparison revision, choose a context, test scope and compilation mode, then
-press **Preview plan**. The app resolves both revisions to immutable commits before sending. Release and nightly
-contexts force the full suite; no-compilation runtime validation is refused until verified binary receipts exist.
-Focused checks are diagnostic and cannot certify a merge or release.
+Each project can tell its workers how it likes things done, in a `.fletchery/` folder in its own repository:
 
-Requests run in the background and carry a unique ID. The app matches that ID, source/base, branch and workflow,
-shows the run and attempt separately, and keeps earlier failed attempts visible. **Open preview attempt** opens
-the observed attempt; before a match is found, **Open preview runs** opens the workflow list. An uncertain POST
-is never resent automatically. Workflow success means an advisory plan was produced, not that compilation,
-tests or packaging passed. Plan artifacts are untrusted advice and are never automatically executed.
-
-Old profiles keep previews disabled. The LifeShare example opts into `build-plan-shadow.yml`; merge the compatible
-backend (LifeShare PR #494, including `request_id` support) before enabling that setting in an existing profile.
-Reduced-test execution is a separate, release-owner-reviewed backend change. Existing release validation stays full.
-
-## Where your settings live
-
-| What | Where |
+| File | What it does |
 |---|---|
-| The app | `%LOCALAPPDATA%\Programs\Buildlane` |
-| Projects and window layout | `%APPDATA%\Buildlane\Projects` (`default.json`, `current.txt`, `layout.txt`) |
-| Timing history | `%APPDATA%\Buildlane\Projects\timings-<project-key>.json` (20 completed attempts per profile) |
-| GitHub token (DPAPI-encrypted) | `%APPDATA%\Buildlane\<owner_repo>\github.token` |
-| Runner helpers | `%LOCALAPPDATA%\Buildlane\Runner` |
+| `conventions.md` | Read by every worker, reviewer and fixer: naming, style, what not to touch |
+| `gates.json` | The quick checks Fletchery runs on every change, chosen by which files changed |
+| `worker.md`, `reviewer.md`, `fixer.md` | Extra notes for that role |
 
-Delete a project's token file to sign out of it. Nothing is written into the installation folder, so reinstalling
-keeps your projects.
+[Writing project rules](docs/WORKERS.md) has examples. With no rules, workers follow the code around them, and the
+reviewer and your Build Lane still check the result.
 
-## If something looks wrong
+## The Build Lane
 
-- **"No build has reported yet"** — the status file path does not match what your runner writes. Check the path in
-  Projects.
-- **"No update from the build for 10 min"** — the app has the file but nothing has touched it. The build may be stuck;
-  open the live log.
-- **"Step 1 of 1" while a build is running** — something other than the lane wrote the status file (a pull request's
-  quick checks, for example). The app falls back to the standard six steps rather than showing a fake one-step job.
-- **A field is greyed out** — Overview, Releases and System are disabled until a project is saved.
-- **The window opened small** — it remembers its size. Drag it larger; the new size is kept.
+If you run a build machine (the [local runner](runner/README.md), or your own CI writing a small status file), Fletchery
+shows it under the workers: what is building, which step, how far, and the PRs waiting their turn. Pull requests from
+workers are marked.
 
-More, including the message you get when GitHub rate-limits the app: [Troubleshooting](docs/TROUBLESHOOTING.md).
+![The Build Lane panel: a batch of two PRs in its Tests step, 9 of 14 done, and the PRs waiting](docs/images/fletchery/build-lane.png)
+
+Releases, the integration mode, timing history and merge controls are still in the classic BuildLane app for now
+([its guide](docs/BUILDLANE-CLASSIC.md)); they are moving into Fletchery next.
+
+## Safe by design
+
+- **Your machine only:** the screens are served on `127.0.0.1`, and every button needs a key that only the page
+  Fletchery itself served knows.
+- **Branches only:** workers work on their own branches in their own folders. They never push to your main branches,
+  never merge and never force-push.
+- **Reviewable:** every change is a pull request with the checks it passed and what could not be verified.
+- **No hidden credentials:** Fletchery uses your `gh` and `claude` sign-ins. An API key stays in your Windows user's
+  environment, never in a profile.
+
+## Something looks wrong
+
+| You see | What to do |
+|---|---|
+| "Claude needs signing in again" | Open a terminal, run `claude`, type `/login`. Work resumes on the next check |
+| "Can't reach Fletchery's backend" | The app restarts it by itself. If it stays, quit from the tray and reopen; the log is under **Open log folder** in the tray menu |
+| A task keeps landing under **Needs you** | Read the last comment on its issue: it says what a person must decide |
+| The Build Lane panel is missing | Add `statusFile` (and `pauseFile`, `drive`) to the profile |
+| Fletchery did not start: Python | Install Python 3.10+ from python.org with *Add to PATH*, then run the installer again |
 
 ## For developers
 
-Run from the repository root (Windows PowerShell, not PowerShell 7):
+| Folder | What |
+|---|---|
+| `fletchery/` | The backend (Python): task graph, workers, checks, review, fixers, the local server. `python -m fletchery demo --serve --fixture harbor` runs it on made-up data |
+| `ui/` | The screens (one page, no build step) |
+| `shell/` | `Fletchery.exe` (C# + WebView2) and its build and install scripts |
+| `app/`, `runner/` | The classic BuildLane app and the local GitHub Actions runner |
 
-```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneApp.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneGitHub.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneMoves.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneFeedback.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActions.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneHistory.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLanePlanning.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneResources.ps1
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneProcesses.ps1
-```
+Tests: `python fletchery/test_fletchery.py` (no network). The classic app keeps its own Windows checks
+(`.github/workflows/validate.yml`). Design and roadmap: [docs/FLETCHERY.md](docs/FLETCHERY.md).
+[Contributing](CONTRIBUTING.md).
 
-They use temporary profiles and mocked GitHub responses, and GitHub Actions runs the same checks on Windows. Nothing
-touches a real project. [CONTRIBUTING.md](CONTRIBUTING.md) covers the layout, the optional live check and how to
-regenerate the screenshots in this README:
+### Where the pictures come from
 
-```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\PreviewDocs.ps1 -OutDirectory .\docs\images
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneOnboarding.ps1 -PreviewDirectory .\docs\images
-```
+[`docs/images/fletchery/Make-Screenshots.ps1`](docs/images/fletchery/Make-Screenshots.ps1) runs Fletchery on the
+made-up Harbor project and photographs each screen with Microsoft Edge. They are real screens with illustrative data,
+not results from a real project.
 
-Both render the real interface with synthetic data — no network, no saved projects.
+---
 
-**Installer.** MSI packaging is available for testing:
-`.\app\BuildLaneInstaller.ps1 -Version 1.2.0` writes an unsigned MSI to `%LOCALAPPDATA%\Buildlane-Packages`. Signing
-credentials are pending and the latest MSI still needs a clean install/upgrade/uninstall pass, so the direct
-installation command above is the supported route. See [packaging](docs/PACKAGING.md).
-
-## What BuildLane is not
-
-- **Not cross-platform.** Windows desktop only, and the launcher runs on Windows PowerShell 5.1.
-- **Not a CI system.** It reads and drives a lane you already run. The local status and pause controls need the
-  [backend contract](docs/INTEGRATION.md); a GitHub connection alone does not make an arbitrary workflow compatible.
-- **Not a universal adapter.** Each build system needs a small adapter.
-- **Not finished.** GitHub Enterprise Server endpoints are not configurable yet. Waiting detail depends on the
-  backend, and timing history requires GitHub access to the reported run.
-
-Related reading: [shared build resources and reservations](docs/RESERVATIONS.md),
-[cancelled builds and leftover processes](docs/CANCELLATION.md).
-
-The app was originally extracted from LifeShare commit `55130dbe42ed7b77b996bec051a2f7852b9b91d0`; this repository
-holds the standalone app, its tests and its packaging source.
+Made by Stonefletcher Productions LLC. Fletchery grew out of BuildLane: the GitHub address still works under the old
+name.

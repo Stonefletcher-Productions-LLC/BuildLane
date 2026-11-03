@@ -4,6 +4,8 @@
   "branch": "main",
   "workflow": "lane.yml",
   "planWorkflow": "",
+  "integrationWorkflow": "",
+  "activeJobs": "",
   "statusFile": "%LOCALAPPDATA%\\Buildlane\\Runner\\status.json",
   "pauseFile": "%LOCALAPPDATA%\\Buildlane\\Runner\\PAUSED",
   "runnerPath": "%LOCALAPPDATA%\\Buildlane\\Runner",

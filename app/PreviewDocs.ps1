@@ -95,6 +95,16 @@ try {
     Set-LaneHistoryResult @{RunId='40931784541';What='batch #473, #478';Report='fixture'} @{History=$HistoryFixture}
     $Tabs.SelectedTab=$HistoryTab; Save-Shot 'timings.png'
 
+    $HandoffOriginal=Get-Content -LiteralPath $StatusPath -Raw
+    $HandoffStatus=$HandoffOriginal | ConvertFrom-Json
+    $HandoffStatus.runId='10'; $HandoffStatus.what='Previous compile preview'; $HandoffStatus.done='failure'; $HandoffStatus.updated=[datetime]::UtcNow.AddMinutes(-5).ToString('o')
+    $HandoffStatus | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $StatusPath
+    $Config | Add-Member NoteProperty activeJobs 'ci.yml|Build and test' -Force
+    Initialize-LaneActivity
+    $script:ActivitySnapshot=@{AtUtc=[datetime]::UtcNow;Repo=$Repo;Count=1;Active=@{Run=@{id=30;run_attempt=1;display_title='Integration batch #331, #400';head_sha=('a'*40)};Job=@{name='Build and test';status='in_progress';started_at=[datetime]::UtcNow.AddSeconds(-4).ToString('o');steps=@(@{name='Run actions/checkout@v4';status='in_progress'})}}}
+    $Tabs.SelectedTab=$NowTab; Update-View; Save-Shot 'handoff.png'
+    $Config.activeJobs=''; $script:ActivitySnapshot=$null
+    Set-Content -LiteralPath $StatusPath -Value $HandoffOriginal
     $Config | Add-Member NoteProperty planWorkflow 'build-plan-shadow.yml' -Force
     Initialize-LanePlanning
     $PlanSource.Text='#473'; $PlanBase.Text='main'; $PlanTests.SelectedIndex=1; $PlanNames.Text='RunAnimTest'; $PlanCompile.SelectedIndex=1

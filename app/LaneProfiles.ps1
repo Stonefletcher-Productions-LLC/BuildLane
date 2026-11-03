@@ -1,9 +1,23 @@
-﻿# Profile persistence stays outside the installation so upgrades never replace user settings.
+﻿function Get-LaneActivityTargets([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+    $Targets=@()
+    foreach ($Item in ($Text -split ';')) {
+        $Parts=$Item.Trim() -split '\|',2
+        if ($Parts.Count -ne 2 -or $Parts[0] -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$' -or [string]::IsNullOrWhiteSpace($Parts[1]) -or $Parts[1] -match '[;|\r\n]') { throw 'Active jobs must use workflow.yml|Exact job name, separated by semicolons.' }
+        $Targets+=@(@{workflow=$Parts[0];job=$Parts[1].Trim()})
+    }
+    if ($Targets.Count -gt 8) { throw 'Configure at most eight active job names.' }
+    $Targets
+}
+# Profile persistence stays outside the installation so upgrades never replace user settings.
 function Test-LaneProfile($Value) {
     foreach ($Key in @('name','repo','branch','workflow','statusFile','pauseFile','runnerPath','drive','serviceFilter')) {
         if ([string]::IsNullOrWhiteSpace([string]$Value.$Key)) { throw "Enter a value for $Key." }
     }
     if ($Value.planWorkflow -and [string]$Value.planWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Planning workflow must be a YAML filename, for example build-plan-shadow.yml.' }
+    if ($Value.activeJobs) { [void]@(Get-LaneActivityTargets $Value.activeJobs) }
+    if ($Value.integrationWorkflow -and [string]$Value.integrationWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Integration controller must be a YAML filename.' }
+    if ($Value.integrationWorkflow -and $Value.branch -ne 'main') { throw 'This integration controller uses trusted main; the PR integration branch is reported by the backend.' }
     if ($Value.repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Repository must be owner/repository.' }
     if ($Value.drive -notmatch '^[A-Za-z]$') { throw 'Drive must be one letter, for example E.' }
     foreach ($Key in @('statusFile','pauseFile','runnerPath')) {
@@ -48,5 +62,5 @@ function ConvertTo-LaneRepository([string]$Text) {
 }
 function New-LaneProjectDefaults {
     $Folder=Join-Path $env:LOCALAPPDATA 'Buildlane\Runner'
-    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';planWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
+    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';planWorkflow='';activeJobs='';integrationWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
 }

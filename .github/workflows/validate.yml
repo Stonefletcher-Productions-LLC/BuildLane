@@ -28,6 +28,23 @@ jobs:
       - name: Waiting reasons and timing history checks
         timeout-minutes: 4
         run: ./app/TestLaneHistory.ps1
+      - name: Automatic native-job handoff and stale status checks
+        timeout-minutes: 4
+        run: ./app/TestLaneActivity.ps1
+      - name: Live PR pagination and status checks
+        run: ./app/TestLanePullReader.ps1
+      - name: Completed build PR overview checks
+        timeout-minutes: 4
+        run: ./app/TestLanePullView.ps1 -OutDirectory "$env:RUNNER_TEMP/Buildlane-docs"
+      - name: Authoritative integration mode checks
+        timeout-minutes: 4
+        run: ./app/TestLaneIntegration.ps1 -OutDirectory "$env:RUNNER_TEMP/Buildlane-docs"
+      - name: Staging release request checks
+        timeout-minutes: 4
+        run: ./app/TestLaneReleaseRequests.ps1 -OutDirectory "$env:RUNNER_TEMP/Buildlane-docs"
+      - name: Tall window and repeated handoff layout checks
+        timeout-minutes: 4
+        run: ./app/TestLaneLayout.ps1
       - name: Advisory build choices and request correlation
         timeout-minutes: 4
         run: ./app/TestLanePlanning.ps1
@@ -49,5 +66,16 @@ jobs:
       - name: PowerShell 7 resource cleanup checks
         shell: pwsh
         run: ./app/TestLaneResources.ps1
+      - name: Local runner checks
+        timeout-minutes: 6
+        shell: pwsh
+        run: node runner/test/TestRunner.cjs
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut
+      - name: Upload illustrative UI screenshots
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: documentation-fixtures
+          path: ${{ runner.temp }}/Buildlane-docs/*.png
+          if-no-files-found: error
+          retention-days: 14

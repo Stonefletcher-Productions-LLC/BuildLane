@@ -1,0 +1,446 @@
+"""One pass of Fletchery: sync, feedback, dispatch, status. `Fletchery.once()` is what `foreman.py once` and `run` call."""
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from config import Config
+import graph
+from graph import BLOCKED, PR, QUEUED, RUNNING, Task, readiness, pick
+from github import PullRequest
+from pipeline import Context, Outcome, fix_pr, run_task
+
+
+@dataclass
+class State:
+    last_pass: str = ""
+    seen: dict[str, str] = field(default_factory=dict)        # pr number -> ISO time of the newest feedback acted on
+    fix_attempts: dict[str, int] = field(default_factory=dict)  # pr number -> attempts so far
+    spent: dict[str, float] = field(default_factory=dict)     # YYYY-MM-DD -> USD
+    running: dict[str, str] = field(default_factory=dict)     # task number -> started ISO (for the status issue)
+    paused_until: str = ""                                    # ISO: a usage limit was hit; dispatch nothing before this
+    paused_reason: str = ""
+    held: bool = False                                        # Alex pressed Pause: start nothing new until Resume
+    signed_out: str = ""                                      # why sessions cannot sign in; cleared once they can
+
+    @staticmethod
+    def load(path: Path) -> "State":
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            known = set(State.__dataclass_fields__)
+            return State(**{k: v for k, v in data.items() if k in known})
+        return State()
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.__dict__, indent=2), encoding="utf-8")
+
+
+def today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class _StatusTap:
+    """Passes everything through to the GitHub client; a status label change also updates the dashboard's board."""
+    def __init__(self, inner, fm: "Engine"):
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_fm", fm)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._inner, name, value)
+
+    def set_status(self, number: int, status: str) -> None:
+        self._inner.set_status(number, status)
+        for row in (self._fm.snapshot or {}).get("tasks", []):
+            if row["number"] == number:
+                row["status"] = status.split(":")[-1]
+                row["why"] = "ready" if status == QUEUED else ""
+
+
+class Engine:
+    def __init__(self, ctx: Context, state_dir: Path, dry_run: bool = False):
+        if not isinstance(ctx.gh, _StatusTap):
+            ctx.gh = _StatusTap(ctx.gh, self)
+        self.ctx = ctx
+        self.cfg = ctx.cfg
+        self.state_dir = state_dir
+        self.state = State.load(state_dir / "state.json")
+        self.dry_run = dry_run
+        self.last_plan: list[str] = []  # what a dry run would have done
+        self.snapshot: dict = {}        # the last pass, structured, for the dashboard
+        self.next_pass_at: str = ""
+        self.passing = False
+        self._wake: asyncio.Event | None = None
+        self.active: set[int] = set()   # tasks a session of THIS process is working on right now
+        self.jobs: dict = {}            # asyncio job -> (task number, PR number or None, the PR's last seen feedback)
+        self.recent: list[Outcome] = []
+        self._tasks: dict = {}
+        self._prs: dict = {}
+        self._waiting: dict = {}
+        self._aloop: asyncio.AbstractEventLoop | None = None
+
+    # ---- the pass ----
+    async def once(self) -> list[Outcome]:
+        """One batch: dispatch what fits, wait for all of it, write the status. `foreman once` and the tests use this;
+        the running app uses `run_forever`, which refills a slot the moment a session ends."""
+        self.dispatch()
+        outcomes: list[Outcome] = []
+        while self.jobs:
+            outcomes += await self._wait_for_jobs(None)
+        self.publish(outcomes)
+        return outcomes
+
+    # ---- dispatch: sync with GitHub and start sessions in the free slots (never waits for them) ----
+    def dispatch(self, draining: bool = False) -> None:
+        gh, cfg, st = self.ctx.gh, self.cfg, self.state
+        self.last_plan = []
+        self.passing = True
+        try:
+            tasks = gh.open_tasks()
+            prs = {p.number: p for p in gh.open_prs()}
+        finally:
+            self.passing = False
+        # A task labelled running that this process is not running was orphaned by a stop, crash or reboot (one loop
+        # per PC, so no other Fletchery has it). Back to the queue; the next worker continues from its commits.
+        if not self.dry_run:
+            for t in tasks.values():
+                if t.status == RUNNING and t.number not in self.active:
+                    gh.set_status(t.number, QUEUED)
+                    t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(QUEUED)]
+                    st.running.pop(str(t.number), None)
+                    self.ctx.log(f"#{t.number} was left running by an earlier Fletchery; back in the queue")
+        by_pr = _tasks_by_pr(tasks, prs)
+        limit_paused = bool(st.paused_until) and now() < st.paused_until
+        if not limit_paused and st.paused_until:
+            st.paused_until, st.paused_reason = "", ""
+        if st.signed_out and not self.dry_run:
+            import auth
+            ok, msg = auth.check(self.cfg.auth, getattr(self.ctx.runtime, "saved_key", None))
+            if ok:
+                self.ctx.log("signed in again; work resumes")
+                st.signed_out = ""
+            else:
+                st.signed_out = msg
+        paused = limit_paused or st.held or bool(st.signed_out) or draining
+
+        # 1. feedback on open PRs -> fixers (one per task at a time)
+        for pr_num, task in by_pr.items():
+            if task.number in self.active:
+                continue
+            pr = prs[pr_num]
+            fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
+            if not fb or paused or self.free_slots() <= 0:
+                continue
+            attempt = st.fix_attempts.get(str(pr_num), 0) + 1
+            self.last_plan.append(f"fix PR #{pr_num} (task #{task.number}, attempt {attempt}): {fb[0].text[:80]}")
+            if self.dry_run:
+                continue
+            prior = st.seen.get(str(pr_num))
+            st.seen[str(pr_num)] = max(f.at for f in fb)
+            st.fix_attempts[str(pr_num)] = attempt
+            self._start(fix_pr(task, pr, fb, attempt, self.ctx), task.number, pr_num, prior)
+
+        # 2. ready tasks -> workers, within slots and budget
+        closed_deps = {d for t in tasks.values() for d in t.depends_on if d not in tasks and gh.issue_closed(d)}
+        rd = readiness(tasks, closed_deps)
+        rd.ready = [t for t in rd.ready if t.number not in self.active]
+        spent = st.spent.get(today(), 0.0)
+        budget_left = spent < cfg.daily_budget_usd
+        chosen = pick(rd.ready, self.free_slots()) if budget_left and not paused else []
+        for t in rd.ready:
+            if t in chosen:
+                self.last_plan.append(f"run #{t.number} {t.title} on {t.branch}")
+            elif draining:
+                rd.waiting[t.number] = "on hold: Fletchery is restarting on new code"
+            elif st.signed_out:
+                rd.waiting[t.number] = "on hold: Claude needs signing in again"
+            elif st.held:
+                rd.waiting[t.number] = "on hold: Fletchery is paused"
+            elif paused:
+                rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
+            else:
+                rd.waiting[t.number] = "daily budget spent" if not budget_left else f"no free slot ({cfg.max_parallel})"
+        if not self.dry_run:
+            for t in chosen:
+                st.running[str(t.number)] = now()
+                t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
+                self._start(run_task(t, self.ctx), t.number, None, None)
+            st.save(self.state_dir / "state.json")
+        self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
+        self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
+
+    def free_slots(self) -> int:
+        return self.cfg.max_parallel - len(self.jobs)
+
+    def _start(self, coro, task_no: int, pr_no: int | None, prior_seen) -> None:
+        self.active.add(task_no)
+        job = asyncio.ensure_future(coro)
+        self.jobs[job] = (task_no, pr_no, prior_seen)
+
+    async def _wait_for_jobs(self, timeout: float | None) -> list[Outcome]:
+        """Wait until at least one session ends (or `timeout`), and account for every one that has."""
+        if not self.jobs:
+            return []
+        done, _ = await asyncio.wait(list(self.jobs), timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        return self._settle(done)
+
+    def _settle(self, done) -> list[Outcome]:
+        gh, cfg, st = self.ctx.gh, self.cfg, self.state
+        outcomes = []
+        for job in done:
+            n, pr_n, prior = self.jobs.pop(job)
+            self.active.discard(n)
+            exc = job.exception() if not job.cancelled() else asyncio.CancelledError()
+            if exc is not None:  # a bug or a crash in one job must not lose the others' results
+                self.ctx.log(f"#{n} crashed: {type(exc).__name__}: {exc}")
+                try:
+                    gh.set_status(n, QUEUED if pr_n is None else PR)
+                except Exception:
+                    pass
+                o = Outcome(n, "requeue", f"crashed: {type(exc).__name__}: {exc}", pr_number=pr_n)
+            else:
+                o = job.result()
+            outcomes.append(o)
+            st.running.pop(str(o.task), None)
+            st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
+            self._ledger(o)
+            if o.result == "fixed" and o.pr_number is not None:
+                st.seen[str(o.pr_number)] = now()
+            if o.result in ("signed_out", "limited") and pr_n is not None:  # retry this fix later, uncounted
+                st.fix_attempts[str(pr_n)] = max(0, st.fix_attempts.get(str(pr_n), 1) - 1)
+                if prior is None:
+                    st.seen.pop(str(pr_n), None)
+                else:
+                    st.seen[str(pr_n)] = prior
+            if o.result == "signed_out":
+                import auth
+                st.signed_out = auth.check(cfg.auth, getattr(self.ctx.runtime, "saved_key", None))[1] or o.detail
+            if o.result == "limited":
+                until = datetime.now(timezone.utc) + timedelta(minutes=cfg.limit_backoff_minutes)
+                st.paused_until = until.isoformat(timespec="seconds")
+                st.paused_reason = o.detail
+        self.recent = (outcomes + self.recent)[:20]
+        if not self.dry_run:
+            st.save(self.state_dir / "state.json")
+        return outcomes
+
+    def publish(self, outcomes: list[Outcome]) -> None:
+        """Rewrite the status issue and status.md, and refresh the board, from GitHub as it is now."""
+        gh, st = self.ctx.gh, self.state
+        st.last_pass = now()
+        tasks, prs = self._tasks, self._prs
+        if not self.dry_run:
+            tasks = gh.open_tasks()
+            prs = {p.number: p for p in gh.open_prs()}
+            _tasks_by_pr(tasks, prs)
+            for t in tasks.values():  # what this process runs right now shows as running, whatever GitHub says yet
+                if t.number in self.active:
+                    t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
+        waiting = {n: w for n, w in self._waiting.items() if n in tasks}
+        text = self.status_text(tasks, prs, waiting, outcomes)
+        self.snapshot = self.make_snapshot(tasks, prs, waiting, outcomes)
+        if not self.dry_run:
+            gh.write_status(text)
+            (self.state_dir / "status.md").parent.mkdir(parents=True, exist_ok=True)
+            (self.state_dir / "status.md").write_text(text, encoding="utf-8")
+            st.save(self.state_dir / "state.json")
+
+    async def run_forever(self, code_changed=None) -> None:
+        """Keep every slot busy: dispatch, then wait for a session to end, a wake (Check now, Resume, a new task) or the
+        poll interval, and dispatch again. When `code_changed()` says yes, start nothing new, let running sessions
+        finish, and return, so the launcher restarts Fletchery on the new code without cutting a session off."""
+        self._aloop = asyncio.get_running_loop()
+        self._wake = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        draining = False
+        while True:
+            if not draining and code_changed and code_changed():
+                draining = True
+                self.ctx.log("Fletchery's code changed on disk; restarting once running sessions finish")
+            try:
+                self.dispatch(draining=draining)
+                self.publish([])
+            except Exception as e:  # one bad sync (GitHub down, say) must not end the loop
+                self.passing = False
+                self.ctx.log(f"check failed: {type(e).__name__}: {e}")
+            if draining and not self.jobs:
+                return
+            wait = self.cfg.poll_minutes * 60
+            self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
+                                                       timezone.utc).isoformat(timespec="seconds")
+            deadline = loop.time() + wait
+            while True:
+                left = deadline - loop.time()
+                if left <= 0:
+                    break
+                waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs)
+                done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
+                if waits[0] not in done:
+                    waits[0].cancel()
+                ended = [j for j in done if j in self.jobs]
+                if ended:
+                    outcomes = self._settle(ended)
+                    try:
+                        self.publish(outcomes)
+                    except Exception as e:
+                        self.ctx.log(f"status update failed: {type(e).__name__}: {e}")
+                    break  # a slot is free: dispatch again now
+                if self._wake.is_set():
+                    break
+                if not draining and code_changed and code_changed():
+                    break
+            self._wake.clear()
+
+    # ---- controls (called from the dashboard's thread) ----
+    def wake(self) -> None:
+        """Run a pass now instead of at the next poll."""
+        if self._aloop and self._wake:
+            self._aloop.call_soon_threadsafe(self._wake.set)
+
+    def hold(self, on: bool) -> None:
+        """Pause: start no new worker or fixer (running ones finish). Resume: back to normal, with a pass right away."""
+        self.state.held = on
+        self.ctx.log("paused by the dashboard" if on else "resumed by the dashboard")
+        if not self.passing:
+            self.state.save(self.state_dir / "state.json")
+        if self.snapshot:
+            self.snapshot["held"] = on
+        self.wake()
+
+    # ---- the dashboard's view of the last pass ----
+    def make_snapshot(self, tasks: dict[int, Task], prs: dict[int, PullRequest], waiting: dict[int, str],
+                      outcomes: list[Outcome]) -> dict:
+        st, cfg = self.state, self.cfg
+        url = f"https://github.com/{cfg.repo}"
+        rows = []
+        for t in sorted(tasks.values(), key=lambda t: (t.created_at, t.number)):
+            rows.append({"number": t.number, "title": t.title, "status": t.status.split(":")[-1],
+                         "why": waiting.get(t.number, "ready" if t.status == QUEUED else ""),
+                         "depends": t.depends_on, "pr": t.pr_number, "branch": t.branch,
+                         "fix_attempts": st.fix_attempts.get(str(t.pr_number), 0) if t.pr_number else 0,
+                         "since": st.running.get(str(t.number), ""), "url": f"{url}/issues/{t.number}",
+                         "pr_url": f"{url}/pull/{t.pr_number}" if t.pr_number else ""})
+        return {"repo": cfg.repo, "repo_url": url, "project": cfg.name, "label": graph.PREFIX,
+                "workers_enabled": cfg.workers_enabled, "last_pass": st.last_pass, "auth": cfg.auth,
+                "max_parallel": cfg.max_parallel, "poll_minutes": cfg.poll_minutes,
+                "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,
+                "usage_week": self.usage_week(),
+                "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
+                "limit_reason": st.paused_reason, "tasks": rows,
+                "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
+                               "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
+                "dry_run": self.dry_run}
+
+    # ---- status issue ----
+    def status_text(self, tasks: dict[int, Task], prs: dict[int, PullRequest], waiting: dict[int, str],
+                    outcomes: list[Outcome]) -> str:
+        st, cfg = self.state, self.cfg
+        spent = st.spent.get(today(), 0.0)
+        L = [f"# Fletchery status", "",
+             f"Last pass: {st.last_pass or '(never)'} · today ${spent:.2f} of ${cfg.daily_budget_usd:.0f} · "
+             f"{cfg.max_parallel} slots · {cfg.auth}" + (" (cost is an estimate; the plan's limits are what count)"
+                                                         if cfg.auth == "subscription" else "")
+             + (" · DRY RUN" if self.dry_run else ""), ""]
+        if st.signed_out:
+            L += [f"**Paused: Claude needs signing in again.** {st.signed_out}", ""]
+        if st.held:
+            L += ["**Paused from the dashboard.** Running work finishes; nothing new starts until Resume.", ""]
+        if st.paused_until and now() < st.paused_until:
+            L += [f"**Paused until {st.paused_until}: usage limit.** {st.paused_reason}", ""]
+        def section(title: str, rows: list[str], empty: str) -> list[str]:
+            return [f"## {title}", *(rows or [f"- {empty}"]), ""]
+
+        running = [t for t in tasks.values() if t.status == RUNNING]
+        L += section("Running", [f"- #{t.number} {t.title} (since {st.running.get(str(t.number), '?')})" for t in running], "(nothing)")
+        queued = [t for t in tasks.values() if t.status == QUEUED]
+        L += section("Queue", [f"- #{t.number} {t.title}: {waiting.get(t.number, 'ready')}" for t in queued], "(empty)")
+        in_pr = [t for t in tasks.values() if t.status == PR]
+        L += section("In the lane", [f"- #{t.number} {t.title}" + (f" → PR #{t.pr_number}" if t.pr_number else "")
+                                     + (f" (fix attempts: {st.fix_attempts[str(t.pr_number)]})"
+                                        if t.pr_number and str(t.pr_number) in st.fix_attempts else "")
+                                     for t in in_pr], "(none)")
+        blocked = [t for t in tasks.values() if t.status == BLOCKED]
+        L += section("Blocked (needs a person)", [f"- #{t.number} {t.title}" for t in blocked], "(none)")
+        if outcomes:
+            L += section("This pass", [f"- #{o.task}: {o.result} {o.detail.splitlines()[0] if o.detail else ''} "
+                                       f"(${o.cost_usd:.2f})" for o in outcomes], "")
+        if self.dry_run and self.last_plan:
+            L += ["## Would do", *[f"- {p}" for p in self.last_plan], ""]
+        p = graph.PREFIX
+        L += [f"_Rewritten by Fletchery every pass. Labels: `{p}:queued`, `{p}:running`, `{p}:pr`, `{p}:blocked`._"]
+        return "\n".join(L)
+
+    def usage_week(self) -> list[dict]:
+        """The last 7 days (UTC dates, oldest first): estimated cost, and sessions from the ledger."""
+        days = [(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
+        sessions = {d: 0 for d in days}
+        tasks = {d: 0 for d in days}
+        led = self.state_dir / "ledger.jsonl"
+        if led.exists():
+            for line in led.read_text(encoding="utf-8").splitlines()[-5000:]:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                d = str(e.get("at", ""))[:10]
+                if d in sessions:
+                    sessions[d] += len(e.get("sessions") or [])
+                    tasks[d] += 1
+        return [{"date": d, "cost": round(self.state.spent.get(d, 0.0), 2), "sessions": sessions[d], "tasks": tasks[d]}
+                for d in days]
+
+    def _ledger(self, o: Outcome) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        with (self.state_dir / "ledger.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": now(), "task": o.task, "result": o.result, "pr": o.pr_number,
+                                "cost_usd": round(o.cost_usd, 4), "sessions": o.sessions,
+                                "detail": o.detail.splitlines()[0] if o.detail else ""}) + "\n")
+
+    # ---- planning ----
+    async def plan(self, goal: str, apply: bool = False) -> list[dict]:
+        from runtime import role_prompt
+        tasks = self.ctx.gh.open_tasks()
+        existing = "\n".join(f"- #{t.number} {t.title}" for t in tasks.values()) or "- (none)"
+        import rules as rules_mod
+        prompt = role_prompt("planner", rules_mod.load(self.cfg.project_root), project=self.cfg.name, goal=goal,
+                             existing=existing, base=self.cfg.base_branch)
+        r = await self.ctx.runtime.run("planner", prompt, self.cfg.resolve("."), self.cfg.planner_budget_usd,
+                                       self.cfg.planner_max_turns)
+        if not r.ok:
+            raise RuntimeError(f"planner failed: {r.error}")
+        issues = r.output.get("issues", [])
+        if apply:
+            created: dict[int, int] = {}  # index in the plan -> issue number
+            for i, it in enumerate(issues):
+                deps = [created[d] for d in it.get("depends_on", []) if d in created] + \
+                       [d for d in it.get("depends_on", []) if d not in range(len(issues))]
+                body = it["body"].rstrip() + ("\n\nDepends on: " + ", ".join(f"#{d}" for d in deps) if deps else "")
+                created[i] = self.ctx.gh.create_issue(it["title"], body, [graph.PREFIX, graph.label_for(QUEUED)])
+        else:
+            draft = "\n".join(f"- [{i}] {it['title']} (depends on {it.get('depends_on', [])})" for i, it in enumerate(issues))
+            self.ctx.gh.comment(self.ctx.gh.status_issue(), f"Fletchery plan for: {goal}\n\n{draft}\n\n"
+                                                             f"Run `foreman.py plan --apply` to create these.")
+        return issues
+
+
+def _tasks_by_pr(tasks: dict[int, Task], prs: dict[int, PullRequest]) -> dict[int, Task]:
+    """Match open Fletchery PRs to their tasks by the `Closes #n` line (and the branch name as a fallback)."""
+    out: dict[int, Task] = {}
+    for pr in prs.values():
+        for t in tasks.values():
+            if f"Closes #{t.number}" in (pr.body or "") or pr.head == t.branch:
+                t.pr_number = pr.number
+                if t.status == PR:
+                    out[pr.number] = t
+                break
+    return out

@@ -4,6 +4,7 @@
   "branch": "main",
   "workflow": "lane.yml",
   "planWorkflow": "build-plan-shadow.yml",
+  "activeJobs": "ci.yml|Build and test;ci.yml|focused;compile-preview.yml|Compile only (not release validation)",
   "statusFile": "E:\\GitHubRunner\\status.json",
   "pauseFile": "E:\\GitHubRunner\\PAUSED",
   "runnerPath": "E:\\GitHubRunner\\LifeShare",
@@ -11,5 +12,20 @@
   "serviceFilter": "*lifeshare*",
   "cachePort": 8558,
   "minimumFreeGB": 12,
-  "cleanBelowGB": 25
+  "cleanBelowGB": 25,
+  "workers": {
+    "enabled": true,
+    "projectRoot": "E:\\lifeshare-scratch\\foreman\\host",
+    "baseBranch": "Test-Staging",
+    "label": "foreman",
+    "assignee": "ProjektPayne",
+    "stateDir": "E:\\lifeshare-scratch\\foreman",
+    "worktreeRoot": "E:\\lifeshare-scratch\\foreman\\worktrees",
+    "maxParallel": 2,
+    "pollMinutes": 10,
+    "auth": "subscription",
+    "dailyBudgetUsd": 60,
+    "dashboardPort": 8770,
+    "plugin": "Tools/ClaudePlugin/lifeshare-guard"
+  }
 }

@@ -5,6 +5,8 @@ $script:ProjectGeneration = 0
 $script:DataRevision = 0
 $script:NextRefresh = [datetime]::MinValue
 function Stop-LaneRefresh {
+    Stop-LaneIntegration
+    Stop-LaneActivity
     $script:ProjectGeneration++
     $script:CommandState=$null
     $script:CachedMachine=$null; $script:HealthChecked=$null
@@ -20,18 +22,22 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
-    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:PlanJob) { return }
+    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:ActivityJob -or $script:IntegrationJob -or $script:PlanJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
-    if ($Kind -notin @('controller','history') -and [datetime]::UtcNow -lt $script:NextRefresh) {
+    if ($Kind -notin @('controller','history','pulls') -and [datetime]::UtcNow -lt $script:NextRefresh) {
         $RelMsg.Text = "Retry available at $($script:NextRefresh.ToLocalTime().ToString('HH:mm:ss')). Showing previous results."
         return
     }
+    $ReadBranch=Get-LaneIntegrationBranch
+    if ($Kind -eq 'pulls') { $ReadBranch=Get-LanePullBranch }
+    if ($Kind -eq 'releases' -and -not $ReadBranch) { $RelMsg.Text='Refresh authoritative integration status before listing release PRs.'; return }
+    if (-not $ReadBranch) { $ReadBranch=$Config.branch }
     $Shell = [PowerShell]::Create()
     if ($Worker) { [void]$Shell.AddScript($Worker.ToString()) }
     else {
         [void]$Shell.AddScript([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'LaneGitHub.ps1')))
-        [void]$Shell.AddArgument($Repo).AddArgument($Config.branch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue })).AddArgument([string]$script:State.runId)
+        [void]$Shell.AddArgument($Repo).AddArgument($ReadBranch).AddArgument($TokenFile).AddArgument($script:Token).AddArgument($Kind).AddArgument($Workflow).AddArgument($(if ($script:CommandState) { $script:CommandState.RequestedAtUtc } else { [datetime]::MinValue })).AddArgument([string]$script:State.runId).AddArgument($(if ($Config.PSObject.Properties['agentWorkflow']) { [string]$Config.agentWorkflow } else { 'claude-merge-fixer.yml' }))
     }
     $script:RefreshJob = @{ Shell=$Shell; Handle=$Shell.BeginInvoke(); Kind=$Kind; Generation=$script:ProjectGeneration; Revision=$script:DataRevision; Command=$script:CommandState; RunId=$script:State.runId; What=$script:State.what; Report="$($script:State.runId)|$($script:State.started)|$($script:State.done)" }
     if ($Kind -eq 'releases') {
@@ -54,6 +60,7 @@ function Complete-LaneRefresh {
     } catch { $Result = @{ Error=$_.Exception.Message; RetrySeconds=60 } }
     finally { $Job.Shell.Dispose() }
     if ($Job.Generation -ne $script:ProjectGeneration) { return }
+    if ($Job.Kind -eq 'pulls') { Set-LanePullResult $Result; return }
     if ($Job.Kind -eq 'history') { Set-LaneHistoryResult $Job $Result; return }
     if ($Job.Kind -eq 'controller') {
         if (-not [object]::ReferenceEquals($Job.Command,$script:CommandState)) { return }

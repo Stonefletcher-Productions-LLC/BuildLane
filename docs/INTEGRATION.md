@@ -33,7 +33,7 @@ Your runner writes the configured `statusFile`. Use ISO 8601 timestamps, and rep
 
 `phase` is zero-based. Keep `done` empty during work; use `success`, `failure`, or `cancelled` when finished. Optional `runId` supports canceling the associated GitHub Actions run; `runUrl` and `issueUrl` enable log/status links. Recent step logs are read from `<runnerPath>\_diag\pages\*.log`.
 
-The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “completed or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
+The overview is the latest local report, not a release history. Its result applies only to the named build and run ID. The phase cursor does not prove earlier steps ran: earlier phases are marked “done or skipped,” and later phases “not reported” after completion. In particular, a successful test-only run cannot certify packaging. Release rows independently reflect milestone metadata; they do not fetch or verify the associated Actions run conclusion. Open that release's exact run to distinguish cancellation from failure and confirm the Package step succeeded.
 
 Optional `waitingReason` explains the current wait, `waitingSince` is its ISO 8601 start time, and
 `blockingRunId` identifies the reported blocker. These fields are displayed only for unfinished work in
@@ -112,3 +112,60 @@ A runner service that is running is not the same as a runner that can build: a c
 See [the neutral template](../app/BuildLane.profile.json) for field names. `Read-LaneProfile` expands Windows environment variables in the three path fields. The bundled template has `setupRequired: true` to prevent actions before configuration. Profiles saved through the editor omit that setup marker.
 
 Existing profiles without `setupRequired` continue to work. The client currently supports GitHub.com URLs only. Tokens must never be embedded in profiles.
+
+## Automatic active-job observation
+
+Optional `activeJobs` is a semicolon-separated allowlist of `workflow.yml|Exact job display name` entries (at most
+eight). It is also editable under Projects > Advanced settings. Include native jobs only, not controllers or quick
+checks. The LifeShare example includes `ci.yml|Build and test`, `ci.yml|focused` and the compile-preview native job.
+Future workflows must be explicitly added after their job contract is reviewed.
+
+The client reads repository runs in queued/in-progress/waiting states across branches, then fetches jobs for the
+exact run attempt and rechecks attempt/source metadata. Only named noncompleted native jobs are eligible; skipped
+native jobs in quick-check-only runs do not create active build status. Reads are coalesced with existing GitHub
+refresh work, bounded, and back off on failures. More active jobs/pages than can be classified safely produces
+unknown status instead of an idle claim. This observer never dispatches, cancels or writes a run/status file.
+
+While a current job is queued/checking out, its identity and observed step supersede an older completed local
+report. The earlier result is retained separately. Phase progress is indeterminate and queue count unknown until
+that run's local report arrives. Optional local `runAttempt` binds the producer attempt; timestamp freshness also
+prevents an earlier attempt's report from being treated as current. A newer local report can supersede an older
+API observation. Errors retain last-observed evidence with an explicit unconfirmed label. Run links include the
+observed attempt, so a later rerun cannot silently change which evidence opens.
+
+## Server-owned integration mode
+
+Optional profile field `integrationWorkflow` names a controller workflow such as `staging-controller.yml`.
+Its trusted dispatch branch is `main`; the backend reports the separate integration branch (`main` or
+`Test-Staging`). The Integration tab reads `state.json` at an immutable commit on `lane/staging-state`,
+then checks the ref again. Missing, stale, moving or unavailable state disables mode changes.
+
+The app requests a fresh `inspect` before enabling a change. A mode request includes a UUID and the
+latest state revision. HTTP acceptance is only pending: the UI requires the matching durable request
+binding and actual mode readback before showing success. Uncertain requests are never automatically
+resent. The backend must reject changes while work is queued, running, packaging or incompletely
+inventoried. Full release tests and packaging remain required in both modes.
+
+In staging mode Resume allows work; reviewed changes go to Test-Staging and native builds require an
+explicit checkpoint. Request checkpoint uses a fresh backend `staging.headSha` SHA, explicit boolean
+`capabilities.checkpoint`, no `capabilityReasons.checkpoint`, no outstanding work and no local pause.
+It sends `details={"target":"<SHA>"}` with the latest state revision. The durable controller record and
+matching `state.requests[]` acknowledge the frozen request; only verified `state.checkpoints[]` receipts
+can attest validation. A queued request is never shown as a test pass. Legacy release and automatic lane mutations remain disabled in this mode until
+the controller supplies their corresponding operations. Use Open controller runs to inspect a request
+that is waiting or requires attention.
+
+## Staging release requests
+
+In staging mode the Releases tab uses controller requests instead of milestone-only queue actions.
+`inspect` must supply `capabilities.release`, `capabilityReasons.release` and
+`releaseTarget.sourceSha`. Queueing sends operation `release`, a fresh UUID, the latest state revision
+and `details={"target":"<frozen SHA>","version":"0.3.0"}` to the trusted main controller.
+
+Only a matching completed controller record (including target and version binding) plus the corresponding
+versioned `state.requests[]` entry acknowledges the request. HTTP acceptance stays pending and is never
+automatically retried. The backend owns cumulative imports, full validation, package generation and
+receipt verification. The history reads live versioned `state.requests[]`, not a cached inspection projection, and displays status, Full validation and `package.result` separately;
+missing results remain unreported, and skipped packaging never becomes a passed package. Run links use
+only the recorded numeric `worker.runId` and `worker.attempt`. The raw `output` and `tree` identify the tested
+post-import source separately from the frozen input. Validation-first releases retain their existing UI.

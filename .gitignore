@@ -19,3 +19,10 @@ launcher.sha256
 .env.*
 /local/
 /Projects/
+
+# Fletchery
+__pycache__/
+*.pyc
+shell/bin/
+shell/obj/
+shell/packages/

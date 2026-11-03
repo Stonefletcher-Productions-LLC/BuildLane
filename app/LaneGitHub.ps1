@@ -1,5 +1,5 @@
 # Runs in an isolated PowerShell runspace. Never touches Windows Forms controls.
-param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue, [string]$RunId)
+param([string]$Repository, [string]$BaseBranch, [string]$CredentialFile, [string]$AccessToken, [string]$Kind = 'releases', [string]$Workflow, [datetime]$RequestedAfterUtc = [datetime]::MinValue, [string]$RunId, [string]$AgentWorkflow = 'claude-merge-fixer.yml')
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try {
@@ -25,6 +25,36 @@ try {
     if (-not $AccessToken) { throw 'Connect GitHub to view releases.' }
     if ($Kind -eq 'auth') { return @{ Token = $AccessToken } }
     $Headers = @{ Authorization="Bearer $AccessToken"; Accept='application/vnd.github+json'; 'User-Agent'='Buildlane-Desktop' }
+    if ($Kind -eq 'pulls') {
+        $Parts=$Repository.Split('/')
+        $Query='query($owner:String!,$name:String!,$after:String,$base:String!){repository(owner:$owner,name:$name){open:pullRequests(states:OPEN,first:50,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title headRefOid baseRefName isDraft reviewDecision mergeable mergeStateStatus commits(last:1){nodes{commit{statusCheckRollup{state}}}}}pageInfo{hasNextPage endCursor}}merged:pullRequests(states:MERGED,baseRefName:$base,first:20,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title baseRefName mergedAt}}}}'
+        $Prs=@(); $Merged=@(); $Cursor=$null
+        for ($Page=1;$Page -le 10;$Page++) {
+            $Body=@{query=$Query;variables=@{owner=$Parts[0];name=$Parts[1];after=$Cursor;base=$BaseBranch}} | ConvertTo-Json -Depth 8 -Compress
+            $Response=Invoke-WebRequest -UseBasicParsing -Uri 'https://api.github.com/graphql' -Method Post -Body $Body -ContentType 'application/json' -Headers $Headers -TimeoutSec 15
+            $Data=$Response.Content | ConvertFrom-Json
+            if ($Data.errors -or -not $Data.data.repository.open.pageInfo) { throw 'Pull request status could not be verified.' }
+            $Connection=$Data.data.repository.open
+            $Prs+=@($Connection.nodes)
+            if ($Page -eq 1) { $Merged=@($Data.data.repository.merged.nodes | Sort-Object mergedAt -Descending) }
+            if (-not $Connection.pageInfo.hasNextPage) { break }
+            if ($Page -eq 10 -or -not $Connection.pageInfo.endCursor -or $Cursor -eq $Connection.pageInfo.endCursor) { throw 'Too many pull requests or incomplete pagination. Previous results retained.' }
+            $Cursor=$Connection.pageInfo.endCursor
+        }
+        # The AI merge fixer is optional: a project without that workflow simply has no agent line.
+        $Agent=$null
+        if ($AgentWorkflow) {
+            try {
+                $Response=Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$Repository/actions/workflows/$([uri]::EscapeDataString($AgentWorkflow))/runs?per_page=5" -Headers $Headers -TimeoutSec 15
+                $Runs=@(($Response.Content | ConvertFrom-Json).workflow_runs | ForEach-Object { $_ } | Select-Object -First 5 | ForEach-Object { @{status=[string]$_.status;conclusion=[string]$_.conclusion;createdAt=[string]$_.created_at;url=[string]$_.html_url} })
+                $Agent=@{Workflow=$AgentWorkflow;Runs=$Runs}
+            } catch {
+                $Status=0; try { $Status=[int]$_.Exception.Response.StatusCode } catch {}
+                $Agent=if ($Status -eq 404) { $null } else { @{Workflow=$AgentWorkflow;Error=$_.Exception.Message} }
+            }
+        }
+        return @{Token=$AccessToken;Repo=$Repository;Branch=$BaseBranch;AtUtc=[datetime]::UtcNow;Pulls=@($Prs | Sort-Object number -Unique);Merged=$Merged;Agent=$Agent}
+    }
     if ($Kind -eq 'history') {
         if ($RunId -notmatch '^\d+$') { throw 'A numeric run ID is required.' }
         function Read-Json([string]$Path) { (Invoke-WebRequest -UseBasicParsing -Uri "https://api.github.com/repos/$Repository$Path" -Headers $Headers -TimeoutSec 15).Content | ConvertFrom-Json }
