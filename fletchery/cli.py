@@ -160,9 +160,10 @@ def start_dashboard(fm, port: int):
 
 
 async def _serve_only(changed) -> None:
-    """Workers off: the screens and the Build Lane panel only. Returns when Fletchery's code changes."""
+    """Workers off: the screens and the Build Lane panel only. Returns when Fletchery's code changes or a restart is
+    asked for (a project switch)."""
     while not changed():
-        await asyncio.sleep(30)
+        await asyncio.sleep(2)
 
 
 def check_auth(cfg: Config) -> None:
@@ -274,6 +275,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fixture", choices=["lifeshare", "harbor"], default="lifeshare",
                     help="demo: which made-up project (harbor is the neutral one used for docs and screenshots)")
     a = ap.parse_args(argv)
+    if a.command == "run":  # the project the app last switched to (Settings > Projects) wins over the launcher's
+        import projects
+        act = projects.active_profile()
+        if act and (not a.profile or act.resolve() != Path(a.profile).resolve()):
+            print(f"Running the project chosen in the app: {act}", flush=True)
+            a.profile = act
     cfg = Config.load(a.profile)
     graph.PREFIX = cfg.label
 
@@ -357,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Fletchery running for {cfg.name}: pid {os.getpid()}, Build Lane only (workers off).", flush=True)
         dash = start_dashboard(fm, cfg.dashboard_port)
         start_code = code_fingerprint()
-        changed = lambda: code_fingerprint() != start_code  # noqa: E731
+        changed = lambda: bool(fm.restart_reason) or code_fingerprint() != start_code  # noqa: E731
         restart = False
         try:
             if cfg.workers_enabled:
