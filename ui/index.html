@@ -81,9 +81,10 @@
   .tq > div { display: flex; flex-direction: column; min-height: 0; }
   .tq .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
                 border: 1px solid #E3E9EF; border-radius: var(--r-sm); padding: 2px 10px; }
-  .tq-grip { height: 16px; margin-top: 6px; cursor: ns-resize; touch-action: none; display: flex; align-items: center; justify-content: center; }
-  .tq-grip::before { content: ""; width: 56px; height: 4px; border-radius: 2px; background: #C2CCD6; }
-  .tq-grip:hover::before, .tq-grip:focus-visible::before, .tq-grip.drag::before { background: var(--muted); }
+  .tq-grip, .grip { height: 16px; margin-top: 6px; cursor: ns-resize; touch-action: none; display: flex; align-items: center; justify-content: center; }
+  .tq-grip::before, .grip::before { content: ""; width: 56px; height: 4px; border-radius: 2px; background: #C2CCD6; }
+  .tq-grip:hover::before, .tq-grip:focus-visible::before, .tq-grip.drag::before,
+  .grip:hover::before, .grip:focus-visible::before, .grip.drag::before { background: var(--muted); }
   .tq h3 { margin: 0 0 4px; font-size: 15px; }
   .tq h3 span { color: var(--muted); font-weight: 400; }
   .tq ol, .tq ul { margin: 0; padding: 0; list-style: none; }
@@ -150,6 +151,7 @@
   .slot .what { color: #DCE5EE; font-size: 15px; line-height: 1.45; }
   .slot .branch { font-family: var(--mono); font-size: 12.5px; color: #8597A8; overflow-wrap: anywhere; }
   .doing-label { color: #8597A8; font-size: 12.5px; margin-bottom: 2px; }
+  .slots-scroll { max-height: var(--h, 560px); overflow-y: auto; overscroll-behavior: contain; padding: 2px; }
   .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
   .slot { background: #22303E; border-radius: 10px; padding: 16px 18px; min-height: 148px; display: flex; flex-direction: column; gap: 10px; }
   .slot.free { background: transparent; border: 1.5px dashed #3A4B5C; color: #8597A8; justify-content: center; }
@@ -217,6 +219,9 @@
   .pr .glyph { background: var(--lane-bg); color: var(--lane); }
   .blocked .glyph { background: var(--blocked-bg); color: var(--blocked); }
   .col ul { list-style: none; margin: 0; padding: 0; }
+  .col .scroll { max-height: var(--h, 320px); overflow-y: auto; overscroll-behavior: contain; }
+  .board-wrap { margin-bottom: 22px; }
+  .board-wrap .board { margin-bottom: 0; }
   .col li { padding: 10px 0; border-top: 1px solid #E3E9EF; }
   .col li:first-child { border-top: 0; }
   .col li .t { font-weight: 700; display: block; }
@@ -227,6 +232,7 @@
   .col .empty { color: var(--muted); font-size: 14px; padding: 8px 0 14px; }
 
   /* ---- history and log ---- */
+  .lower .hist { max-height: var(--h, 340px); overflow-y: auto; overscroll-behavior: contain; }
   .lower { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 14px; }
   .card { background: var(--panel); border-radius: var(--r-lg); padding: 14px 16px; min-width: 0; }
   .card h3 { margin: 0 0 8px; font-size: 16px; }
@@ -238,7 +244,7 @@
   .res.pr, .res.fixed { color: var(--running); }
   .res.blocked, .res.gave_up { color: var(--blocked); }
   .res.limited, .res.requeue, .res.signed_out { color: var(--hold); }
-  .log { font-family: var(--mono); font-size: 13px; line-height: 1.55; max-height: 340px; overflow: auto; margin: 0;
+  .log { font-family: var(--mono); font-size: 13px; line-height: 1.55; max-height: var(--h, 340px); overflow: auto; overscroll-behavior: contain; margin: 0;
          background: #F5F8FA; border-radius: var(--r-sm); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .log time { color: #7A8A99; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 20px; }
@@ -327,13 +333,19 @@
       </span>
       <p>Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
-    <div class="slots" id="slots"></div>
+    <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
+    <div class="grip" data-resize="slotsBox" data-key="workers" role="separator" aria-orientation="horizontal" tabindex="0"
+         aria-label="Resize Workers: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </section>
 
 
+  <div class="board-wrap" id="boardBox">
   <div class="board" id="board">
-    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Workers' PRs in the Build Lane<span class="n" id="n-pr"></span></h3><ul id="c-pr"></ul></div>
-    <div class="col blocked"><h3><span class="glyph" aria-hidden="true">✗</span>Needs you<span class="n" id="n-blocked"></span></h3><ul id="c-blocked"></ul></div>
+    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Workers' PRs in the Build Lane<span class="n" id="n-pr"></span></h3><div class="scroll" tabindex="0" aria-label="Workers' PRs"><ul id="c-pr"></ul></div></div>
+    <div class="col blocked"><h3><span class="glyph" aria-hidden="true">✗</span>Needs you<span class="n" id="n-blocked"></span></h3><div class="scroll" tabindex="0" aria-label="Needs you"><ul id="c-blocked"></ul></div></div>
+  </div>
+  <div class="grip" data-resize="boardBox" data-key="board" role="separator" aria-orientation="horizontal" tabindex="0"
+       aria-label="Resize Workers' PRs and Needs you: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </div>
 
   <section class="lane" id="lane" aria-labelledby="laneh" hidden>
@@ -351,9 +363,13 @@
     <div class="lane-queue" id="laneQueue"></div>
   </section>
 
+  <div id="lowerBox">
   <div class="lower">
-    <div class="card"><h3>Finished sessions</h3><table><tbody id="history"></tbody></table></div>
+    <div class="card"><h3>Finished sessions</h3><div class="hist" tabindex="0" aria-label="Finished sessions"><table><tbody id="history"></tbody></table></div></div>
     <div class="card"><h3>Log</h3><pre class="log" id="log" tabindex="0" aria-label="Fletchery log"></pre></div>
+  </div>
+  <div class="grip" data-resize="lowerBox" data-key="lower" role="separator" aria-orientation="horizontal" tabindex="0"
+       aria-label="Resize Finished sessions and Log: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </div>
   <p class="foot" id="foot"></p>
 </div>
@@ -634,6 +650,28 @@ try { const h = +localStorage.getItem("fletchery.tqHeight"); if (h) setTqHeight(
   });
   grip.addEventListener("dblclick", () => { try { localStorage.removeItem("fletchery.tqHeight"); } catch (e) { } $("tq").style.removeProperty("--tq-h"); });
 })();
+// Workers, the board and the bottom row: each grip sets --h (the scroll areas' height) on its box, remembered per machine.
+document.querySelectorAll(".grip[data-resize]").forEach(grip => {
+  const box = $(grip.dataset.resize), key = "fletchery.h." + grip.dataset.key;
+  const areas = () => [...box.querySelectorAll(".slots-scroll, .scroll, .hist, .log")].concat(box.matches(".slots-scroll") ? [box] : []);
+  const current = () => Math.max(0, ...areas().map(a => a.getBoundingClientRect().height));
+  const set = (h, save) => {
+    h = Math.round(Math.min(Math.max(260, window.innerHeight - 120), Math.max(100, h)));
+    box.style.setProperty("--h", h + "px"); grip.setAttribute("aria-valuenow", h);
+    if (save) { try { localStorage.setItem(key, String(h)); } catch (e) { } }
+  };
+  try { const h = +localStorage.getItem(key); if (h) set(h, false); } catch (e) { }
+  let startY = 0, startH = 0;
+  grip.addEventListener("pointerdown", e => { startY = e.clientY; startH = current(); grip.setPointerCapture(e.pointerId); grip.classList.add("drag"); e.preventDefault(); });
+  grip.addEventListener("pointermove", e => { if (grip.classList.contains("drag")) set(startH + e.clientY - startY, false); });
+  const end = () => { if (!grip.classList.contains("drag")) return; grip.classList.remove("drag"); set(current(), true); };
+  grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
+  grip.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") { set(current() + 40, true); e.preventDefault(); }
+    if (e.key === "ArrowUp") { set(current() - 40, true); e.preventDefault(); }
+  });
+  grip.addEventListener("dblclick", () => { try { localStorage.removeItem(key); } catch (e) { } box.style.removeProperty("--h"); });
+});
 const WAITING = /^(waits for|dependency cycle|depends on missing)/;
 function renderQueue(d) {
   const live = new Set(d.live.map(a => a.task));
@@ -660,7 +698,7 @@ function renderQueue(d) {
 function renderWorkersOff(d) {
   const off = d.workers_enabled === false;
   ["tqh", "nowh"].forEach(id => { const sec = $(id) && $(id).closest("section"); if (sec) sec.hidden = off; });
-  $("board").hidden = off;
+  $("boardBox").hidden = off;
   ["hold", "runnow", "add"].forEach(id => $(id).hidden = off);
   document.querySelector(".usage").hidden = off;
 }

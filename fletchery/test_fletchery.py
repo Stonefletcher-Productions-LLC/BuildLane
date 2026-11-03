@@ -532,7 +532,13 @@ asyncio.run(asyncio.wait_for(fm.run_forever(code_changed=lambda: next(flips, Tru
 assert ctx.gh.tasks[1].status == PR, "the pass that was running finished before the loop returned"
 import cli as fmod2
 fp = fmod2.code_fingerprint()
-assert "loop.py:" in fp and "worker.md:" in fp and fp == fmod2.code_fingerprint()
+assert len(fp) == 64 and fp == fmod2.code_fingerprint()
+# Re-dating the same code (a reinstall, a checkout) is not a code change; editing a file is.
+_loop = Path(fmod2.__file__).parent / "loop.py"
+_st = _loop.stat()
+os.utime(_loop, (_st.st_atime, _st.st_mtime + 120))
+assert fmod2.code_fingerprint() == fp, "re-dated files must not look like new code"
+os.utime(_loop, (_st.st_atime, _st.st_mtime))
 
 # ---- check scripts a task folder lacks run from Foreman's own checkout, on the task folder ----
 import gates as g2
@@ -615,5 +621,119 @@ try:
     assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
 finally:
     dash.stop()
+
+# ---- lane watcher: failed builds outside workers' PRs become tasks ----
+import watcher as wmod  # noqa: E402
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+from github import GitHub as _RealGH  # noqa: E402
+
+_NOW = _dt(2026, 11, 3, 6, 0, tzinfo=_tz.utc)
+
+
+def _iso(minutes_ago):
+    return (_NOW - _td(minutes=minutes_ago)).isoformat().replace("+00:00", "Z")
+
+
+def _run(root, rid, wf, conclusion, minutes_ago, branch="main", event="schedule", job="controller", step="Drain",
+         log="", sha="b" * 40):
+    d = root / "runs" / str(rid)
+    (d / "logs").mkdir(parents=True, exist_ok=True)
+    jid = str(rid) + "1"
+    (d / "run.json").write_text(_json_mod.dumps({
+        "id": int(rid), "path": f".github/workflows/{wf}", "name": wf.split(".")[0], "event": event,
+        "head_branch": branch, "head_sha": sha, "conclusion": conclusion, "created_at": _iso(minutes_ago),
+        "html_url": "", "jobs": [{"id": int(jid), "name": job, "conclusion": conclusion,
+                                  "steps": [{"name": "Run actions/checkout@v4", "conclusion": "success"},
+                                            {"name": step, "conclusion": conclusion}]}]}), encoding="utf-8")
+    (d / "logs" / f"{jid}.log").write_text(log, encoding="utf-8")
+
+
+def _log(step, body):
+    stamp = "2026-11-03T04:15:46.261Z "
+    lines = ["##[group]Run actions/checkout@v4", "Fetching the repository", "##[endgroup]", f"##[group]{step}", *body,
+             "##[error]Process completed with exit code 1.", "##[endgroup]", "##[group]Clean up", "git config --unset",
+             "##[debug]Unsetting HOME override", "##[endgroup]"]
+    return "\n".join(stamp + l for l in lines)
+
+
+wroot = Path(tempfile.mkdtemp())
+code_log = _log("Run Tools/CI/TestRoadSpec.ps1", ["Running road spec", "FullyQualifiedErrorId : Expected mocked launch launch"])
+_run(wroot, 900000000100, "staging-checkpoint.yml", "success", 300, branch="lane/checkpoint-control-11111111-2222-3333-4444-555555555555", sha="a" * 40)
+_run(wroot, 900000000110, "staging-checkpoint.yml", "failure", 30, branch="lane/checkpoint-control-83add621-8c91-4a94-bb01-55f285dea627",
+     job="Checkpoint validation", step="Run Tools/CI/TestRoadSpec.ps1", log=code_log)
+_run(wroot, 900000000111, "staging-controller.yml", "failure", 25, log=_log("Drain", ["HttpError: API rate limit exceeded for user ID 70461449."]))
+_run(wroot, 900000000112, "ci.yml", "failure", 20, branch="claude/someone", event="pull_request", log=code_log)     # a PR: not filed
+_run(wroot, 900000000113, "lane-regression.yml", "failure", 3, log=code_log)                                         # too new yet
+_run(wroot, 900000000114, "nightly.yml", "failure", 50, log=code_log)
+_run(wroot, 900000000115, "nightly.yml", "success", 40)                                                              # fixed already
+_run(wroot, 900000000116, "release.yml", "failure", 60, log=code_log)
+_run(wroot, 900000000117, "release.yml", "", 30)                                                                   # still running: wait for it
+assert wmod.LocalRunnerRuns(wroot).get("900000000110").key == "staging-checkpoint.yml@lane/checkpoint-control"
+
+ex = wmod.excerpt(code_log, "Run Tools/CI/TestRoadSpec.ps1")
+assert ex.startswith("##[group]Run Tools/CI/TestRoadSpec.ps1") and "Expected mocked launch" in ex and "Fetching" not in ex \
+    and "Unsetting" not in ex and "2026-11-03T" not in ex, ex
+assert wmod.classify(ex, "Run Tools/CI/TestRoadSpec.ps1")[0] == "code"
+assert wmod.classify("HttpError: API rate limit exceeded", "Drain")[0] == "infra"
+assert wmod.classify("FullyQualifiedErrorId : Could not claim build status.", "Claim build status")[0] == "infra"
+assert wmod.classify("FAIL  CheckSaveFields (0s)\nFAILED: CheckSaveFields", "UI text and save fields")[0] == "code"
+assert wmod.classify("error C2065: 'Foo': undeclared identifier", "Compile")[0] == "code"
+assert wmod.classify("something odd happened", "Package")[0] == "infra"  # unclear: a person looks
+
+wgh = FakeGitHub()
+wgh.commits = [{"sha": "c" * 40, "message": "Road spec: launch from the mock\n\nbody", "author": "ProjektPayne"}]
+wcfg = Config(name="T", repo="o/r", watch_skip_workflows=[])
+logs_seen = []
+w = wmod.Watcher(wcfg, wgh, wmod.LocalRunnerRuns(wroot), log=logs_seen.append, clock=lambda: _NOW)
+seen = []
+did = w.watch(seen)
+filed = {n: t for n, t in wgh.tasks.items()}
+assert len(filed) == 2, (did, filed)
+code_t = next(t for t in filed.values() if "Fix the build" in t.title)
+infra_t = next(t for t in filed.values() if "Build PC problem" in t.title)
+assert _graph.label_for(QUEUED) in code_t.labels and _graph.label_for(BLOCKED) in infra_t.labels
+assert "Expected mocked launch" in code_t.body and "Road spec: launch from the mock" in code_t.body \
+    and "Do not skip, weaken or delete" in code_t.body and "fletchery-failure sig=" in code_t.body
+assert "rate limit" in infra_t.body and "no worker has been started" in infra_t.body
+assert code_t.title.startswith("Fix the build: staging-checkpoint fails at Run Tools/CI/TestRoadSpec.ps1")
+assert w.watch(seen) == []  # nothing new: no duplicates
+assert not any("release" in t.title for t in wgh.tasks.values()) and "900000000116" not in seen
+
+# the same failure on a later checkpoint branch: a comment on the open issue, not a new issue
+_run(wroot, 900000000120, "staging-checkpoint.yml", "failure", 15, branch="lane/checkpoint-control-99999999-8888-7777-6666-555555555555",
+     job="Checkpoint validation", step="Run Tools/CI/TestRoadSpec.ps1", log=code_log.replace("70461449", "1"))
+w.watch(seen)
+assert len(wgh.tasks) == 2 and any("failed the same way again" in c for c in wgh.comments.get(code_t.number, []))
+# the PC problem goes away by itself: the issue nobody started is closed
+_run(wroot, 900000000130, "staging-controller.yml", "success", 12)
+w.watch(seen)
+assert infra_t.number in wgh.closed and any("passed again" in c for c in wgh.comments[infra_t.number])
+# a task a worker already took is left alone even when the build passes again
+wgh.tasks[code_t.number].labels = ["foreman", _graph.label_for(RUNNING)]
+_run(wroot, 900000000140, "staging-checkpoint.yml", "success", 11, branch="lane/checkpoint-control-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+w.watch(seen)
+assert code_t.number not in wgh.closed
+
+# a worker's PR failed on the build PC: GitHub shows it as a commit status, and the fixer gets the step's log
+class _StatusGH(_RealGH):
+    def api(self, path, method="GET", body=None, paginate=False):
+        if path.endswith("/comments?per_page=100"):
+            return []
+        if "/check-runs" in path:
+            return {"check_runs": []}
+        if path.endswith("/status"):
+            return {"statuses": [
+                {"context": "preview-receipt", "state": "failure", "description": "Failed on the build PC (run 900000000110)",
+                 "target_url": None, "updated_at": "2026-11-03T04:21:30Z"},
+                {"context": "preview-receipt", "state": "pending", "description": "Running", "updated_at": "2026-11-03T04:19:00Z"},
+                {"context": "regression", "state": "success", "description": "Passed", "updated_at": "2026-11-03T04:21:00Z"}]}
+        raise AssertionError(path)
+sgh = _StatusGH("o/r")
+fb = sgh.feedback_since(PullRequest(5, "t", "h", "b", "s" * 40, ["foreman"]), None)
+assert [f.kind for f in fb] == ["status"] and "preview-receipt" in fb[0].text, fb
+assert sgh.feedback_since(PullRequest(5, "t", "h", "b", "s" * 40, ["foreman"]), "2026-11-03T05:00:00Z") == []
+rich = w.enrich(fb[0].text, "preview-receipt")
+assert "Expected mocked launch" in rich and "Failing step:" in rich, rich
+assert wmod.make(Config(name="T", repo="o/r"), FakeGitHub()) is None  # the fake has nothing to watch
 
 print("RESULT: PASS (Fletchery engine checks)")

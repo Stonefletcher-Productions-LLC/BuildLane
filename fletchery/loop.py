@@ -25,6 +25,8 @@ class State:
     paused_reason: str = ""
     held: bool = False                                        # Alex pressed Pause: start nothing new until Resume
     signed_out: str = ""                                      # why sessions cannot sign in; cleared once they can
+    watch_seen: list = field(default_factory=list)            # build runs the lane watcher has handled
+    watch_last: str = ""                                      # ISO: when the lane watcher last looked
 
     @staticmethod
     def load(path: Path) -> "State":
@@ -88,6 +90,13 @@ class Engine:
         self._prs: dict = {}
         self._waiting: dict = {}
         self._aloop: asyncio.AbstractEventLoop | None = None
+        self.watcher = None
+        if not dry_run and ctx.cfg.workers_enabled:
+            try:
+                import watcher
+                self.watcher = watcher.make(ctx.cfg, ctx.gh, ctx.log)
+            except Exception as e:  # never let the watcher keep the workers from starting
+                ctx.log(f"lane watcher off: {type(e).__name__}: {e}")
 
     # ---- the pass ----
     async def once(self) -> list[Outcome]:
@@ -106,6 +115,7 @@ class Engine:
         self.last_plan = []
         self.passing = True
         try:
+            self._watch()
             tasks = gh.open_tasks()
             prs = {p.number: p for p in gh.open_prs()}
         finally:
@@ -141,6 +151,10 @@ class Engine:
             fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
             if not fb or paused or self.free_slots() <= 0:
                 continue
+            if self.watcher:  # a failure on the build PC: give the fixer the failing step's log
+                for f in fb:
+                    if f.kind == "status":
+                        f.text = self.watcher.enrich(f.text, f.text.split("`")[1] if f.text.count("`") >= 2 else "")
             attempt = st.fix_attempts.get(str(pr_num), 0) + 1
             self.last_plan.append(f"fix PR #{pr_num} (task #{task.number}, attempt {attempt}): {fb[0].text[:80]}")
             if self.dry_run:
@@ -178,6 +192,18 @@ class Engine:
             st.save(self.state_dir / "state.json")
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
+
+    def _watch(self) -> None:
+        """Every `watch_minutes`: failed builds outside workers' PRs become tasks (see watcher.py)."""
+        st = self.state
+        if not self.watcher or (st.watch_last and (datetime.now(timezone.utc) - datetime.fromisoformat(st.watch_last))
+                                < timedelta(minutes=self.cfg.watch_minutes)):
+            return
+        st.watch_last = now()
+        try:
+            self.watcher.watch(st.watch_seen)
+        except Exception as e:  # GitHub down, a run file half-written: try again next time
+            self.ctx.log(f"lane watcher: {type(e).__name__}: {e}")
 
     def free_slots(self) -> int:
         return self.cfg.max_parallel - len(self.jobs)
@@ -339,6 +365,8 @@ class Engine:
                 "limit_reason": st.paused_reason, "tasks": rows,
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
+                "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),
+                          "last": st.watch_last, "recent": list(getattr(self.watcher, "recent", []))[:8]},
                 "dry_run": self.dry_run}
 
     # ---- status issue ----

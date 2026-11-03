@@ -66,6 +66,13 @@ class GitHub:
             raise RuntimeError(f"gh api {method} {path}: {p.stderr.strip() or p.stdout.strip()}")
         return parse_pages(p.stdout) if paginate else (json.loads(p.stdout) if p.stdout.strip() else None)
 
+    def api_text(self, path: str) -> str:
+        """A GET whose answer is plain text (a job's log)."""
+        p = subprocess.run([self.gh, "api", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if p.returncode != 0:
+            raise RuntimeError(f"gh api {path}: {p.stderr.strip()}")
+        return p.stdout
+
     # ---- issues ----
     def open_tasks(self) -> dict[int, Task]:
         items = self.api(f"repos/{self.repo}/issues?state=open&labels={graph.PREFIX}&per_page=100", paginate=True) or []
@@ -99,6 +106,16 @@ class GitHub:
     def create_issue(self, title: str, body: str, labels: list[str]) -> int:
         it = self.api(f"repos/{self.repo}/issues", "POST", {"title": title, "body": body, "labels": labels})
         return it["number"]
+
+    def close_issue(self, number: int) -> None:
+        self.api(f"repos/{self.repo}/issues/{number}", "PATCH", {"state": "closed", "state_reason": "completed"})
+
+    def compare_commits(self, base: str, head: str) -> list[dict]:
+        """Commits in `head` that `base` does not have, oldest first: sha, message, author."""
+        d = self.api(f"repos/{self.repo}/compare/{base}...{head}") or {}
+        return [{"sha": c["sha"], "message": c["commit"]["message"],
+                 "author": (c.get("author") or {}).get("login") or c["commit"]["author"]["name"]}
+                for c in d.get("commits", [])]
 
     # ---- status issue ----
     def status_issue(self) -> int | None:
@@ -149,6 +166,15 @@ class GitHub:
             if r.get("conclusion") in ("failure", "timed_out") and (not since or (r.get("completed_at") or "") > since):
                 out.append(Feedback(pr.number, "check", f"check `{r['name']}` {r['conclusion']}: {r.get('html_url', '')}",
                                     r.get("completed_at") or ""))
+        # The local runner reports to GitHub as commit statuses, not check runs ("Failed on the build PC (run N)").
+        st = self.api(f"repos/{self.repo}/commits/{pr.head_sha}/status") or {}
+        latest: dict[str, dict] = {}
+        for s in st.get("statuses", []):  # newest first: the first one per context is the current verdict
+            latest.setdefault(s.get("context", ""), s)
+        for ctx, s in latest.items():
+            if s.get("state") in ("failure", "error") and (not since or (s.get("updated_at") or "") > since):
+                out.append(Feedback(pr.number, "status", f"`{ctx}` {s['state']}: {s.get('description') or ''} "
+                                                          f"{s.get('target_url') or ''}".strip(), s.get("updated_at") or ""))
         if pr.mergeable is False:
             out.append(Feedback(pr.number, "conflict", f"PR #{pr.number} conflicts with {pr.base}", _now()))
         return out
@@ -235,7 +261,11 @@ class FakeGitHub:
     def feedback_since(self, pr, since):
         return [f for f in self.feedback.get(pr.number, []) if not since or f.at > since]
 
-    def close_issue(self, number):  # what the lane does when a PR with "Closes #n" lands
+    def compare_commits(self, base, head):
+        return list(getattr(self, "commits", []))
+
+    def close_issue(self, number):  # also what the lane does when a PR with "Closes #n" lands
+        self.writes.append(f"close #{number}")
         self.closed.add(number)
         if number in self.tasks:
             self.tasks[number].closed = True
