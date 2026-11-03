@@ -139,6 +139,9 @@ def agent_pool(cfg: Config, root: Path, plugin: Path | None, fake=None):
     from agents import AgentPool, specs_from
     import clis
     specs = specs_from(cfg.agents, cfg.model)
+    for s in specs:  # the old top-level Claude plan / API key switch still decides for an agent that says nothing
+        if s.kind == "claude" and not any(a.get("name") == s.name and "auth" in a for a in (cfg.agents or [])):
+            s.auth = "key" if cfg.auth == "api" else "plan"
     return AgentPool(specs, cfg.routing, lambda spec: clis.make_runtime(spec, cfg, root, plugin, fake))
 
 

@@ -105,6 +105,7 @@
   /* ---- usage: cap, plan/API switch, this week ---- */
   .usage { display: grid; gap: 6px; min-width: 260px; }
   .usage-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .usage-line[hidden], .usage-line [hidden] { display: none; }
   .usage-line b { color: var(--ink); font-variant-numeric: tabular-nums; }
   .step { min-height: 28px; min-width: 28px; padding: 0; font-size: 16px; line-height: 1; border-width: 1.5px; }
   .seg { display: inline-flex; border: 1.5px solid var(--ink); border-radius: var(--r-sm); overflow: hidden; }
@@ -337,12 +338,13 @@
         <button type="button" class="step" id="capUp" aria-label="Raise the daily cap">+</button>
         <span>daily cap</span>
       </div>
+      <div class="usage-line" id="byAgent" hidden></div>
       <div class="usage-line">
-        <span id="authLbl">Sessions run on</span>
+        <span id="authRow" class="usage-line"><span id="authLbl">Claude sessions run on</span>
         <span class="seg" role="group" aria-labelledby="authLbl">
-          <button type="button" id="authPlan" aria-pressed="true" title="Your Claude plan (Max). Shares its usage limits with your own chats.">Claude plan</button>
-          <button type="button" id="authApi" aria-pressed="false" title="An API key, billed per token. Needs ANTHROPIC_API_KEY set for your Windows user.">API key</button>
-        </span>
+          <button type="button" id="authPlan" aria-pressed="true" title="Claude sessions only: your Claude plan (Max). Shares its usage limits with your own chats. Other agents use their own sign-in or key (Agents panel).">Claude plan</button>
+          <button type="button" id="authApi" aria-pressed="false" title="Claude sessions only: an API key, billed per token. Set ANTHROPIC_API_KEY in the Agents panel or for your Windows user.">API key</button>
+        </span></span>
         <button type="button" class="linkbtn" id="weekBtn">This week</button>
       </div>
     </div>
@@ -722,7 +724,18 @@ async function setWorkers(v) {
 }
 function renderUsage(d) {
   const plan = d.auth !== "api";
-  $("usage").innerHTML = `About <b>$${(d.spent_today || 0).toFixed(2)}</b> today${plan ? " (estimate)" : ""} of a`;
+  const A = d.agents && d.agents.multi ? d.agents : null;
+  $("usage").innerHTML = A ? `All agents: about <b>$${(d.spent_today || 0).toFixed(2)}</b> today (estimate) of a`
+                           : `About <b>$${(d.spent_today || 0).toFixed(2)}</b> today${plan ? " (estimate)" : ""} of a`;
+  const by = $("byAgent");
+  if (A) {
+    const spent = A.spent_today || {};
+    const parts = A.list.filter(a => a.enabled || spent[a.name]).map(a => `${esc(a.name)} <b>$${(spent[a.name] || 0).toFixed(2)}</b>`);
+    by.innerHTML = `<span>Today by agent: ${parts.join(" · ")}</span> <a class="linkbtn" href="#agents">Agents</a>`;
+    by.title = "Today's estimated cost by agent, writing and reviewing, counted from this version on. Each agent's plan has its own limits; Codex on a ChatGPT plan reports no cost.";
+    by.hidden = false;
+  } else by.hidden = true;
+  $("authRow").hidden = !!A;  // with several agents, each agent's card has its own plan / API key switch
   $("capVal").textContent = "$" + Math.round(d.daily_budget);
   $("capDown").disabled = d.daily_budget <= 0;
   $("authPlan").setAttribute("aria-pressed", plan ? "true" : "false");
@@ -941,7 +954,12 @@ function renderAgents(d) {
       <div class="top"><span class="nm">${esc(a.name)}</span><span class="chip ${cls}">${esc(chip)}</span></div>
       <div class="model">${esc(a.kind)}${a.model ? " · " + esc(a.model) : ""} · strength ${a.tier} · ${esc(a.vendor)}</div>
       ${acct ? `<div class="acct">${esc(acct)}</div>` : ""}
-      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}</div>
+      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : ""}</div>
+      <div class="row2"><span class="rates">Runs on</span>
+        <span class="seg" role="group" aria-label="${esc(a.name)} runs on">
+          <button type="button" data-ag-auth="plan" data-ag="${esc(a.name)}" aria-pressed="${a.auth !== "key"}" title="${esc(PLAN_NAME[a.kind] || "its own sign-in")}">${esc(PLAN_LABEL[a.kind] || "Plan")}</button>
+          <button type="button" data-ag-auth="key" data-ag="${esc(a.name)}" aria-pressed="${a.auth === "key"}" title="${a.api_key ? "Billed per token through " + esc(a.api_key) : "Add the key this model takes first"}">API key</button>
+        </span></div>
       ${a.key_env && a.key_env.length ? `<div class="rates">Uses key ${a.key_env.map(esc).join(", ")}</div>` : ""}
       <div class="row2">
         <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button>
@@ -955,13 +973,20 @@ function renderAgents(d) {
       ${k.set ? `<button type="button" data-key-clear="${esc(k.name)}">Remove</button>` : ""}</td></tr>`).join("") +
     `<tr><td colspan="4" class="b" style="text-align:left"><button type="button" class="linkbtn" data-key-set="">Add another key</button></td></tr>`;
 }
+const PLAN_LABEL = {claude: "Claude plan", codex: "ChatGPT", opencode: "OpenCode sign-in"};
+const PLAN_NAME = {claude: "Your Claude plan (shares its limits with your own chats)", codex: "Your ChatGPT sign-in (codex login)",
+                   opencode: "OpenCode's own sign-in, e.g. OpenCode Go (opencode auth login)"};
 async function agentCall(path, body, msg) {
   try { const r = await post(path, body); if (r && r.message) $("state").textContent = r.message; await refresh(); return r; }
   catch (e) { alert(e.message); }
 }
 $("agents").addEventListener("click", ev => {
   const b = ev.target.closest("button"); if (!b) return;
-  if (b.dataset.agToggle) {
+  if (b.dataset.agAuth) {
+    if (b.getAttribute("aria-pressed") === "true") return;
+    if (b.dataset.agAuth === "key" && !confirm(`Run ${b.dataset.ag} on its API key? Its sessions are then billed per token. Running sessions finish as they are.`)) return;
+    agentCall("/api/agents/auth", {name: b.dataset.ag, mode: b.dataset.agAuth});
+  } else if (b.dataset.agToggle) {
     const on = b.getAttribute("aria-pressed") !== "true";
     agentCall("/api/agents/toggle", {name: b.dataset.agToggle, on});
   } else if (b.dataset.agLogin) agentCall("/api/agents/login", {name: b.dataset.agLogin});

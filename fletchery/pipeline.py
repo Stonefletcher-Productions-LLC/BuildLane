@@ -38,6 +38,7 @@ class _LimitGuard(Runtime):
             live.meta(self.task, agent=self.agent, role=role)
         cb = on_action or ((lambda text: live.action(self.task, text)) if live and self.task else None)
         r = await self.inner.run(role, prompt, cwd, budget_usd, max_turns, on_action=cb)
+        r.agent = self.agent
         if r.signed_out:
             raise Limited(r.error, r.cost_usd, "signed_out", self.agent)
         if r.limited:
@@ -64,6 +65,7 @@ class Outcome:
     route: str = ""          # why the router picked the first agent
     reviewer: str = ""
     attempts: list[dict] = field(default_factory=list)  # [{"agent", "difficulty", "role", "ok", "why"}]: what Stats learns from
+    costs: dict = field(default_factory=dict)  # agent -> USD this outcome spent on it (writer and reviewer apart)
 
 
 @dataclass
@@ -403,6 +405,8 @@ def _freeze_text(cfg: Config) -> str:
 
 def _account(out: Outcome, r: RunResult) -> None:
     out.cost_usd += r.cost_usd
+    who = getattr(r, "agent", "") or "claude"
+    out.costs[who] = round(out.costs.get(who, 0.0) + r.cost_usd, 4)
     if r.session_id:
         out.sessions.append(f"{r.role}:{r.session_id}")
 

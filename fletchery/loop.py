@@ -31,6 +31,7 @@ class State:
     agent_paused: dict = field(default_factory=dict)          # agent -> {"until", "reason"}: one agent's limit or sign-in
     task_agent: dict = field(default_factory=dict)            # task number -> the agent that wrote its branch
     accounts_checked: str = ""                                # ISO: when every agent's sign-in was last checked
+    spent_by_agent: dict = field(default_factory=dict)        # YYYY-MM-DD -> {agent: USD}
 
     @staticmethod
     def load(path: Path) -> "State":
@@ -328,6 +329,12 @@ class Engine:
             outcomes.append(o)
             st.running.pop(str(o.task), None)
             st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
+            if self.ctx.agents is not None:
+                day = st.spent_by_agent.setdefault(today(), {})
+                for who, usd in o.costs.items():
+                    day[who] = round(day.get(who, 0.0) + usd, 4)
+                for old in [d for d in st.spent_by_agent if d < (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")]:
+                    del st.spent_by_agent[old]
             self._ledger(o)
             if o.result == "fixed" and o.pr_number is not None:
                 st.seen[str(o.pr_number)] = now()
@@ -533,6 +540,7 @@ class Engine:
         import keys
         used = sorted({k for s in pool.specs.values() for k in (s.key_env or [])})
         return {"multi": pool.multi, "list": pool.view(self.stats()), "keys": keys.listing(used),
+                "spent_today": {k: round(v, 2) for k, v in self.state.spent_by_agent.get(today(), {}).items()},
                 "escalate": self.ctx.escalate, "routing": {k: v for k, v in (pool.routing or {}).items()
                                                             if k in ("easy", "medium", "hard", "reviewers")}}
 

@@ -140,6 +140,16 @@ class CliRuntime(Runtime):
         minutes = (self.spec.timeout_minutes or {}).get(role) or DEFAULT_TIMEOUT_MIN.get(role, 30)
         import keys
         env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", **self.env, **keys.env_for(self.spec.key_env), **extra_env}
+        if self.spec.auth == "key":  # run on the stored API key instead of the CLI's plan sign-in
+            name = self.spec.api_key_name
+            value = keys.get(name) if name else None
+            if not value:
+                result.error = f"{self.spec.name} is set to run on an API key, but {name or 'no key'} is not stored"
+                result.signed_out = True
+                return result
+            env[name] = value
+            if self.kind == "codex":
+                env["CODEX_API_KEY"] = value  # what `codex exec` reads for key sign-in
         env.pop("ANTHROPIC_API_KEY", None)  # other vendors never need it; keep it out of their sessions
         flags = 0x00004000 if os.name == "nt" and self.low_priority else 0  # BELOW_NORMAL_PRIORITY_CLASS
         state: dict = {"last_text": "", "errors": [], "cost": 0.0, "turns": 0, "session": ""}
@@ -361,7 +371,8 @@ def make_runtime(spec, cfg, repo_root: Path, plugin_path: Path | None, fake: Run
         return OpenCodeRuntime(spec)
     if spec.kind == "claude":
         from runtime import AgentSdkRuntime
-        return AgentSdkRuntime(repo_root, spec.model or cfg.model or None, plugin_path=plugin_path, auth=cfg.auth)
+        return AgentSdkRuntime(repo_root, spec.model or cfg.model or None, plugin_path=plugin_path,
+                               auth="api" if spec.auth == "key" else "subscription")
     raise ValueError(f'agent "{spec.name}": unknown kind "{spec.kind}" (claude, codex or opencode)')
 
 
@@ -372,7 +383,12 @@ def check(spec, auth_mode: str = "subscription") -> tuple[bool, str]:
     stored = keys.env_for(spec.key_env)
     if spec.kind == "claude":
         import auth
-        return auth.check(auth_mode)
+        return auth.check("api" if spec.auth == "key" else "subscription")
+    if spec.auth == "key":
+        name = spec.api_key_name
+        if not name:
+            return False, "No API key is known for this model's provider: add one to the agent's keys."
+        return (True, f"Runs on the API key {name}") if keys.get(name) else (False, f"Runs on an API key, but {name} is not stored.")
     if stored and spec.kind == "opencode":
         return True, "Using the stored key " + ", ".join(stored)
     try:

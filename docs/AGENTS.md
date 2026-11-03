@@ -20,7 +20,7 @@ Add an `agents` list and a `routing` block to the project's profile, under `work
 ],
 "routing": {
   "easy":   ["deepseek", "deepseek-pro"],
-  "medium": ["codex", "claude", "deepseek-pro"],
+  "medium": ["deepseek-pro", "claude", "codex"],
   "hard":   ["claude", "codex"],
   "reviewers": ["claude", "codex"]
 }
@@ -38,6 +38,7 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
 | `enabled` | Off means nothing new goes to it. The **On/Off** switch on the dashboard changes this |
 | `maxParallel` | Optional: how many tasks this agent may run at once |
 | `keyEnv` | Optional: stored API keys this agent's sessions receive, such as `["DEEPSEEK_API_KEY"]` |
+| `auth` | `plan` (default): the CLI's own sign-in (Claude plan, ChatGPT for Codex, OpenCode's sign-in). `key`: the agent's API key from the key store instead, billed per token. Switch it on the agent's card ("Runs on"). |
 | `timeoutMinutes` | Optional, for Codex and OpenCode, which have no turn limit: `{"worker": 60, "reviewer": 20}` |
 
 ## How a task gets its agent
@@ -46,14 +47,16 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
    is off, paused or busy, the task waits and says so in the queue. It doesn't go to a different agent.
 2. **Difficulty.** A `difficulty:easy|medium|hard` label or a `Difficulty:` line wins. Otherwise Fletchery reads the
    issue:
-   - **Hard:** it mentions saves or migrations, networking or replication, navmesh or NavCheck, threading,
-     performance, the Folk sim or AI, `Lane-Imports:`, or a refactor. A very long issue, four or more C++ files, or
-     three or more dependencies also counts as hard.
-   - **Easy:** docs, typos or wording, string tables, tests only, comments or logging, or a small Python tool, as long
-     as there are no C++ files and the issue is short.
+   - **Hard** at 3 points or more. Saves and migrations are worth 3, multiplayer races and threading 2. A mention of
+     replication, navmesh or NavCheck, `Lane-Imports:`, Folk autonomy, profiling or a refactor is worth 1 each,
+     because LifeShare issues name those as proof steps almost every time. A very long issue or four or more C++
+     files add 2, and three or more dependencies add 1.
+   - **Easy:** nothing scored, and the issue is about docs, typos or wording, string tables, tests only, comments or
+     logging, or a small Python tool, with no C++ files and a short body.
    - **Medium:** everything else.
 
-   To change the patterns, set `routing.hardPatterns` and `routing.easyPatterns` (regular expressions).
+   To change the patterns, set `routing.hardPatterns` (`[regex, weight]` pairs), `routing.easyPatterns` and
+   `routing.hardScore`.
 3. **The list for that difficulty**, filtered to the agents that are **on**, **signed in**, **not paused for a limit**
    and **below their `maxParallel`**. When the first choice isn't available, the next one takes the task. Agents not
    in the list come after it, strongest first.

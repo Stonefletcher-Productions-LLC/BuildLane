@@ -77,6 +77,7 @@ class RunResult:
     error: str = ""
     limited: bool = False  # hit a usage or rate limit: not a verdict on the task, the loop pauses instead
     signed_out: bool = False  # the plan sign-in expired or the key was refused: pause until someone signs in again
+    agent: str = ""           # which of the project's agents ran it (set by the pipeline)
 
 
 _LIMIT = re.compile(r"usage limit|rate.?limit|limit reached|limit will reset|resets at|overloaded|\b429\b|\b529\b",
