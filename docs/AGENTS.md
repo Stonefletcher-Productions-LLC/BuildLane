@@ -65,6 +65,19 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
    difficulty. An agent that passes fewer than `demoteBelow` (40%) goes to the back. Set `"learn": false` to turn
    this off.
 
+## Scores (routing mode `scores`)
+
+With `"routing": {"mode": "scores"}` (the default when the profile names no per-level lists), each agent has a score from 0 to 100 for five kinds of work (C++ / Unreal, Python & tools, UI, Docs & data, Review) plus **Cheapness**. A task's kind comes from its text (`.cpp`, `Tools/*.py`, UMG, `docs/` and so on), or from a `skill:<kind>` label or a `Skill:` line. With no signs it is `routing.defaultSkill` (`cpp`). Its difficulty sets a bar: easy 45, medium 60, hard 75 (`routing.bars`). The task goes to the **cheapest free agent that clears the bar**. Each session an agent is already running counts 10 points against its cheapness, so work spreads out. If nobody free clears the bar, the strongest free agent gets it. Escalation takes the smallest step up in that kind of work. Reviews go to the best reviewer from another company, at least `routing.reviewMin` (50).
+
+Where a score comes from, strongest first:
+
+1. **You**: set it on the card (Edit scores), saved as `scores` on the agent in the profile.
+2. **Fletchery's results**: each pass at a level counts as that level's bar + 15, and each fail as the bar - 25. These results are blended with the seed, which counts as six tasks.
+3. **Benchmarks**: `fletchery/model_scores.json` lists public numbers per model, each with its source page and date: Terminal-Bench 4.0 + 25, SWE-bench Pro + 10, and SWE-bench Verified - 30 at half weight. Benchmarks don't split C++ from Python, so every kind starts from the same number. Cheapness comes from the list price per million output tokens.
+4. **Strength** (1-5): used when no benchmark names the model, as 20 + 15 × Strength.
+
+**Refresh benchmarks** fetches the newest `model_scores.json` from Fletchery's main branch with `gh` and keeps it in the state folder. To add a model, add its numbers and sources to that file on main.
+
 ## Review, escalation and limits
 
 - **Review.** The reviewer comes from another vendor than the writer, chosen from `routing.reviewers` first and then

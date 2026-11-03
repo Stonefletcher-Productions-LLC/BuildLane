@@ -57,23 +57,9 @@
       }
     ],
     "routing": {
-      "easy": [
-        "deepseek",
-        "deepseek-pro"
-      ],
-      "medium": [
-        "deepseek-pro",
-        "claude",
-        "codex"
-      ],
-      "hard": [
-        "claude",
-        "codex"
-      ],
-      "reviewers": [
-        "claude",
-        "codex"
-      ]
+      "mode": "scores",
+      "defaultSkill": "cpp",
+      "reviewMin": 50
     }
   }
 }

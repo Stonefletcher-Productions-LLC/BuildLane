@@ -49,6 +49,7 @@ class AgentSpec:
     timeout_minutes: dict = None    # role -> minutes, for CLIs without a turn limit
     key_env: list = None            # stored keys (keys.py) this agent's sessions get, e.g. ["DEEPSEEK_API_KEY"]
     auth: str = "plan"              # plan: the CLI's own sign-in (Claude plan, ChatGPT, OpenCode Go); key: an API key
+    scores: dict = None             # your own scores (0-100) by kind of task, e.g. {"cpp": 70}; the rest are automatic
 
     @property
     def api_key_name(self) -> str:
@@ -65,7 +66,7 @@ class AgentSpec:
 
 _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", "vendor": "vendor", "enabled": "enabled",
               "maxParallel": "max_parallel", "command": "command", "roles": "roles", "timeoutMinutes": "timeout_minutes",
-              "keyEnv": "key_env", "auth": "auth"}
+              "keyEnv": "key_env", "auth": "auth", "scores": "scores"}
 DEFAULT_VENDOR = {"claude": "anthropic", "codex": "openai"}
 
 
@@ -214,6 +215,7 @@ class Stats:
     """(agent, difficulty) -> [passed, tried], from the ledger's `attempts`. An attempt passes when its work became a
     PR (worker) or was pushed (fixer); it fails when Fletchery had to escalate or block."""
     counts: dict = field(default_factory=dict)
+    attempts: list = field(default_factory=list)  # the raw attempts, for scores.results
 
     @staticmethod
     def from_ledger(path: Path, last: int = 3000) -> "Stats":
@@ -227,6 +229,7 @@ class Stats:
                 continue
             for a in e.get("attempts") or []:
                 s.add(a.get("agent", "?"), a.get("difficulty", MEDIUM), bool(a.get("ok")))
+                s.attempts.append(a)
         return s
 
     def add(self, agent: str, level: str, ok: bool) -> None:
@@ -255,6 +258,7 @@ class Choice:
     agent: str
     difficulty: str
     why: str
+    skill: str = ""
 
 
 class AgentPool:
@@ -268,6 +272,57 @@ class AgentPool:
         self.paused: dict[str, dict] = {}   # name -> {"until": iso, "reason": text}
         self.busy: dict[str, int] = {}
         self.accounts: dict[str, dict] = {}  # name -> {"ok": bool, "message": text, "at": iso}: is it signed in
+        self.catalog_override: Path | None = None  # a refreshed model_scores.json in the state dir
+        self._results: dict = {}  # scores.results of the last Stats seen
+
+    # ---- scores ----
+    @property
+    def mode(self) -> str:
+        """"scores" (pick by each agent's score for the task's kind) or "lists" (the profile's per-level lists).
+        A profile that names lists keeps them unless it says `"mode": "scores"`."""
+        m = self.routing.get("mode")
+        if m in ("scores", "lists"):
+            return m
+        return "lists" if any(self.routing.get(lv) for lv in LEVELS) else "scores"
+
+    def catalog(self) -> dict:
+        import scores
+        return scores.load_catalog(self.catalog_override)
+
+    def scored(self, stats: "Stats | None" = None) -> dict:
+        """name -> scores.effective(...) for every agent."""
+        import scores
+        if stats is not None:
+            self._results = scores.results(stats.attempts)
+        cat = self.catalog()
+        return {n: scores.effective(s, cat, self._results) for n, s in self.specs.items()}
+
+    def bar(self, level: str) -> int:
+        import scores
+        return int((self.routing.get("bars") or {}).get(level, scores.BARS.get(level, 60)))
+
+    def _choose_scored(self, level: str, why: str, skill: str, skill_why: str, stats, role: str) -> "Choice | None":
+        import scores
+        sc = self.scored(stats)
+        bar = self.bar(level)
+        free = [n for n in self.specs if self.available(n, role)]
+        if not free:
+            return None
+        able = [n for n in free if sc[n]["skills"][skill]["score"] >= bar]
+        kind = scores.SKILL_NAMES[skill]
+        if able:
+            pick = max(able, key=lambda n: (sc[n]["cost"] - scores.BUSY_PENALTY * self.busy.get(n, 0),
+                                            sc[n]["skills"][skill]["score"]))
+            note = (f"{level}, {kind} ({why}; {skill_why}): {pick} scores {sc[pick]['skills'][skill]['score']} "
+                    f"(bar {bar}) and is the cheapest that clears it")
+            others = [n for n in able if n != pick]
+            if others:
+                note += "; also able: " + ", ".join(f"{n} {sc[n]['skills'][skill]['score']}" for n in others[:3])
+        else:
+            pick = max(free, key=lambda n: sc[n]["skills"][skill]["score"])
+            note = (f"{level}, {kind} ({why}; {skill_why}): nobody free clears the bar of {bar}, so the strongest free: "
+                    f"{pick} {sc[pick]['skills'][skill]['score']}")
+        return Choice(pick, level, note, skill)
 
     # ---- basics ----
     @property
@@ -366,23 +421,35 @@ class AgentPool:
                role: str = "worker") -> Choice | None:
         level, why = classify(title, body, labels, self.routing.get("hardPatterns"), self.routing.get("easyPatterns"),
                               depends, self.routing.get("hardScore"))
+        import scores
+        skill, skill_why = scores.classify_skill(title, body, labels, self.routing.get("defaultSkill", "cpp"))
         forced = override(body, labels)
         if forced and forced in self.specs:
             if self.available(forced, role):
-                return Choice(forced, level, f"asked for on the issue ({why})")
+                return Choice(forced, level, f"asked for on the issue ({why})", skill)
             # asked for but paused or busy: wait for it rather than quietly using another
             return None
+        if self.mode == "scores":
+            return self._choose_scored(level, why, skill, skill_why, stats, role)
         order, learned = self.learned(self.preferences(level), level, stats)
         for n in order:
             if self.available(n, role):
                 bits = [f"{level}: {why}"] + ([learned] if learned else [])
                 if n != order[0]:
                     bits.append(f"{order[0]} is paused or busy")
-                return Choice(n, level, "; ".join(bits))
+                return Choice(n, level, "; ".join(bits), skill)
         return None
 
-    def escalate(self, name: str, role: str = "worker") -> str | None:
-        """The next stronger available agent, or None when `name` is already the strongest there is."""
+    def escalate(self, name: str, role: str = "worker", skill: str = "") -> str | None:
+        """The next stronger available agent, or None when `name` is already the strongest there is. With scores: the
+        smallest step up in the task's kind of work."""
+        if self.mode == "scores":
+            sc = self.scored()
+            val = (lambda n: sc[n]["skills"][skill]["score"]) if skill in ("cpp", "scripts", "ui", "docs") else \
+                  (lambda n: sc[n]["overall"])
+            cur = val(name) if name in self.specs else -1
+            up = [n for n in self.specs if n != name and val(n) > cur and self.available(n, role)]
+            return min(up, key=val) if up else None
         cur = self.specs[name].tier if name in self.specs else 0
         for s in self.ordered():
             if s.tier > cur and self.available(s.name, role):
@@ -395,10 +462,16 @@ class AgentPool:
         if not self.multi:
             return worker if self.available(worker, "reviewer") else None
         wv = self.specs[worker].vendor if worker in self.specs else ""
-        min_tier = int(self.routing.get("reviewMinTier", 2))
-        names = [n for n in (self.routing.get("reviewers") or []) if n in self.specs]
-        names += [s.name for s in sorted(self.ordered(), key=lambda s: -s.tier) if s.name not in names]
-        names = [n for n in names if self.specs[n].tier >= min_tier or n in (self.routing.get("reviewers") or [])]
+        if self.mode == "scores":  # best reviewer first, at least reviewMin
+            sc = self.scored()
+            need = int(self.routing.get("reviewMin", 50))
+            names = sorted((n for n in self.specs if self.specs[n].enabled), key=lambda n: -sc[n]["skills"]["review"]["score"])
+            names = [n for n in names if sc[n]["skills"]["review"]["score"] >= need]
+        else:
+            min_tier = int(self.routing.get("reviewMinTier", 2))
+            names = [n for n in (self.routing.get("reviewers") or []) if n in self.specs]
+            names += [s.name for s in sorted(self.ordered(), key=lambda s: -s.tier) if s.name not in names]
+            names = [n for n in names if self.specs[n].tier >= min_tier or n in (self.routing.get("reviewers") or [])]
         for n in names:
             if self.specs[n].vendor != wv and self.available(n, "reviewer"):
                 return n
@@ -411,6 +484,7 @@ class AgentPool:
         """For the dashboard and the status issue."""
         rows = []
         n = _now()
+        sc = self.scored(stats)
         for s in sorted(self.specs.values(), key=lambda s: (-s.tier, s.name)):
             p = self.paused.get(s.name)
             paused = p if p and n < _parse(p.get("until", "")) else None
@@ -420,7 +494,7 @@ class AgentPool:
                    "paused_until": paused["until"] if paused else "", "paused_reason": paused["reason"] if paused else "",
                    "signed_in": acct.get("ok"), "account": acct.get("message", ""), "checked": acct.get("at", ""),
                    "key_env": list(s.key_env or []), "available": self.available(s.name),
-                   "auth": s.auth, "api_key": s.api_key_name}
+                   "auth": s.auth, "api_key": s.api_key_name, "scores": sc[s.name]}
             if stats:
                 for lv in LEVELS:
                     r, k = stats.rate(s.name, lv)

@@ -246,10 +246,10 @@ def demo_context(cfg: Config, tmp: Path, serve_delay: float = 0.0) -> Context:
 
 DEMO_AGENTS = [{"name": "claude", "kind": "claude", "tier": 4, "vendor": "anthropic"},
                {"name": "codex", "kind": "codex", "tier": 3, "vendor": "openai", "enabled": False},
+               {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
                {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
                {"name": "deepseek", "kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"}]
-DEMO_ROUTING = {"easy": ["deepseek", "deepseek-pro"], "medium": ["codex", "claude", "deepseek-pro"],
-                "hard": ["claude", "codex"], "reviewers": ["claude", "codex"]}
+DEMO_ROUTING = {"mode": "scores"}
 
 
 def utf8_console() -> None:

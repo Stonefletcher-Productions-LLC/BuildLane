@@ -14,6 +14,8 @@
     POST /api/agents/check    check every agent's sign-in now
     POST /api/agents/login    {name}: open that agent's own sign-in in a console window on this PC
     POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
+    POST /api/agents/scores   {name, scores: {cpp|scripts|ui|docs|review|cost: 0-100 or null}}: your own scores
+    POST /api/agents/refresh-scores  fetch the newest benchmark catalog (model_scores.json) from Fletchery's main branch
     POST /api/agents/auth     {name, mode: plan|key}: run that agent on its plan sign-in or on its stored API key
     POST /api/keys/set        {name, value}: store an API key in Windows Credential Manager (never shown again)
     POST /api/keys/clear      {name}
@@ -152,6 +154,10 @@ class Dashboard:
                 a["model"] = spec.model
             if spec.key_env:
                 a["keyEnv"] = list(spec.key_env)
+            if spec.scores:
+                a["scores"] = dict(spec.scores)
+            else:
+                a.pop("scores", None)
             out.append(a)
         cfg.save(agents=out)
         self.fm.wake()
@@ -275,6 +281,52 @@ class Dashboard:
         self.fm.ctx.log(f"agent {name} now runs on {'its API key' if mode == 'key' else 'its plan sign-in'} (from the dashboard)")
         return {"name": name, "mode": mode}
 
+    def set_scores(self, data: dict) -> dict:
+        import scores
+        pool = self._pool()
+        name = str(data.get("name", ""))
+        if name not in pool.specs:
+            raise ValueError(f"No agent called {name}.")
+        mine = dict(pool.specs[name].scores or {})
+        for k, v in (data.get("scores") or {}).items():
+            if k not in scores.SKILLS + ["cost"]:
+                raise ValueError(f"No score called {k}.")
+            if v in (None, ""):
+                mine.pop(k, None)
+                continue
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                raise ValueError(f"{scores.SKILL_NAMES.get(k, k)} is a number from 0 to 100, or empty for automatic.")
+            if not 0 <= n <= 100:
+                raise ValueError(f"{scores.SKILL_NAMES.get(k, k)} is a number from 0 to 100, or empty for automatic.")
+            mine[k] = int(round(n))
+        pool.specs[name].scores = mine or None
+        self._save_agents()
+        self.fm.ctx.log(f"agent {name} scores set from the dashboard: {mine or 'all automatic'}")
+        return {"name": name, "scores": mine}
+
+    def refresh_scores(self, data: dict) -> dict:
+        """The newest model_scores.json from Fletchery's main branch, kept in the state dir."""
+        import subprocess
+        pool = self._pool()
+        repo = str(pool.routing.get("catalogRepo") or "Stonefletcher-Productions-LLC/Fletchery")
+        p = subprocess.run(["gh", "api", f"repos/{repo}/contents/fletchery/model_scores.json",
+                            "-H", "Accept: application/vnd.github.raw"], capture_output=True, text=True, timeout=60,
+                           encoding="utf-8", errors="replace")
+        if p.returncode != 0:
+            raise ValueError(f"Couldn't fetch the benchmark list from {repo}: {(p.stderr or p.stdout).strip()[:200]}")
+        try:
+            cat = json.loads(p.stdout)
+            assert isinstance(cat.get("models"), dict) and cat["models"]
+        except (ValueError, AssertionError, AttributeError):
+            raise ValueError("The benchmark list on GitHub isn't valid; kept the current one.")
+        target = pool.catalog_override or (self.fm.state_dir / "model_scores.json")
+        target.write_text(json.dumps(cat, indent=2), encoding="utf-8")
+        pool.catalog_override = target
+        self.fm.ctx.log(f"benchmark list refreshed from {repo} (updated {cat.get('updated', '?')})")
+        return {"updated": cat.get("updated", ""), "models": len(cat["models"])}
+
     def set_escalate(self, data: dict) -> dict:
         on = bool(data.get("on"))
         self.fm.ctx.escalate = on
@@ -377,7 +429,8 @@ class Dashboard:
                     routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
-                              "/api/agents/models": dash.list_models, "/api/keys/set": dash.set_key,
+                              "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores,
+                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))

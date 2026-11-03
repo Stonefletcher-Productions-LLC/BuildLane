@@ -1047,4 +1047,59 @@ dash.set_agent_auth({"name": "codex", "mode": "plan"})
 assert ctx.agents.specs["codex"].auth == "plan"
 _keys.delete("OPENAI_API_KEY")
 
+# ---- scores: benchmarks seed each agent, the cheapest agent that clears the task's bar gets it, results move scores
+import scores as _sc  # noqa: E402
+assert _sc.classify_skill("Port ScanUIText to Python", "Rewrite Tools/ScanUIText.py as a script.", [])[0] == "scripts"
+assert _sc.classify_skill("Radial menu", "The UMG widget's buttons and tooltip.", [])[0] == "ui"
+assert _sc.classify_skill("Pronoun pass", "Edit docs/Strings.md and LSStrings.csv.", [])[0] == "docs"
+assert _sc.classify_skill("Clock", "Change LSClock.cpp.", [])[0] == "cpp"
+assert _sc.classify_skill("Anything", "", ["skill:docs"])[0] == "docs"
+SCORED = [{"name": "claude", "kind": "fake", "model": "claude-opus-5-5", "tier": 4, "vendor": "anthropic"},
+          {"name": "haiku", "kind": "fake", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
+          {"name": "deepseek-pro", "kind": "fake", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
+          {"name": "deepseek", "kind": "fake", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"},
+          {"name": "mystery", "kind": "fake", "model": "acme/unknown-1", "tier": 2, "vendor": "acme", "enabled": False}]
+sp = pool_with(agents=SCORED, routing={})
+assert sp.mode == "scores" and pool_with().mode == "lists", "lists in the profile keep list routing"
+sc = sp.scored()
+seeds = {n: sc[n]["skills"]["cpp"]["score"] for n in sc}
+assert seeds == {"claude": 91, "haiku": 64, "deepseek-pro": 66, "deepseek": 56, "mystery": 50}, seeds
+assert sc["haiku"]["seed"]["from"] == "benchmarks" and sc["mystery"]["seed"]["from"] == "strength"
+assert sc["haiku"]["cost"] > sc["deepseek-pro"]["cost"] > sc["claude"]["cost"]
+c = sp.choose("Clock 12/24h", "Change LSClock.cpp.", [])
+assert c.agent == "haiku" and c.skill == "cpp" and "bar 60" in c.why, c.why
+assert sp.choose("Save v12 migration", "Bump the save version; migration for old saves.", []).agent == "claude"
+sp.busy["haiku"] = 3  # busy agents count as dearer, so work spreads
+assert sp.choose("Clock 12/24h", "Change LSClock.cpp.", []).agent == "deepseek-pro"
+sp.busy["haiku"] = 0
+assert sp.escalate("deepseek", "worker", "cpp") == "haiku" and sp.escalate("claude", "worker", "cpp") is None
+assert sp.reviewer_for("haiku") == "deepseek-pro" and sp.reviewer_for("deepseek") == "claude"
+# five failed medium C++ tasks pull haiku under the bar; its Python score is untouched
+st = _ag.Stats()
+for _ in range(5):
+    st.add("haiku", "medium", False)
+    st.attempts.append({"agent": "haiku", "difficulty": "medium", "skill": "cpp", "role": "worker", "ok": False})
+c = sp.choose("Clock 12/24h", "Change LSClock.cpp.", [], stats=st)
+assert c.agent == "deepseek-pro", c.why
+sc = sp.scored(st)
+assert sc["haiku"]["skills"]["cpp"]["score"] < 60 and sc["haiku"]["skills"]["cpp"]["from"] == "results"
+assert sc["haiku"]["skills"]["scripts"]["score"] == 64
+sp.specs["deepseek"].scores = {"cpp": 80}  # your own score wins
+assert sp.scored(st)["deepseek"]["skills"]["cpp"] == {"seed": 56, "score": 80, "from": "you", "tasks": 0, "passed": 0}
+row = next(r for r in sp.view(st) if r["name"] == "haiku")
+assert row["scores"]["skills"]["cpp"]["tasks"] == 5
+# the dashboard sets and clears your own scores and saves them in the profile
+dash.set_scores({"name": "deepseek", "scores": {"cpp": 72, "docs": ""}})
+assert ctx.agents.specs["deepseek"].scores == {"cpp": 72}
+assert next(a for a in _json_mod.loads(prof.read_text())["workers"]["agents"] if a["name"] == "deepseek")["scores"] == {"cpp": 72}
+dash.set_scores({"name": "deepseek", "scores": {"cpp": None}})
+assert ctx.agents.specs["deepseek"].scores is None
+assert "scores" not in next(a for a in _json_mod.loads(prof.read_text())["workers"]["agents"] if a["name"] == "deepseek")
+for bad in ({"cpp": 140}, {"speed": 3}, {"cpp": "lots"}):
+    try:
+        dash.set_scores({"name": "deepseek", "scores": bad})
+        raise AssertionError(f"bad score accepted: {bad}")
+    except ValueError:
+        pass
+
 print("RESULT: PASS (Fletchery engine checks)")

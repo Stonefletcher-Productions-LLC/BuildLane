@@ -101,6 +101,7 @@ class Engine:
             ctx.agents.paused = self.state.agent_paused
             ctx.task_agents = self.state.task_agent
             ctx.stats = self.stats
+            ctx.agents.catalog_override = self.state_dir / "model_scores.json"
         if not dry_run and ctx.cfg.workers_enabled:
             try:
                 import watcher
@@ -542,7 +543,14 @@ class Engine:
         return {"multi": pool.multi, "list": pool.view(self.stats()), "keys": keys.listing(used),
                 "spent_today": {k: round(v, 2) for k, v in self.state.spent_by_agent.get(today(), {}).items()},
                 "escalate": self.ctx.escalate, "routing": {k: v for k, v in (pool.routing or {}).items()
-                                                            if k in ("easy", "medium", "hard", "reviewers")}}
+                                                            if k in ("easy", "medium", "hard", "reviewers")},
+                "mode": pool.mode, "bars": {lv: pool.bar(lv) for lv in ("easy", "medium", "hard")},
+                "catalog": self._catalog_info(pool)}
+
+    def _catalog_info(self, pool) -> dict:
+        cat = pool.catalog()
+        return {"updated": cat.get("updated", ""), "sources": list((cat.get("sources") or {}).values()),
+                "models": len(cat.get("models") or {})}
 
     # ---- status issue ----
     def status_text(self, tasks: dict[int, Task], prs: dict[int, PullRequest], waiting: dict[int, str],
