@@ -1060,6 +1060,9 @@ assert _sc.classify_skill("Radial menu", "The UMG widget's buttons and tooltip."
 assert _sc.classify_skill("Pronoun pass", "Edit docs/Strings.md and LSStrings.csv.", [])[0] == "docs"
 assert _sc.classify_skill("Clock", "Change LSClock.cpp.", [])[0] == "cpp"
 assert _sc.classify_skill("Anything", "", ["skill:docs"])[0] == "docs"
+# a C++ task whose template also names docs, strings and a Python check stays C++
+assert _sc.classify_skill("Pet animation: tail wag by mood", "Change LSPetAnim.cpp. Update docs/Pets.md and LSStrings.csv; "
+                          "run Tools/check.py.", [])[0] == "cpp"
 SCORED = [{"name": "claude", "kind": "claude", "model": "claude-opus-5-5", "tier": 4, "vendor": "anthropic"},
           {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
           {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},

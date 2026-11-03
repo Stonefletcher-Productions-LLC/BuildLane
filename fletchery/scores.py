@@ -50,14 +50,19 @@ def classify_skill(title: str, body: str, labels: list[str], default: str = "cpp
     m = _SKILL_LINE.search(body or "")
     if m:
         return m.group(1).lower(), "Skill line"
-    text = f"{title}\n{body or ''}"
-    hits = {k: sum(1 for p in pats if re.search(p, text, re.IGNORECASE)) for k, pats in SKILL_PATTERNS.items()}
+    # A sign in the title counts 3, in the body 1. Issue templates name docs to update, strings and scripts to run on
+    # almost every task, so once the project's default kind shows up at all, another kind wins only by its title.
+    def pts(k, where):
+        return sum(1 for p in SKILL_PATTERNS[k] if re.search(p, where or "", re.IGNORECASE))
+    titled = {k: pts(k, title) for k in SKILL_PATTERNS}
+    hits = {k: 3 * titled[k] + pts(k, body) for k in SKILL_PATTERNS}
     best = max(hits.values())
     if best == 0:
         return default, "no signs; the project's default"
-    top = [k for k, v in hits.items() if v == best]
-    kind = default if default in top else top[0]
-    return kind, f"{best} sign{'s' if best > 1 else ''} of {SKILL_NAMES[kind]}"
+    kind = max(hits, key=lambda k: (hits[k], k == default))
+    if kind != default and hits.get(default, 0) and titled[kind] <= titled.get(default, 0):
+        kind = default
+    return kind, f"{hits[kind]} point{'s' if hits[kind] != 1 else ''} for {SKILL_NAMES[kind]}"
 
 
 # ---- the benchmark catalog ----
