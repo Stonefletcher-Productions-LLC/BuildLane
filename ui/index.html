@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fletchery</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  /* Fletchery's screens. Colours are the colour-blind-safe set (Okabe-Ito); every state also has a
+     glyph and a word, like the Buildlane app. One loud thing: the Now strip. Everything else stays quiet. */
+  :root {
+    --paper: #EDF1F5;
+    --panel: #FFFFFF;
+    --ink: #17212B;
+    --muted: #556576;
+    --rule: #CBD5DF;
+    --queued: #1F6E99;      /* sky blue #56B4E9, darkened for text contrast */
+    --queued-bg: #DCEFFA;
+    --running: #007A59;     /* bluish green #009E73, darkened */
+    --running-bg: #D7F1E8;
+    --lane: #0072B2;
+    --lane-bg: #DCEAF5;
+    --blocked: #B34A00;     /* vermillion #D55E00, darkened */
+    --blocked-bg: #FBE4D6;
+    --hold: #7A5300;        /* orange #E69F00, darkened */
+    --hold-bg: #FCEFCF;
+    --mono: ui-monospace, "Cascadia Mono", "Consolas", "SF Mono", monospace;
+    --r-lg: 14px;
+    --r-sm: 6px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 "Atkinson Hyperlegible", system-ui, sans-serif;
+  }
+  a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+  :focus-visible { outline: 3px solid var(--lane); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 24px 48px; }
+
+  /* ---- top bar ---- */
+  header.top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding-bottom: 18px; }
+  .brand { display: flex; align-items: baseline; gap: 14px; flex: 1 1 360px; min-width: 0; }
+  .brand h1 { font-size: 28px; line-height: 1; margin: 0; letter-spacing: -0.01em; }
+  .brand h1 .proj { font-weight: 400; color: var(--muted); font-size: 22px; }
+  .brand .state { color: var(--muted); font-size: 16px; }
+  .brand .state b { color: var(--ink); font-weight: 700; }
+  .usage .meter { height: 8px; background: #DDE4EB; border-radius: 99px; overflow: hidden; }
+  .usage .meter i { display: block; height: 100%; background: var(--running); border-radius: 99px; width: 0; transition: width .4s; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 700; font-size: 15px; cursor: pointer;
+    border: 1.5px solid var(--ink); background: var(--panel); color: var(--ink);
+    padding: 8px 14px; border-radius: var(--r-sm); min-height: 40px;
+  }
+  button:hover { background: var(--ink); color: var(--panel); }
+  button.primary { background: var(--ink); color: var(--panel); }
+  button.primary:hover { background: #2C3B4A; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .banner { margin: 0 0 18px; padding: 12px 16px; border-radius: var(--r-sm); font-weight: 700; display: none; }
+  .banner.show { display: block; }
+  .banner.hold { background: var(--hold-bg); color: var(--hold); }
+  .banner.down { background: var(--blocked-bg); color: var(--blocked); }
+  .banner span { font-weight: 400; }
+
+
+  /* ---- task queue: the GitHub issues waiting for a worker ---- */
+  section.tasks { background: var(--panel); border-radius: var(--r-lg); padding: 16px 20px 18px; margin-bottom: 22px; }
+  .sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+  .sec-head h2 { margin: 0; font-size: 18px; }
+  .sec-head .counts { color: var(--muted); font-size: 15px; }
+  .sec-head .counts b { color: var(--ink); }
+  .sec-sub { margin: 4px 0 12px; color: var(--muted); font-size: 14.5px; max-width: 90ch; }
+  .tq { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px 28px; }
+  .tq h3 { margin: 0 0 4px; font-size: 15px; }
+  .tq h3 span { color: var(--muted); font-weight: 400; }
+  .tq ol, .tq ul { margin: 0; padding: 0; list-style: none; }
+  .tq li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid #E3E9EF; font-size: 15px; }
+  .tq li:first-child { border-top: 0; }
+  .tq .pos { flex: 0 0 1.6em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
+  .tq .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tq .ttl { flex: 1; min-width: 0; }
+  .tq .ttl a { font-weight: 700; text-decoration: none; }
+  .tq .ttl a:hover { text-decoration: underline; }
+  .tq .why { color: var(--muted); font-size: 13.5px; white-space: nowrap; }
+  .tq .why a { color: var(--lane); }
+  .tq li.next .pos, .tq li.next .why { color: var(--running); font-weight: 700; }
+  .tq .more { padding-top: 8px; }
+  .tq .more button { min-height: 0; padding: 2px 10px; font-size: 13.5px; }
+  .tq .none { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  @media (max-width: 900px) { .tq { grid-template-columns: 1fr; } .tq .why { white-space: normal; } }
+
+
+  /* ---- usage: cap, plan/API switch, this week ---- */
+  .usage { display: grid; gap: 6px; min-width: 260px; }
+  .usage-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+  .usage-line b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .step { min-height: 28px; min-width: 28px; padding: 0; font-size: 16px; line-height: 1; border-width: 1.5px; }
+  .seg { display: inline-flex; border: 1.5px solid var(--ink); border-radius: var(--r-sm); overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; min-height: 28px; padding: 3px 10px; font-size: 13.5px; background: var(--panel); color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .linkbtn { border: 0; background: none; padding: 0; min-height: 0; font-weight: 700; font-size: 14px; color: var(--lane); text-decoration: underline; text-decoration-color: #9CC3E3; text-underline-offset: 3px; }
+  .linkbtn:hover { background: none; color: var(--ink); }
+
+  /* ---- this week (single series column chart: no legend, title names it) ---- */
+  #weekDlg { width: min(640px, calc(100vw - 32px)); }
+  .wk-total { font-size: 15px; color: var(--muted); margin: 0 0 14px; }
+  .wk-total b { color: var(--ink); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .wk-chart { position: relative; height: 200px; display: grid; grid-template-columns: repeat(7, 1fr); align-items: end;
+              border-bottom: 1px solid #D6DEE6; margin: 26px 0 0; }
+  .wk-cap { position: absolute; left: 0; right: 0; border-top: 1px solid #C2CCD6; pointer-events: none; }
+  .wk-cap span { position: absolute; right: 0; top: -19px; font-size: 12px; color: var(--muted); background: var(--panel); padding-left: 6px; }
+  .wk-col { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; cursor: default; }
+  .wk-col:focus-visible { outline-offset: -2px; }
+  .wk-bar { width: min(24px, 60%); background: #009E73; border-radius: 4px 4px 0 0; min-height: 0; }
+  .wk-col.today .wk-bar { background: #007A59; }
+  .wk-val { font-size: 12.5px; color: var(--ink); font-variant-numeric: tabular-nums; margin-bottom: 4px; }
+  .wk-days { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 12.5px; color: var(--muted); padding-top: 6px; }
+  .wk-days .today { color: var(--ink); font-weight: 700; }
+  .wk-tip { position: absolute; z-index: 2; pointer-events: none; background: var(--ink); color: #fff; font-size: 13px; padding: 6px 9px;
+            border-radius: var(--r-sm); white-space: nowrap; transform: translate(-50%, -100%); display: none; }
+  .wk-table { width: 100%; margin-top: 16px; font-size: 13.5px; }
+  .wk-table th { text-align: left; color: var(--muted); font-weight: 400; padding: 4px 8px 4px 0; border-bottom: 1px solid #E3E9EF; }
+  .wk-table td { padding: 4px 8px 4px 0; border-top: 0; font-variant-numeric: tabular-nums; }
+  .wk-table td.r, .wk-table th.r { text-align: right; }
+  .wk-note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+
+  /* ---- now: the one loud thing ---- */
+  section.now {
+    background: var(--ink); color: #F3F6F9; border-radius: var(--r-lg); padding: 20px 22px 22px; margin-bottom: 22px;
+  }
+  .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 14px; }
+  .now h2 { font-size: 18px; font-weight: 700; margin: 0; color: #fff; }
+  .now-head p { margin: 0; color: #A9B8C7; font-size: 14.5px; max-width: 80ch; }
+  .now-head p b { color: #DCE5EE; font-weight: 700; }
+  .slot .what { color: #DCE5EE; font-size: 15px; line-height: 1.45; }
+  .slot .branch { font-family: var(--mono); font-size: 12.5px; color: #8597A8; overflow-wrap: anywhere; }
+  .doing-label { color: #8597A8; font-size: 12.5px; margin-bottom: 2px; }
+  .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+  .slot { background: #22303E; border-radius: 10px; padding: 16px 18px; min-height: 148px; display: flex; flex-direction: column; gap: 10px; }
+  .slot.free { background: transparent; border: 1.5px dashed #3A4B5C; color: #8597A8; justify-content: center; }
+  .slot .who { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .slot .who a { font-weight: 700; font-size: 18px; color: #fff; text-decoration-color: #4A5D70; }
+  .slot .clock { font-variant-numeric: tabular-nums; color: #A9B8C7; white-space: nowrap; font-size: 14px; }
+  .track { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+  .track li { flex: 1; font-size: 12.5px; color: #6F8296; padding-top: 7px; border-top: 4px solid #33465A; }
+  .track li.done { color: #A9B8C7; border-color: #3E8E78; }
+  .track li.on { color: #fff; font-weight: 700; border-color: #2FD1A0; }
+  .doing { font-family: var(--mono); font-size: 14.5px; line-height: 1.45; color: #E6EDF3; overflow-wrap: anywhere; }
+  .doing .ago { white-space: nowrap; font-family: "Atkinson Hyperlegible", sans-serif; color: #8597A8; font-size: 13px; margin-left: 6px; }
+  .slot .count { color: #8597A8; font-size: 13px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .doing.fresh { animation: land .6s ease-out; }
+    @keyframes land { from { color: #2FD1A0; } to { color: #E6EDF3; } }
+  }
+
+
+  /* ---- build lane: quiet, light; the Now strip stays the loud one ---- */
+  section.lane { background: var(--panel); border-radius: var(--r-lg); padding: 16px 20px 18px; margin-bottom: 22px; }
+  .lane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  .lane-head h2 { margin: 0; font-size: 18px; }
+  .lane-sub { margin: 4px 0 0; color: var(--muted); font-size: 14.5px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; padding: 3px 10px; border-radius: 99px; }
+  .chip.building { background: var(--running-bg); color: var(--running); }
+  .chip.passed { background: var(--running-bg); color: var(--running); }
+  .chip.failed { background: var(--blocked-bg); color: var(--blocked); }
+  .chip.cancelled, .chip.idle { background: #E6EBF0; color: var(--muted); }
+  .chip.paused { background: var(--hold-bg); color: var(--hold); }
+  .lane-head .disk { color: var(--muted); font-size: 14px; margin-left: auto; }
+  .lane-head .disk.low { color: var(--blocked); font-weight: 700; }
+  .lane-what { margin: 10px 0 12px; font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+  .lane-what .muted { font-weight: 400; color: var(--muted); }
+  .ltrack { display: flex; gap: 4px; list-style: none; margin: 0 0 10px; padding: 0; }
+  .ltrack li { flex: 1; font-size: 12.5px; color: #8494A4; padding-top: 7px; border-top: 4px solid #DDE4EB; min-width: 0; }
+  .ltrack li.done { color: var(--muted); border-color: #8FC9B7; }
+  .ltrack li.on { color: var(--ink); font-weight: 700; border-color: var(--running); }
+  .ltrack li.bad { color: var(--blocked); font-weight: 700; border-color: var(--blocked); }
+  .lane-step { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; font-size: 15px; }
+  .lane-step .bar { flex: 0 1 220px; height: 8px; background: #DDE4EB; border-radius: 99px; overflow: hidden; }
+  .lane-step .bar i { display: block; height: 100%; background: var(--running); width: 0; }
+  .lane-step .when { color: var(--muted); font-size: 14px; margin-left: auto; }
+  .lane-step a { font-size: 14px; }
+  .lane-warn { margin-top: 10px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--hold-bg); color: var(--hold); font-size: 14px; }
+  .lane-warn.bad { background: var(--blocked-bg); color: var(--blocked); }
+  .lane-queue { margin-top: 14px; border-top: 1px solid #E3E9EF; padding-top: 10px; }
+  .lane-queue h3 { margin: 0 0 6px; font-size: 15px; }
+  .lane-queue ul { list-style: none; margin: 0; padding: 0; columns: 2 380px; column-gap: 28px; }
+  .lane-queue li { break-inside: avoid; padding: 4px 0; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+  .lane-queue li .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lane-queue li .ttl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane-queue li .st { color: var(--muted); white-space: nowrap; }
+  .badge { font-size: 12px; font-weight: 700; color: var(--lane); background: var(--lane-bg); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+
+  /* ---- board ---- */
+  .board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .col { min-height: 0; }
+  .col { background: var(--panel); border-radius: var(--r-lg); padding: 14px 14px 6px; min-height: 120px; }
+  .col h3 { margin: 0 0 8px; font-size: 16px; display: flex; gap: 8px; align-items: center; }
+  .col h3 .n { color: var(--muted); font-weight: 400; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .glyph { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font-size: 13px; font-weight: 700; }
+  .queued .glyph { background: var(--queued-bg); color: var(--queued); }
+  .running .glyph { background: var(--running-bg); color: var(--running); }
+  .pr .glyph { background: var(--lane-bg); color: var(--lane); }
+  .blocked .glyph { background: var(--blocked-bg); color: var(--blocked); }
+  .col ul { list-style: none; margin: 0; padding: 0; }
+  .col li { padding: 10px 0; border-top: 1px solid #E3E9EF; }
+  .col li:first-child { border-top: 0; }
+  .col li .t { font-weight: 700; display: block; }
+  .col li .num { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .col li .why { color: var(--muted); font-size: 14px; display: block; }
+  .col li .why a { color: var(--lane); }
+  .blocked li .why { color: var(--blocked); }
+  .col .empty { color: var(--muted); font-size: 14px; padding: 8px 0 14px; }
+
+  /* ---- history and log ---- */
+  .lower { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 14px; }
+  .card { background: var(--panel); border-radius: var(--r-lg); padding: 14px 16px; min-width: 0; }
+  .card h3 { margin: 0 0 8px; font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 7px 8px 7px 0; border-top: 1px solid #E3E9EF; vertical-align: top; }
+  td.when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.cost { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .res { font-weight: 700; white-space: nowrap; }
+  .res.pr, .res.fixed { color: var(--running); }
+  .res.blocked, .res.gave_up { color: var(--blocked); }
+  .res.limited, .res.requeue, .res.signed_out { color: var(--hold); }
+  .log { font-family: var(--mono); font-size: 13px; line-height: 1.55; max-height: 340px; overflow: auto; margin: 0;
+         background: #F5F8FA; border-radius: var(--r-sm); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log time { color: #7A8A99; }
+  .foot { color: var(--muted); font-size: 13px; margin-top: 20px; }
+
+  /* ---- add task ---- */
+  dialog { border: 0; border-radius: var(--r-lg); padding: 22px; width: min(560px, calc(100vw - 32px)); color: var(--ink); }
+  dialog::backdrop { background: rgba(23, 33, 43, .45); }
+  dialog h2 { margin: 0 0 4px; font-size: 22px; }
+  dialog p.hint { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  label { display: block; font-weight: 700; margin: 12px 0 4px; }
+  label small { font-weight: 400; color: var(--muted); }
+  input, textarea {
+    width: 100%; font: inherit; color: var(--ink); background: #F7F9FB;
+    border: 1.5px solid var(--rule); border-radius: var(--r-sm); padding: 9px 11px;
+  }
+  textarea { min-height: 150px; resize: vertical; }
+  .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; align-items: center; }
+  .row .msg { margin-right: auto; font-size: 14px; color: var(--blocked); }
+
+  @media (max-width: 1000px) { .lower { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) { .board { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) { .ltrack li { font-size: 0; } .ltrack li.on { font-size: 12.5px; } .lane-head .disk { margin-left: 0; } }
+  @media (max-width: 560px) {
+    .wrap { padding: 14px 12px 32px; }
+    .board { grid-template-columns: 1fr; }
+    .slots { grid-template-columns: 1fr; }
+    .brand { flex-direction: column; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Fletchery <span class="proj" id="projName"></span></h1>
+      <div class="state" id="state" aria-live="polite">Connecting…</div>
+    </div>
+    <div class="usage">
+      <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+      <div class="usage-line">
+        <span id="usage">About <b>$0.00</b> today of a</span>
+        <button type="button" class="step" id="capDown" aria-label="Lower the daily cap">−</button>
+        <b id="capVal">$60</b>
+        <button type="button" class="step" id="capUp" aria-label="Raise the daily cap">+</button>
+        <span>daily cap</span>
+      </div>
+      <div class="usage-line">
+        <span id="authLbl">Sessions run on</span>
+        <span class="seg" role="group" aria-labelledby="authLbl">
+          <button type="button" id="authPlan" aria-pressed="true" title="Your Claude plan (Max). Shares its usage limits with your own chats.">Claude plan</button>
+          <button type="button" id="authApi" aria-pressed="false" title="An API key, billed per token. Needs ANTHROPIC_API_KEY set for your Windows user.">API key</button>
+        </span>
+        <button type="button" class="linkbtn" id="weekBtn">This week</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="hold" type="button">Pause</button>
+      <button id="runnow" type="button">Check now</button>
+      <button id="add" type="button" class="primary">Add task</button>
+    </div>
+  </header>
+
+  <div class="banner hold" id="holdBanner" role="status"></div>
+  <div class="banner down" id="downBanner" role="alert"></div>
+
+  <section class="tasks" aria-labelledby="tqh">
+    <div class="sec-head"><h2 id="tqh">Task queue</h2><span class="counts" id="tqCounts"></span></div>
+    <p class="sec-sub">GitHub issues labelled <b class="lbl">fletchery</b>, oldest first. When a worker is free, it takes the first ready one. Add one with <b>Add task</b>, or label any issue <b class="lbl">fletchery</b> on GitHub.</p>
+    <div class="tq">
+      <div><h3>Ready <span id="tqReadyNote"></span></h3><ol id="tqReady"></ol></div>
+      <div><h3>Waiting on other tasks</h3><ul id="tqWaiting"></ul></div>
+    </div>
+  </section>
+
+  <section class="now" aria-labelledby="nowh">
+    <div class="now-head">
+      <h2 id="nowh">Workers</h2>
+      <p>Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
+    </div>
+    <div class="slots" id="slots"></div>
+  </section>
+
+
+  <div class="board" id="board">
+    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Workers' PRs in the Build Lane<span class="n" id="n-pr"></span></h3><ul id="c-pr"></ul></div>
+    <div class="col blocked"><h3><span class="glyph" aria-hidden="true">✗</span>Needs you<span class="n" id="n-blocked"></span></h3><ul id="c-blocked"></ul></div>
+  </div>
+
+  <section class="lane" id="lane" aria-labelledby="laneh" hidden>
+    <div class="lane-head">
+      <h2 id="laneh">Build Lane</h2>
+      <span class="chip" id="laneChip"></span>
+      <span class="disk" id="laneDisk"></span>
+      <button type="button" id="laneHold">Pause builds</button>
+    </div>
+    <p class="lane-sub">Builds, tests and merges ready PRs on this PC, the workers' included. It runs on its own; the workers only feed it PRs.</p>
+    <div class="lane-what" id="laneWhat"></div>
+    <ol class="ltrack" id="laneTrack" aria-label="Build steps"></ol>
+    <div class="lane-step" id="laneStep"></div>
+    <div id="laneWarn"></div>
+    <div class="lane-queue" id="laneQueue"></div>
+  </section>
+
+  <div class="lower">
+    <div class="card"><h3>Finished sessions</h3><table><tbody id="history"></tbody></table></div>
+    <div class="card"><h3>Log</h3><pre class="log" id="log" tabindex="0" aria-label="Fletchery log"></pre></div>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+
+<dialog id="weekDlg" aria-labelledby="weekh">
+  <h2 id="weekh">Usage, last 7 days</h2>
+  <p class="wk-total" id="wkTotal"></p>
+  <div class="wk-chart" id="wkChart" role="img" aria-describedby="wkTable"></div>
+  <div class="wk-days" id="wkDays" aria-hidden="true"></div>
+  <table class="wk-table" id="wkTable"><thead><tr><th>Day</th><th class="r">Cost</th><th class="r">Tasks</th><th class="r">Sessions</th></tr></thead><tbody></tbody></table>
+  <p class="wk-note" id="wkNote"></p>
+  <div class="row"><button type="button" class="primary" id="weekClose">Close</button></div>
+</dialog>
+
+<dialog id="dlg" aria-labelledby="dlgh">
+  <form id="taskForm" method="dialog">
+    <h2 id="dlgh">Add a task</h2>
+    <p class="hint">Opens a GitHub issue labelled <b class="lbl">fletchery</b>. A worker picks it up on the next check. Say what's in scope, what's out, and how to prove it.</p>
+    <label for="f-title">Title</label>
+    <input id="f-title" name="title" required maxlength="200" autocomplete="off">
+    <label for="f-body">What to do</label>
+    <textarea id="f-body" name="body" placeholder="Scope, acceptance checks (named specs, console checks), docs to update, anything the worker must not do."></textarea>
+    <label for="f-dep">Wait for <small>issue numbers, optional</small></label>
+    <input id="f-dep" name="depends" placeholder="e.g. 812, 815" inputmode="numeric" autocomplete="off">
+    <div class="row">
+      <span class="msg" id="f-msg" role="alert"></span>
+      <button type="button" id="f-cancel">Cancel</button>
+      <button type="submit" class="primary" id="f-save">Add task</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const TOKEN = "__FLETCHERY_TOKEN__";
+const STAGES = ["Writing", "Checking", "Reviewing", "Opening PR"];
+const STAGE_LABEL = {"Writing": "1 Write", "Checking": "2 Check", "Reviewing": "3 Review", "Opening PR": "4 Open PR"};
+function explain(a) {
+  if (a.kind === "fix") return "The Build Lane sent this PR back. Claude is fixing what failed; Fletchery checks it and pushes the fix to the same PR.";
+  return ({
+    "Starting": "Setting up this task's own branch and folder.",
+    "Writing": "Claude is reading the code and making the change on this task's branch. Nothing is built or merged yet.",
+    "Checking": "Fletchery is running the project's quick checks on the change (its conventions, related tests). Not the full build.",
+    "Reviewing": "A second Claude, which did not write the change, is reviewing it against the task and the conventions.",
+    "Opening PR": "Pushing the branch and opening a PR into Test-Staging. From there the Build Lane builds and tests it."
+  })[a.stage] || a.stage;
+}
+let last = null, lastActions = {};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function ago(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  return h + " h " + (m % 60) + " min";
+}
+function until(iso) {
+  if (!iso) return "";
+  const s = Math.round((Date.parse(iso) - Date.now()) / 1000);
+  if (s <= 0) return "now";
+  const m = Math.floor(s / 60);
+  return m >= 1 ? m + " min" : s + "s";
+}
+function clockTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+}
+function stamp(iso) {
+  const d = new Date(iso), t = new Date();
+  const same = d.toDateString() === t.toDateString();
+  return same ? clockTime(iso) : d.toLocaleDateString([], {month: "short", day: "numeric"}) + " " + clockTime(iso);
+}
+
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Fletchery-Token": TOKEN},
+                               body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+function render(d) {
+  last = d;
+  const running = d.live.length;
+  // state line
+  let state;
+  if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
+  else if (d.passing) state = "Checking GitHub for work…";
+  else if (d.held) state = "<b>Paused</b>";
+  else state = `<b>Idle</b> · next check in ${until(d.next_pass_at) || "a moment"}`;
+  $("state").innerHTML = state;
+
+  // usage
+  const pct = Math.min(100, d.daily_budget ? (d.spent_today / d.daily_budget) * 100 : 0);
+  $("meter").style.width = pct + "%";
+
+  // controls
+  $("hold").textContent = d.held ? "Resume" : "Pause";
+  $("hold").classList.toggle("primary", d.held);
+
+  // banners
+  const hb = $("holdBanner");
+  if (d.signed_out) { hb.innerHTML = `Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`; hb.classList.add("show"); }
+  else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
+  else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
+  else hb.classList.remove("show");
+  $("downBanner").classList.remove("show");
+
+  // now
+  const slots = [];
+  for (const a of d.live) {
+    const idx = STAGES.indexOf(a.stage);
+    const fixing = a.kind === "fix";
+    const track = fixing ? `<ol class="track"><li class="on">${esc(a.stage)}</li></ol>`
+      : `<ol class="track" aria-label="Progress">${STAGES.map((s, i) =>
+          `<li class="${i < idx ? "done" : i === idx ? "on" : ""}"${i === idx ? ' aria-current="step"' : ""}>${STAGE_LABEL[s]}</li>`).join("")}</ol>`;
+    const fresh = lastActions[a.task] !== undefined && lastActions[a.task] !== a.actions;
+    lastActions[a.task] = a.actions;
+    const row = d.tasks.find(t => t.number === a.task);
+    slots.push(`<article class="slot">
+      <div class="who"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">#${a.task} ${esc(a.title)}</a>
+        <span class="clock" title="Started ${esc(a.since)}">${ago(a.since)}</span></div>
+      ${track}
+      <div class="what">${esc(explain(a))}</div>
+      <div><div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
+      <div class="doing${fresh ? " fresh" : ""}">${a.last ? esc(a.last) + `<span class="ago">${ago(a.last_at)} ago</span>` : "Reading the issue and the code…"}</div></div>
+      <div class="count">${a.actions} ${a.actions === 1 ? "step" : "steps"} in this session</div>
+    </article>`);
+  }
+  for (let i = d.live.length; i < d.max_parallel; i++) {
+    slots.push(`<div class="slot free">${d.held ? "Free worker. Paused, so nothing new starts." : "Free worker. Takes the next ready task at the next check."}</div>`);
+  }
+  $("slots").innerHTML = slots.join("");
+
+  // board
+  const cols = {pr: [], blocked: []};
+  const live = new Set(d.live.map(a => a.task));
+  for (const t of d.tasks) {
+    const col = live.has(t.number) && t.status !== "pr" ? "running" : t.status;
+    if (cols[col]) cols[col].push(t);
+  }
+  const empty = {pr: "None yet. A worker's PR appears here once it is opened.", blocked: "Nothing needs you."};
+  for (const [k, list] of Object.entries(cols)) {
+    $("n-" + k).textContent = list.length || "";
+    $("c-" + k).innerHTML = list.length ? list.map(t => {
+      let why = "";
+      if (k === "queued") why = t.why === "ready" ? "Ready" : esc(t.why).replace(/#(\d+)/g, `<a href="${esc(d.repo_url)}/issues/$1" target="_blank" rel="noopener">#$1</a>`);
+      if (k === "running") {
+        const a = d.live.find(x => x.task === t.number);
+        why = a ? `${esc(a.stage)}, started ${ago(a.since)} ago` : (t.since ? "Started " + ago(t.since) + " ago" : "");
+      }
+      if (k === "pr") why = t.pr ? `<a href="${esc(t.pr_url)}" target="_blank" rel="noopener">PR #${t.pr}</a>` + (t.fix_attempts ? `, fixed ${t.fix_attempts}×` : "") : "PR open";
+      if (k === "blocked") why = "Answer on the issue, then re-queue it";
+      return `<li><a class="t" href="${esc(t.url)}" target="_blank" rel="noopener"><span class="num">#${t.number}</span> ${esc(t.title)}</a><span class="why">${why}</span></li>`;
+    }).join("") : `<li class="empty">${empty[k]}</li>`;
+  }
+
+  // history
+  const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out"};
+  $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
+      <td class="when">${esc(stamp(h.at))}</td>
+      <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a></td>
+      <td><span class="res ${esc(h.result)}">${esc(names[h.result] || h.result)}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
+        ${h.detail ? `<br><span style="color:var(--muted)">${esc(h.detail)}</span>` : ""}</td>
+      <td class="cost">$${Number(h.cost_usd || 0).toFixed(2)}</td></tr>`).join("")
+    : `<tr><td style="border:0;color:var(--muted)">No sessions yet. They appear here as they finish.</td></tr>`;
+
+  // log (keep the reader's scroll unless they are at the bottom)
+  const log = $("log"), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+  log.innerHTML = d.log.map(l => `<time>${esc(clockTime(l.at))}</time>  ${esc(l.line)}`).join("\n") || "Nothing yet.";
+  if (atEnd) log.scrollTop = log.scrollHeight;
+
+  renderWorkersOff(d);
+  renderLane(d);
+  renderQueue(d);
+  renderUsage(d);
+  document.querySelectorAll(".lbl").forEach(e => e.textContent = d.label || "fletchery");
+  $("projName").textContent = d.project ? "/ " + d.project : "";
+  document.title = d.project ? `Fletchery: ${d.project}` : "Fletchery";
+
+  $("foot").innerHTML = `${esc(d.repo)} · last check ${d.last_pass ? esc(stamp(d.last_pass)) : "not yet"} · ` +
+    `checks every ${d.poll_minutes} min · <a href="${esc(d.repo_url)}/issues?q=is%3Aopen+label%3A${encodeURIComponent(d.label || "fletchery")}" target="_blank" rel="noopener">All task issues on GitHub</a>`;
+}
+
+
+
+
+const CAP_STEP = v => v < 20 ? 5 : 10;
+function renderUsage(d) {
+  const plan = d.auth !== "api";
+  $("usage").innerHTML = `About <b>$${(d.spent_today || 0).toFixed(2)}</b> today${plan ? " (estimate)" : ""} of a`;
+  $("capVal").textContent = "$" + Math.round(d.daily_budget);
+  $("capDown").disabled = d.daily_budget <= 0;
+  $("authPlan").setAttribute("aria-pressed", plan ? "true" : "false");
+  $("authApi").setAttribute("aria-pressed", plan ? "false" : "true");
+  if ($("weekDlg").open) renderWeek(d);
+}
+function dayName(iso, short) {
+  const t = new Date(iso + "T12:00:00Z");
+  return t.toLocaleDateString([], short ? {weekday: "short"} : {weekday: "long", month: "short", day: "numeric"});
+}
+function renderWeek(d) {
+  const wk = d.usage_week || [], plan = d.auth !== "api";
+  const total = wk.reduce((a, x) => a + x.cost, 0), sessions = wk.reduce((a, x) => a + x.sessions, 0);
+  $("wkTotal").innerHTML = `<b>$${total.toFixed(2)}</b> ${plan ? "estimated " : ""}over 7 days, ${sessions} ${sessions === 1 ? "session" : "sessions"}`;
+  const max = Math.max(d.daily_budget || 0, ...wk.map(x => x.cost), 1);
+  const peak = wk.reduce((m, x, i) => x.cost > wk[m].cost ? i : m, 0);
+  const capPct = (d.daily_budget || 0) / max * 100;
+  $("wkChart").setAttribute("aria-label", `Estimated cost per day for the last 7 days, ${total.toFixed(2)} dollars in total.`);
+  $("wkChart").innerHTML = (d.daily_budget > 0 ? `<div class="wk-cap" style="bottom:${capPct}%"><span>daily cap $${Math.round(d.daily_budget)}</span></div>` : "") +
+    wk.map((x, i) => {
+      const today = i === wk.length - 1, h = x.cost / max * 100;
+      const label = (today || (i === peak && x.cost > 0)) ? `<span class="wk-val">$${x.cost.toFixed(2)}</span>` : "";
+      return `<div class="wk-col${today ? " today" : ""}" tabindex="0" data-i="${i}"
+                aria-label="${esc(dayName(x.date))}: $${x.cost.toFixed(2)}, ${x.sessions} sessions">${label}<div class="wk-bar" style="height:${h}%"></div></div>`;
+    }).join("") + `<div class="wk-tip" id="wkTip"></div>`;
+  $("wkDays").innerHTML = wk.map((x, i) => `<span class="${i === wk.length - 1 ? "today" : ""}">${i === wk.length - 1 ? "Today" : esc(dayName(x.date, true))}</span>`).join("");
+  $("wkTable").querySelector("tbody").innerHTML = wk.slice().reverse().map(x =>
+    `<tr><td>${esc(dayName(x.date))}</td><td class="r">$${x.cost.toFixed(2)}</td><td class="r">${x.tasks}</td><td class="r">${x.sessions}</td></tr>`).join("");
+  $("wkNote").textContent = plan
+    ? "On your Claude plan these are the SDK's estimates, not a bill. Your plan's own 5-hour and weekly limits are what stop work; Fletchery pauses by itself when it hits one."
+    : "On the API key this is what the sessions cost, billed per token.";
+  const tip = $("wkTip"), chart = $("wkChart");
+  chart.querySelectorAll(".wk-col").forEach(col => {
+    const show = () => {
+      const x = wk[+col.dataset.i];
+      tip.textContent = `${dayName(x.date)}: $${x.cost.toFixed(2)}, ${x.tasks} tasks, ${x.sessions} sessions`;
+      const r = col.getBoundingClientRect(), c = chart.getBoundingClientRect();
+      const bar = col.querySelector(".wk-bar").getBoundingClientRect();
+      tip.style.left = (r.left - c.left + r.width / 2) + "px";
+      tip.style.top = (Math.min(bar.top, r.bottom - 2) - c.top - 6) + "px";
+      tip.style.display = "block";
+    };
+    col.onmouseenter = show; col.onfocus = show;
+    col.onmouseleave = () => tip.style.display = "none"; col.onblur = col.onmouseleave;
+  });
+}
+async function setCap(v) {
+  try { await post("/api/budget", {daily_budget_usd: v}); await refresh(); } catch (e) { alert(e.message); }
+}
+
+let showAllReady = false;
+const WAITING = /^(waits for|dependency cycle|depends on missing)/;
+function renderQueue(d) {
+  const live = new Set(d.live.map(a => a.task));
+  const queued = d.tasks.filter(t => t.status === "queued" && !live.has(t.number));
+  const waiting = queued.filter(t => WAITING.test(t.why || ""));
+  const ready = queued.filter(t => !WAITING.test(t.why || ""));
+  $("tqCounts").innerHTML = queued.length ? `<b>${ready.length}</b> ready, <b>${waiting.length}</b> waiting` : "";
+  const held = d.held ? "on hold while workers are paused" : d.limit_until ? "on hold for the usage limit" :
+    (ready.some(t => /budget/.test(t.why || "")) ? "on hold: today's budget is spent" : "");
+  $("tqReadyNote").textContent = ready.length ? (held ? `(${held})` : "(in the order workers take them)") : "";
+  const link = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
+  const cap = showAllReady ? ready.length : 10;
+  $("tqReady").innerHTML = ready.length ? ready.slice(0, cap).map((t, i) => `<li class="${i === 0 && !held ? "next" : ""}">
+      <span class="pos" aria-hidden="true">${i + 1}</span>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      ${i === 0 && !held ? `<span class="why">next</span>` : ""}</li>`).join("") +
+      (ready.length > 10 ? `<li class="more"><button type="button" id="tqMore">${showAllReady ? "Show the first 10" : `Show all ${ready.length}`}</button></li>` : "")
+    : `<li class="none">${queued.length ? "Nothing ready: every queued task waits on another." : `Nothing queued. Add a task, or label an issue ${esc(d.label || "fletchery")}.`}</li>`;
+  const more = $("tqMore"); if (more) more.onclick = () => { showAllReady = !showAllReady; renderQueue(last); };
+  $("tqWaiting").innerHTML = waiting.length ? waiting.map(t => `<li>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      <span class="why">${esc(t.why).replace(/#(\d+)/g, (m, n) => link(n))}</span></li>`).join("")
+    : `<li class="none">None.</li>`;
+}
+
+function renderWorkersOff(d) {
+  const off = d.workers_enabled === false;
+  ["tqh", "nowh"].forEach(id => { const sec = $(id) && $(id).closest("section"); if (sec) sec.hidden = off; });
+  $("board").hidden = off;
+  ["hold", "runnow", "add"].forEach(id => $(id).hidden = off);
+  document.querySelector(".usage").hidden = off;
+}
+function renderLane(d) {
+  const L = d.lane, sec = $("lane");
+  if (!L) { sec.hidden = true; return; }
+  sec.hidden = false;
+  const chip = $("laneChip"), btn = $("laneHold");
+  btn.textContent = L.paused ? "Resume builds" : "Pause builds";
+  btn.classList.toggle("primary", L.paused);
+  const disk = $("laneDisk");
+  disk.textContent = L.free_gb == null ? "" : `E: ${L.free_gb} GB free`;
+  disk.classList.toggle("low", !!L.low_disk);
+  if (!L.available) {
+    chip.className = "chip " + (L.paused ? "paused" : "idle");
+    chip.textContent = L.paused ? "⏸ Paused" : "○ No status";
+    $("laneWhat").innerHTML = `<span class="muted">${esc(L.error || "No Build Lane status on this PC.")}</span>`;
+    $("laneTrack").innerHTML = ""; $("laneStep").innerHTML = ""; $("laneQueue").innerHTML = "";
+    $("laneWarn").innerHTML = L.paused ? `<div class="lane-warn">Builds are paused. ${esc(L.paused_note)}</div>` : "";
+    return;
+  }
+  const verdict = {success: ["passed", "✓ Passed"], failure: ["failed", "✗ Failed"], cancelled: ["cancelled", "○ Cancelled"]};
+  if (L.done) { const v = verdict[L.done] || ["idle", L.done]; chip.className = "chip " + v[0]; chip.textContent = v[1]; }
+  else if (L.paused) { chip.className = "chip paused"; chip.textContent = "⏸ Paused, finishing this build"; }
+  else { chip.className = "chip building"; chip.textContent = "▶ Building"; }
+  if (L.done && L.paused) chip.textContent += ", builds paused";
+
+  const fm = (L.foreman_building || []).length ? ` <span class="badge">Workers' PR${L.foreman_building.length > 1 ? "s" : ""} ${L.foreman_building.map(n => "#" + n).join(", ")}</span>` : "";
+  $("laneWhat").innerHTML = (L.done ? `<span class="muted">Last build:</span> ` : "") + esc(L.what || "main") + fm;
+
+  const failedAt = L.done === "failure" ? L.phase : -1;
+  $("laneTrack").innerHTML = (L.phases || []).map((p, i) => {
+    let c = "";
+    if (i === failedAt) c = "bad";
+    else if (L.done === "success" || i < L.phase) c = "done";
+    else if (i === L.phase && !L.done) c = "on";
+    return `<li class="${c}"${c === "on" ? ' aria-current="step"' : ""} title="${esc(p)}">${esc(p)}</li>`;
+  }).join("");
+
+  const pr = L.progress && L.progress.total ? L.progress : null;
+  const mins = L.minutes == null ? "" : (L.minutes >= 60 ? `${Math.floor(L.minutes / 60)} h ${L.minutes % 60} min` : `${L.minutes} min`);
+  $("laneStep").innerHTML = (L.done ? `<span>${esc(L.done === "success" ? "Passed" : L.done === "failure" ? "Failed" : "Ended")} after ${mins}</span>`
+      : `<span><b>${esc(L.step)}</b>${L.detail ? `, ${esc(L.detail)}` : ""}</span>` +
+        (pr ? `<span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${pr.total}" aria-valuenow="${pr.done}"><i style="width:${Math.round(pr.done / pr.total * 100)}%"></i></span>` : "") +
+        `<span class="when">${mins} so far, updated ${ago(L.updated)} ago</span>`) +
+    (L.run_url ? ` <a href="${esc(L.run_url)}" target="_blank" rel="noopener">Live log</a>` : "") +
+    (L.issue_url ? ` <a href="${esc(L.issue_url)}" target="_blank" rel="noopener">Status issue</a>` : "");
+
+  const warns = [];
+  if (L.stale) warns.push(`<div class="lane-warn">This build has said nothing for ${ago(L.updated)}. It may be stuck: check the live log.</div>`);
+  if (L.low_disk) warns.push(`<div class="lane-warn bad">E: has ${L.free_gb} GB free, under ${L.min_free_gb} GB: builds wait until space is freed (Build Lane, task clean).</div>`);
+  if (L.paused) warns.push(`<div class="lane-warn">Builds are paused: nothing new starts until you resume. ${esc(L.paused_note)}</div>`);
+  (L.notes || []).forEach(n => warns.push(`<div class="lane-warn">Watchdog: ${esc(n)}</div>`));
+  $("laneWarn").innerHTML = warns.join("");
+
+  const q = L.queue || [];
+  const shown = q.slice(0, 12);
+  $("laneQueue").innerHTML = q.length ? `<h3>PRs waiting for a build <span style="color:var(--muted);font-weight:400">${q.length}</span></h3><ul>` +
+    shown.map(x => `<li><a class="num" href="${esc(d.repo_url)}/pull/${x.number}" target="_blank" rel="noopener">#${x.number}</a>
+      <span class="ttl" title="${esc(x.title)}">${esc(x.title)}</span>${x.foreman ? '<span class="badge">Workers</span>' : ""}<span class="st">${esc(x.state)}</span></li>`).join("") +
+    `</ul>${q.length > shown.length ? `<div style="color:var(--muted);font-size:14px;margin-top:4px">and ${q.length - shown.length} more on the status issue</div>` : ""}`
+    : `<span style="color:var(--muted);font-size:14px">Nothing waiting for the lane.</span>`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status", {cache: "no-store"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+  } catch (e) {
+    const b = $("downBanner");
+    b.innerHTML = "Can't reach Fletchery's backend. <span>The app restarts it by itself; if this stays, close and open Fletchery.</span>";
+    b.classList.add("show");
+    $("state").textContent = "Not connected";
+  }
+}
+
+$("hold").onclick = async () => {
+  const btn = $("hold"); btn.disabled = true;
+  try { await post(last && last.held ? "/api/resume" : "/api/pause"); await refresh(); }
+  catch (e) { alert(e.message); } finally { btn.disabled = false; }
+};
+$("capDown").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.max(0, v - CAP_STEP(v - 1))); };
+$("capUp").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.min(1000, v + CAP_STEP(v))); };
+async function switchAuth(to) {
+  if (!last || (last.auth === "api") === (to === "api")) return;
+  if (to === "api" && !confirm("Run new sessions on your API key? They are billed per token. Running sessions finish on the plan.")) return;
+  try { const r = await post("/api/auth", {auth: to}); $("state").textContent = r.message; await refresh(); }
+  catch (e) { alert(e.message); }
+}
+$("authPlan").onclick = () => switchAuth("subscription");
+$("authApi").onclick = () => switchAuth("api");
+$("weekBtn").onclick = () => { renderWeek(last); $("weekDlg").showModal(); };
+$("weekClose").onclick = () => $("weekDlg").close();
+$("laneHold").onclick = async () => {
+  const paused = last && last.lane && last.lane.paused;
+  if (!paused && !confirm("Pause the Build Lane? A build already running finishes; nothing new starts until you resume.")) return;
+  const btn = $("laneHold"); btn.disabled = true;
+  try { await post(paused ? "/api/lane/resume" : "/api/lane/pause"); await refresh(); }
+  catch (e) { alert(e.message); } finally { btn.disabled = false; }
+};
+$("runnow").onclick = async () => {
+  const btn = $("runnow"); btn.disabled = true; btn.textContent = "Checking…";
+  try { await post("/api/run-now"); } catch (e) { alert(e.message); }
+  setTimeout(() => { btn.disabled = false; btn.textContent = "Check now"; refresh(); }, 1500);
+};
+$("add").onclick = () => { $("f-msg").textContent = ""; $("dlg").showModal(); $("f-title").focus(); };
+$("f-cancel").onclick = () => $("dlg").close();
+$("taskForm").onsubmit = async ev => {
+  ev.preventDefault();
+  const save = $("f-save"); save.disabled = true; $("f-msg").textContent = "";
+  const depends = $("f-dep").value.split(/[\s,#]+/).filter(Boolean);
+  try {
+    const r = await post("/api/task", {title: $("f-title").value, body: $("f-body").value, depends});
+    $("taskForm").reset(); $("dlg").close(); refresh();
+    $("state").innerHTML = `Added <a href="${esc(r.url)}" target="_blank" rel="noopener">#${r.number}</a>. Checking for work…`;
+  } catch (e) { $("f-msg").textContent = e.message; }
+  finally { save.disabled = false; }
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
