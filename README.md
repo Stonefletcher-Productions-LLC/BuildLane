@@ -108,6 +108,9 @@ task lands under **Needs you**, its issue says what it needs; answer in a commen
 | Spend less | **−** next to the daily cap. At the cap no new work starts that day |
 | See this week's usage | **This week** under the cap |
 | Switch between my Claude plan and an API key | **Claude plan** / **API key** under the cap (applies to the next session) |
+| Use Codex, DeepSeek or another agent too | Add `agents` to the profile ([Coding agents](docs/AGENTS.md)); then **On** / **Off** per agent in the Agents panel |
+| Send one task to a particular agent | An `agent:<name>` label, or `Agent: <name>` on its own line in the issue |
+| Store an API key for an agent | **Set** next to the key in the Agents panel (kept in Windows Credential Manager) |
 | Stop builds on the build PC | **Pause builds** in the Build Lane panel. A build already running finishes |
 | Close the window but keep working | Close it. Fletchery stays in the tray; right-click the tray icon to quit |
 | Make the task list taller | Drag the handle under the Task queue (or focus it and use the arrow keys) |
@@ -123,6 +126,9 @@ task lands under **Needs you**, its issue says what it needs; answer in a commen
   expires, Fletchery pauses and tells you to run `claude` and `/login`.
 
 <p><img src="docs/images/fletchery/usage-week.png" width="70%" alt="Usage over the last seven days as columns, with the daily cap marked and the same numbers as a table"></p>
+
+Each agent in [Coding agents](docs/AGENTS.md) runs on its own plan or key, so its limits are its own. A limit on one
+agent pauses that agent only, and its tasks go to the others.
 
 ## Project rules
 

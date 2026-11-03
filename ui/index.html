@@ -266,7 +266,7 @@
   dialog p.hint { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
   label { display: block; font-weight: 700; margin: 12px 0 4px; }
   label small { font-weight: 400; color: var(--muted); }
-  input, textarea {
+  input, textarea, select {
     width: 100%; font: inherit; color: var(--ink); background: #F7F9FB;
     border: 1.5px solid var(--rule); border-radius: var(--r-sm); padding: 9px 11px;
   }
@@ -277,6 +277,42 @@
   @media (max-width: 1000px) { .lower { grid-template-columns: 1fr; } }
   @media (max-width: 700px) { .board { grid-template-columns: 1fr; } }
   @media (max-width: 700px) { .ltrack li { font-size: 0; } .ltrack li.on { font-size: 12.5px; } .lane-head .disk { margin-left: 0; } }
+  /* ---- agents ---- */
+  section.agents { background: var(--panel); border-radius: var(--r-lg); padding: 16px 20px 18px; margin-bottom: 22px; }
+  .ag-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .ag-head h2 { margin: 0; font-size: 18px; }
+  .ag-head .sp { flex: 1; }
+  .ag-sub { margin: 4px 0 12px; color: var(--muted); font-size: 14.5px; }
+  .ag-route { font-size: 14px; color: var(--muted); margin: 0 0 12px; overflow-wrap: anywhere; }
+  .ag-route b { color: var(--ink); }
+  .ag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .ag { border: 1.5px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ag.off { background: #F4F6F8; color: var(--muted); }
+  .ag .top { display: flex; align-items: center; gap: 8px; }
+  .ag .nm { font-weight: 700; font-size: 17px; }
+  .ag .model { font-family: var(--mono); font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .ag .top .chip { margin-left: auto; font-size: 13px; padding: 2px 9px; }
+  .chip.ready { background: var(--running-bg); color: var(--running); }
+  .chip.working { background: var(--queued-bg); color: var(--queued); }
+  .chip.out { background: var(--blocked-bg); color: var(--blocked); }
+  .ag .acct { font-size: 13.5px; overflow-wrap: anywhere; }
+  .ag .rates { font-size: 13.5px; color: var(--muted); }
+  .ag .rates b { color: var(--ink); }
+  .ag .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .ag .row2 button { min-height: 32px; padding: 3px 10px; font-size: 13.5px; }
+  .switch[aria-pressed="true"] { background: var(--running); border-color: var(--running); color: #fff; }
+  .switch[aria-pressed="false"] { color: var(--muted); border-color: var(--rule); }
+  .keys { margin-top: 14px; border-top: 1px solid #E3E9EF; padding-top: 10px; }
+  .keys h3 { margin: 0 0 6px; font-size: 15px; }
+  .keys table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .keys td { padding: 5px 8px 5px 0; vertical-align: middle; border-top: 1px solid #EEF2F5; }
+  .keys td.k { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  .keys td.w { color: var(--muted); }
+  .keys td.b { white-space: nowrap; text-align: right; }
+  .keys button { min-height: 30px; padding: 2px 10px; font-size: 13.5px; }
+  .slot .agent { display: inline-block; font-size: 13px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: #33475B; color: #DCE5EE; margin-right: 6px; }
+  .hist .ag-by { color: var(--muted); font-size: 13px; }
+  @media (max-width: 560px) { .keys td.w { display: none; } }
   @media (max-width: 560px) {
     .wrap { padding: 14px 12px 32px; }
     .board { grid-template-columns: 1fr; }
@@ -341,13 +377,30 @@
         <b id="wVal">2</b>
         <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
       </span>
-      <p>Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
+      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
     <div class="grip" data-resize="slotsBox" data-key="workers" role="separator" aria-orientation="horizontal" tabindex="0"
          aria-label="Resize Workers: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </section>
 
+
+  <section class="agents" id="agents" aria-labelledby="agh" hidden>
+    <div class="ag-head">
+      <h2 id="agh">Agents</h2>
+      <span class="sp"></span>
+      <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
+      <button type="button" id="agCheck">Check sign-ins</button>
+      <button type="button" id="agAdd">Add agent</button>
+    </div>
+    <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes.</p>
+    <p class="ag-route" id="agRoute"></p>
+    <div class="ag-grid" id="agGrid"></div>
+    <div class="keys">
+      <h3>API keys <span style="color:var(--muted);font-weight:400">kept in Windows Credential Manager, never shown again</span></h3>
+      <table><tbody id="keyRows"></tbody></table>
+    </div>
+  </section>
 
   <div class="board-wrap" id="boardBox">
   <div class="board" id="board">
@@ -412,19 +465,62 @@
   </form>
 </dialog>
 
+<dialog id="agDlg" aria-labelledby="agdh">
+  <form id="agForm" method="dialog">
+    <h2 id="agdh">Add an agent</h2>
+    <p class="hint">An OpenCode agent reaches any model OpenCode is signed in to (e.g. <code>opencode-go/kimi-k3</code>); run <code>opencode models</code> for the list.</p>
+    <label for="a-name">Name</label>
+    <input id="a-name" required maxlength="32" autocomplete="off" placeholder="kimi">
+    <label for="a-kind">Kind</label>
+    <select id="a-kind"><option value="opencode">OpenCode</option><option value="codex">Codex</option><option value="claude">Claude</option></select>
+    <label for="a-model">Model <small>provider/model for OpenCode; empty for the CLI's default</small></label>
+    <input id="a-model" maxlength="120" autocomplete="off" placeholder="opencode-go/kimi-k3">
+    <label for="a-tier">Strength <small>1 cheapest … 5 strongest; failed work moves up</small></label>
+    <input id="a-tier" type="number" min="1" max="5" value="2">
+    <label for="a-vendor">Company <small>reviews come from a different one than the writer</small></label>
+    <input id="a-vendor" maxlength="40" autocomplete="off" placeholder="moonshot">
+    <label for="a-keys">Keys it needs <small>optional, e.g. MOONSHOT_API_KEY</small></label>
+    <input id="a-keys" maxlength="200" autocomplete="off">
+    <div class="row">
+      <span class="msg" id="a-msg" role="alert"></span>
+      <button type="button" id="a-cancel">Cancel</button>
+      <button type="submit" class="primary" id="a-save">Add agent</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="keyDlg" aria-labelledby="kdh">
+  <form id="keyForm" method="dialog">
+    <h2 id="kdh">Set a key</h2>
+    <p class="hint">Stored in Windows Credential Manager as <code id="k-target">Fletchery/…</code>. Only agents that list it get it.</p>
+    <label for="k-name">Name</label>
+    <input id="k-name" required maxlength="64" autocomplete="off" placeholder="DEEPSEEK_API_KEY">
+    <label for="k-val">Key</label>
+    <input id="k-val" type="password" required maxlength="4096" autocomplete="off">
+    <div class="row">
+      <span class="msg" id="k-msg" role="alert"></span>
+      <button type="button" id="k-cancel">Cancel</button>
+      <button type="submit" class="primary" id="k-save">Save key</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const TOKEN = "__FLETCHERY_TOKEN__";
 const STAGES = ["Writing", "Checking", "Reviewing", "Opening PR"];
 const STAGE_LABEL = {"Writing": "1 Write", "Checking": "2 Check", "Reviewing": "3 Review", "Opening PR": "4 Open PR"};
 function explain(a) {
-  if (a.kind === "fix") return "The Build Lane sent this PR back. Claude is fixing what failed; Fletchery checks it and pushes the fix to the same PR.";
+  const who = a.agent && last && last.agents && last.agents.multi ? a.agent : "Claude";
+  if (a.kind === "fix") return `The Build Lane sent this PR back. ${who} is fixing what failed; Fletchery checks it and pushes the fix to the same PR.`;
+  const stage = (a.stage || "").replace(/ \(.*\)$/, "");
   return ({
     "Starting": "Setting up this task's own branch and folder.",
-    "Writing": "Claude is reading the code and making the change on this task's branch. Nothing is built or merged yet.",
+    "Writing": `${who} is reading the code and making the change on this task's branch. Nothing is built or merged yet.`,
     "Checking": "Fletchery is running the project's quick checks on the change (its conventions, related tests). Not the full build.",
-    "Reviewing": "A second Claude, which did not write the change, is reviewing it against the task and the conventions.",
+    "Reviewing": who === "Claude" ? "A second Claude, which did not write the change, is reviewing it against the task and the conventions."
+      : `${who}, which did not write the change, is reviewing it against the task and the conventions.`,
     "Opening PR": "Pushing the branch and opening a PR into Test-Staging. From there the Build Lane builds and tests it."
-  })[a.stage] || a.stage;
+  })[stage] || a.stage;
 }
 let last = null, lastActions = {};
 
@@ -495,7 +591,7 @@ function render(d) {
   // now
   const slots = [];
   for (const a of d.live) {
-    const idx = STAGES.indexOf(a.stage);
+    const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
     const fixing = a.kind === "fix";
     const track = fixing ? `<ol class="track"><li class="on">${esc(a.stage)}</li></ol>`
       : `<ol class="track" aria-label="Progress">${STAGES.map((s, i) =>
@@ -504,7 +600,7 @@ function render(d) {
     lastActions[a.task] = a.actions;
     const row = d.tasks.find(t => t.number === a.task);
     slots.push(`<article class="slot">
-      <div class="who"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">#${a.task} ${esc(a.title)}</a>
+      <div class="who"><span>${a.agent && d.agents && d.agents.multi ? `<span class="agent" title="${esc(a.role || "")}">${esc(a.agent)}${a.role === "reviewer" ? " reviewing" : ""}</span>` : ""}<a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">#${a.task} ${esc(a.title)}</a></span>
         <span class="clock" title="Started ${esc(a.since)}">${ago(a.since)}</span></div>
       ${track}
       <div class="what">${esc(explain(a))}</div>
@@ -582,11 +678,13 @@ function render(d) {
   }
 
   // history
-  const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out"};
+  const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out",
+                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent"};
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
       <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a></td>
       <td><span class="res ${esc(h.result)}">${esc(names[h.result] || h.result)}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
+        ${h.agent ? ` <span class="ag-by">by ${esc(h.agent)}${h.reviewer ? `, reviewed by ${esc(h.reviewer)}` : ""}</span>` : ""}
         ${h.detail ? `<br><span style="color:var(--muted)">${esc(h.detail)}</span>` : ""}</td>
       <td class="cost">$${Number(h.cost_usd || 0).toFixed(2)}</td></tr>`).join("")
     : `<tr><td style="border:0;color:var(--muted)">No sessions yet. They appear here as they finish.</td></tr>`;
@@ -597,6 +695,7 @@ function render(d) {
   if (atEnd) log.scrollTop = log.scrollHeight;
 
   renderWorkersOff(d);
+  renderAgents(d);
   renderLane(d);
   renderQueue(d);
   renderUsage(d);
@@ -812,6 +911,86 @@ function renderLane(d) {
     `</ul>${q.length > shown.length ? `<div style="color:var(--muted);font-size:14px;margin-top:4px">and ${q.length - shown.length} more on the status issue</div>` : ""}`
     : `<span style="color:var(--muted);font-size:14px">Nothing waiting for the lane.</span>`;
 }
+
+
+// ---- agents ----
+function renderAgents(d) {
+  const A = d.agents, sec = $("agents");
+  if (!A) { sec.hidden = true; return; }
+  sec.hidden = d.workers_enabled === false;
+  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.";
+  $("escBtn").setAttribute("aria-pressed", A.escalate ? "true" : "false");
+  const R = A.routing || {};
+  const rl = k => (R[k] && R[k].length) ? R[k].map(n => {
+      const a = A.list.find(x => x.name === n);
+      return a && !a.enabled ? `<s>${esc(n)}</s>` : esc(n);
+    }).join(" → ") : "strongest first";
+  $("agRoute").innerHTML = `<b>Easy</b> ${rl("easy")} · <b>Medium</b> ${rl("medium")} · <b>Hard</b> ${rl("hard")} · <b>Reviews</b> ${rl("reviewers")}` +
+    " <span>(an agent that is off, out of its limit or not signed in is skipped; one that keeps passing a level is tried first)</span>";
+  $("agGrid").innerHTML = A.list.map(a => {
+    let chip, cls;
+    if (!a.enabled) { chip = "Off"; cls = "idle"; }
+    else if (a.paused_until) { chip = "Paused until " + clockTime(a.paused_until); cls = "paused"; }
+    else if (a.signed_in === false) { chip = "Not signed in"; cls = "out"; }
+    else if (a.busy) { chip = `Working (${a.busy})`; cls = "working"; }
+    else if (a.signed_in === true) { chip = "Ready"; cls = "ready"; }
+    else { chip = "Not checked yet"; cls = "idle"; }
+    const rates = ["easy", "medium", "hard"].filter(l => a[l] && a[l].tried).map(l => `${l} <b>${Math.round(a[l].rate * 100)}%</b> of ${a[l].tried}`);
+    const acct = a.paused_until ? a.paused_reason : a.account;
+    return `<div class="ag${a.enabled ? "" : " off"}">
+      <div class="top"><span class="nm">${esc(a.name)}</span><span class="chip ${cls}">${esc(chip)}</span></div>
+      <div class="model">${esc(a.kind)}${a.model ? " · " + esc(a.model) : ""} · strength ${a.tier} · ${esc(a.vendor)}</div>
+      ${acct ? `<div class="acct">${esc(acct)}</div>` : ""}
+      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}</div>
+      ${a.key_env && a.key_env.length ? `<div class="rates">Uses key ${a.key_env.map(esc).join(", ")}</div>` : ""}
+      <div class="row2">
+        <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button>
+        ${a.kind !== "fake" ? `<button type="button" data-ag-login="${esc(a.name)}">Sign in</button>` : ""}
+        <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
+      </div></div>`;
+  }).join("");
+  $("keyRows").innerHTML = (A.keys || []).map(k => `<tr><td class="k">${esc(k.name)}</td><td class="w">${esc(k.what)}</td>
+      <td>${k.set ? `Set <span style="color:var(--muted)">${esc(k.hint)}</span>` : `<span style="color:var(--muted)">not set</span>`}</td>
+      <td class="b"><button type="button" data-key-set="${esc(k.name)}">${k.set ? "Replace" : "Set"}</button>
+      ${k.set ? `<button type="button" data-key-clear="${esc(k.name)}">Remove</button>` : ""}</td></tr>`).join("") +
+    `<tr><td colspan="4" class="b" style="text-align:left"><button type="button" class="linkbtn" data-key-set="">Add another key</button></td></tr>`;
+}
+async function agentCall(path, body, msg) {
+  try { const r = await post(path, body); if (r && r.message) $("state").textContent = r.message; await refresh(); return r; }
+  catch (e) { alert(e.message); }
+}
+$("agents").addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  if (b.dataset.agToggle) {
+    const on = b.getAttribute("aria-pressed") !== "true";
+    agentCall("/api/agents/toggle", {name: b.dataset.agToggle, on});
+  } else if (b.dataset.agLogin) agentCall("/api/agents/login", {name: b.dataset.agLogin});
+  else if (b.dataset.agRemove) { if (confirm(`Remove the agent ${b.dataset.agRemove}? Switching it off keeps its settings.`)) agentCall("/api/agents/remove", {name: b.dataset.agRemove}); }
+  else if (b.dataset.keyClear) { if (confirm(`Remove ${b.dataset.keyClear} from Credential Manager?`)) agentCall("/api/keys/clear", {name: b.dataset.keyClear}); }
+  else if (b.dataset.keySet !== undefined) {
+    $("k-name").value = b.dataset.keySet; $("k-name").readOnly = !!b.dataset.keySet; $("k-val").value = ""; $("k-msg").textContent = "";
+    $("k-target").textContent = "Fletchery/" + (b.dataset.keySet || "…"); $("keyDlg").showModal(); (b.dataset.keySet ? $("k-val") : $("k-name")).focus();
+  }
+});
+$("escBtn").onclick = () => agentCall("/api/agents/escalate", {on: $("escBtn").getAttribute("aria-pressed") !== "true"});
+$("agCheck").onclick = async () => { await agentCall("/api/agents/check", {}); $("state").textContent = "Checking every agent's sign-in…"; setTimeout(refresh, 4000); };
+$("agAdd").onclick = () => { $("agForm").reset(); $("a-msg").textContent = ""; $("agDlg").showModal(); $("a-name").focus(); };
+$("a-cancel").onclick = () => $("agDlg").close();
+$("agForm").onsubmit = async ev => {
+  ev.preventDefault();
+  try {
+    await post("/api/agents/add", {name: $("a-name").value, kind: $("a-kind").value, model: $("a-model").value,
+      tier: +$("a-tier").value, vendor: $("a-vendor").value, keyEnv: $("a-keys").value});
+    $("agDlg").close(); refresh();
+  } catch (e) { $("a-msg").textContent = e.message; }
+};
+$("k-name").oninput = () => $("k-target").textContent = "Fletchery/" + ($("k-name").value.toUpperCase() || "…");
+$("k-cancel").onclick = () => { $("k-val").value = ""; $("keyDlg").close(); };
+$("keyForm").onsubmit = async ev => {
+  ev.preventDefault();
+  try { await post("/api/keys/set", {name: $("k-name").value, value: $("k-val").value}); $("k-val").value = ""; $("keyDlg").close(); refresh(); }
+  catch (e) { $("k-msg").textContent = e.message; }
+};
 
 async function refresh() {
   try {

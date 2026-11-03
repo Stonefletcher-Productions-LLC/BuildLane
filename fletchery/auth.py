@@ -27,6 +27,13 @@ def api_key(saved: str | None = None) -> str | None:
     key = os.environ.get("ANTHROPIC_API_KEY") or saved
     if key:
         return key
+    try:
+        import keys
+        key = keys.get("ANTHROPIC_API_KEY")  # set from the dashboard's Agents panel
+        if key:
+            return key
+    except Exception:
+        pass
     if os.name == "nt":
         try:
             import winreg
