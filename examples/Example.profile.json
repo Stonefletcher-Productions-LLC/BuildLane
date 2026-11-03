@@ -1,0 +1,14 @@
+{
+  "name": "Harbor",
+  "repo": "example/harbor",
+  "workers": {
+    "enabled": true,
+    "projectRoot": "C:\\Code\\harbor",
+    "baseBranch": "main",
+    "label": "fletchery",
+    "maxParallel": 2,
+    "pollMinutes": 10,
+    "auth": "subscription",
+    "dailyBudgetUsd": 20
+  }
+}
