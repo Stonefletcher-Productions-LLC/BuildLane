@@ -229,6 +229,16 @@
   .col li .why { color: var(--muted); font-size: 14px; display: block; }
   .col li .why a { color: var(--lane); }
   .blocked li .why { color: var(--blocked); }
+.merge-now { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; font-size: 15px; line-height: 1.4; background: var(--blocked-bg); }
+.merge-now.idle { background: transparent; padding: 0 0 4px; color: var(--muted); font-size: 14px; }
+.merge-now.running, .merge-now.waiting { background: #E3F0FA; color: #0B3C5D; }
+.merge-now.failed { background: var(--blocked-bg); color: var(--blocked); font-weight: 700; }
+.merge-now .msteps { display: flex; flex-wrap: wrap; gap: 4px 6px; list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+.merge-now .msteps li { padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; opacity: .75; }
+.merge-now .msteps li.done { opacity: .5; }
+.merge-now .msteps li.running, .merge-now .msteps li.waiting, .merge-now .msteps li.failed { opacity: 1; font-weight: 700; }
+.merge-now .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mgroup { list-style: none; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 8px 0 2px; border: 0 !important; }
   .col .empty { color: var(--muted); font-size: 14px; padding: 8px 0 14px; }
 
   /* ---- history and log ---- */
@@ -341,7 +351,7 @@
 
   <div class="board-wrap" id="boardBox">
   <div class="board" id="board">
-    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Merge: finished PRs, most-unblocking first<span class="n" id="n-pr"></span></h3><div class="scroll" tabindex="0" aria-label="PRs waiting to merge"><ul id="c-pr"></ul></div></div>
+    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Merge<span class="n" id="n-pr"></span></h3><div class="merge-now" id="mergeNow" role="status" aria-live="polite"></div><div class="scroll" tabindex="0" aria-label="PRs waiting to merge"><ul id="c-pr"></ul></div></div>
     <div class="col blocked"><h3><span class="glyph" aria-hidden="true">✗</span>Needs you<span class="n" id="n-blocked"></span></h3><div class="scroll" tabindex="0" aria-label="Needs you"><ul id="c-blocked"></ul></div></div>
   </div>
   <div class="grip" data-resize="boardBox" data-key="board" role="separator" aria-orientation="horizontal" tabindex="0"
@@ -519,13 +529,33 @@ function render(d) {
   // the Merge column: one row per finished PR, in the order that frees the most waiting tasks
   const mergeRows = d.merge || null;
   if (mergeRows) {
-    const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
     cols.pr = [];
+    const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
+    const box = $("mergeNow");
+    box.className = "merge-now " + (mv.stale ? "failed" : (mv.state || "idle"));
+    const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
+    const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
+    box.innerHTML = (mv.state && mv.state !== "idle" ? "<b>Now:</b> " : "") + esc(mv.headline || "") +
+      (mv.steps && mv.steps.length ? `<ol class="msteps" aria-label="Round steps">${mv.steps.map(s =>
+        `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>` : "");
+    const inRound = new Set(mv.prs || []);
     $("n-pr").textContent = mergeRows.length || "";
-    $("c-pr").innerHTML = mergeRows.length ? mergeRows.map(r => {
+    const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr))];
+    let lastGroup = null;
+    $("c-pr").innerHTML = ordered.length ? ordered.map(r => {
+      const g = inRound.has(r.pr) ? `In round ${mv.round || "?"}` : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
+      const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
+      lastGroup = g;
+      return head + mergeRow(r);
+    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+  }
+  function mergeRow(r) {
+    const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
+    {
       const bits = [];
       bits.push(r.unblocks.length ? `<b>Unblocks ${r.unblocks.length}</b>: ${r.unblocks.slice(0, 8).map(issue).join(", ")}${r.unblocks.length > 8 ? " …" : ""}` : "Unblocks nothing waiting");
-      if (r.round) bits.push(`round ${esc(r.round)}`);
+      if (r.in_round_branch) bits.push("<b>merged into the round branch</b>");
+      else if (r.round) bits.push(`round ${esc(r.round)}`);
       if (r.imports) bits.push(`imports: ${esc(r.imports)}`);
       for (const f of r.flags) bits.push(`<b>${esc(f)}</b>`);
       if (r.conflict) bits.push("<b>conflicts</b>");
@@ -533,7 +563,7 @@ function render(d) {
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
       return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}</a>` +
         `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
-    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+    }
   }
   for (const [k, list] of Object.entries(cols)) {
     if (k === "pr" && mergeRows) continue;

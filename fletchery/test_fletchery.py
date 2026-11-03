@@ -782,5 +782,37 @@ assert rows[1]["conflict"] and not rows[1]["ready"] and rows[1]["flags"] == [] a
 s = ctx.gh.status_text
 assert "## Merge" in s and "- PR #71 (#1 a) · head `aaaaaaaa` · unblocks 2: #2, #3 · round 7 · imports: BuildTown · **strict NavCheck on the PC**" in s, s
 assert "**conflicts** · not `ready`" in s
+assert "No merge round running" in s
+
+# ---- what the merge round is doing: a plain headline from merge-round.json and the PC's heavy lease ----
+import merge as merge_mod  # noqa: E402
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+mt = Path(tempfile.mkdtemp())
+(mt / "heavy.json").write_text(_json_mod.dumps({"token": "x", "purpose": "Tools\\RunFlowTest.ps1",
+                                                 "workspaces": "E:\\lifeshare-scratch\\toilet-w1",
+                                                 "acquiredUtc": "2026-11-03T15:16:56.71Z"}), encoding="utf-8")
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "started": "2026-11-03T13:40:00Z", "updated": "2026-11-03T15:00:00Z",
+    "prs": [71, 74], "steps": [{"name": "Merge the PRs", "state": "done"}, {"name": "BuildTown", "state": "waiting"},
+                               {"name": "NavCheck", "state": "todo"}, {"name": "Game specs", "state": "todo"}]}), encoding="utf-8")
+at = _dt(2026, 11, 3, 15, 20, tzinfo=_tz.utc)
+v = merge_mod.view(mt / "round.json", mt / "heavy.json", {}, now=at)
+assert v["state"] == "waiting" and v["round"] == "7" and v["next"] == "NavCheck" and not v["stale"], v
+assert v["headline"].startswith("Merging round 7: 2 PRs, step 2 of 4, waiting to run BuildTown. Waiting because the PC is busy "
+                                "with RunFlowTest.ps1 in toilet-w1 (since 15:16Z); started 13:40Z; then NavCheck."), v["headline"]
+v = merge_mod.view(mt / "round.json", mt / "missing.json", {}, now=_dt(2026, 11, 3, 18, 0, tzinfo=_tz.utc))
+assert v["stale"] and "may be stuck" in v["headline"], v["headline"]
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "state": "done"}), encoding="utf-8")
+assert merge_mod.view(mt / "round.json", mt / "heavy.json", {}, now=at)["headline"].startswith("No merge round running")
+# the round's PRs come first in the status issue, under their own heading
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "prs": [74], "steps": [{"name": "BuildTown", "state": "running"}]}),
+                               encoding="utf-8")
+ctx, tmp = ctx_with({1: T(1, "a", status=PR), 4: T(4, "d", status=PR)},
+                    cfg=Config(max_parallel=0, merge_round_file=str(mt / "round.json")))
+ctx.gh.prs += [PullRequest(71, "t1", "claude/foreman-1-a", "Test-Staging", "a" * 40, ["foreman", "ready"], "Closes #1"),
+               PullRequest(74, "t4", "claude/foreman-4-d", "Test-Staging", "b" * 40, ["foreman", "ready"], "Closes #4")]
+fm, out = run_once(ctx, tmp)
+s = ctx.gh.status_text
+assert "**Now:** Merging round 7: 1 PR, step 1 of 1, running BuildTown." in s and "Steps: ▶ BuildTown" in s, s
+assert s.index("**In round 7** (1):") < s.index("- PR #74") < s.index("**Waiting for a round** (1)") < s.index("- PR #71"), s
 
 print("RESULT: PASS (Fletchery engine checks)")

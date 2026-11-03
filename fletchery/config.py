@@ -41,7 +41,8 @@ WORKER_KEYS = {
     "plannerMaxTurns": "planner_max_turns", "fixerAttempts": "fixer_attempts", "codeFreeze": "code_freeze",
     "gateTimeoutSeconds": "gate_timeout_s", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
     "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
-    "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags",
+    "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
+    "heavyLeaseFile": "heavy_lease_file",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -88,6 +89,8 @@ class Config:
     # the Merge section: notes shown on a PR waiting to merge when it changes matching paths, e.g.
     # [{"paths": "^Content/Town/|Furniture", "flag": "strict NavCheck on the PC"}]
     merge_flags: list = None
+    merge_round_file: str = ""               # what the merge round is doing (merge.py); "" = <state_dir>/merge-round.json
+    heavy_lease_file: str = ""               # who holds the PC for heavy work (HeavyLease.ps1's heavy.json); "" = not shown
     # the Build Lane, from the profile; "" hides the panel
     lane_status_file: str = ""
     lane_pause_file: str = ""

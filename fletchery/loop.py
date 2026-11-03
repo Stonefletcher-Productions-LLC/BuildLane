@@ -349,6 +349,10 @@ class Engine:
         """One row per task whose PR is open, most-unblocking first: merge order for the release round. A task only
         counts as done when its issue closes (its PR merges), so a long chain waits on its first PR."""
         cache: dict = self.__dict__.setdefault("_merge_files", {})
+        import merge as merge_mod
+        round_file = self.cfg.merge_round_file or str(self.state_dir / "merge-round.json")
+        mv = merge_mod.view(round_file, self.cfg.heavy_lease_file, {n: p.head_sha for n, p in prs.items()})
+        self.merge_view = mv
         flags_cfg = [f for f in (self.cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
         url = f"https://github.com/{self.cfg.repo}"
         rows = []
@@ -378,7 +382,8 @@ class Engine:
                 imports = m.group(1).strip() if m else ""
             rows.append({"task": t.number, "title": t.title, "pr": t.pr_number, "pr_url": f"{url}/pull/{t.pr_number}",
                          "head": pr.head_sha[:8] if pr else "", "unblocks": downstream, "direct": direct,
-                         "round": graph.merge_round(pr.labels) if pr else "",
+                         "round": (mv["round"] or "?") if t.pr_number in mv["prs"] else graph.merge_round(pr.labels) if pr else "",
+                         "in_round_branch": mv["in_branch"].get(t.pr_number),
                          "ready": bool(pr and "ready" in pr.labels), "conflict": bool(pr and pr.mergeable is False),
                          "imports": imports, "flags": flags,
                          "fix_attempts": self.state.fix_attempts.get(str(t.pr_number), 0)})
@@ -393,7 +398,7 @@ class Engine:
         bits.append(f"unblocks {len(r['unblocks'])}" + (": " + ", ".join(f"#{n}" for n in r["unblocks"][:12])
                                                         + (" …" if len(r["unblocks"]) > 12 else "") if r["unblocks"] else ""))
         if r["round"]:
-            bits.append(f"round {r['round']}")
+            bits.append(f"round {r['round']}" + (", merged into the round branch" if r.get("in_round_branch") else ""))
         if r["imports"]:
             bits.append(f"imports: {r['imports']}")
         bits += [f"**{f}**" for f in r["flags"]]
@@ -425,6 +430,7 @@ class Engine:
                 "usage_week": self.usage_week(),
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
+                "merge_view": self.merge_view,
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
                 "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),
@@ -455,10 +461,18 @@ class Engine:
         queued = [t for t in tasks.values() if t.status == QUEUED]
         L += section("Queue", [f"- #{t.number} {t.title}: {waiting.get(t.number, 'ready')}" for t in queued], "(empty)")
         merge = self.merge_rows(tasks, prs)
-        moving = sum(1 for r in merge if r["unblocks"])
-        L += ["## Merge", "Finished PRs waiting to merge, most-unblocking first. A task that depends on one starts only "
-              "once its PR merges." + (f" Merging the top {moving} sets the waiting queue moving." if moving else ""), ""]
-        L += [self.merge_line(r) for r in merge] or ["- (nothing waiting)"]
+        mv = self.merge_view
+        L += ["## Merge", f"**Now:** {mv['headline']}", ""]
+        if mv["steps"]:
+            mark = {"done": "✓", "running": "▶", "waiting": "⏸", "failed": "✗", "todo": "○"}
+            L += ["Steps: " + " → ".join(f"{mark[s['state']]} {s['name']}" for s in mv["steps"]), ""]
+        in_round = [r for r in merge if r["pr"] in mv["prs"]]
+        rest = [r for r in merge if r["pr"] not in mv["prs"]]
+        if in_round:
+            L += [f"**In round {mv['round'] or '?'}** ({len(in_round)}):", *[self.merge_line(r) for r in in_round], ""]
+        L += [("**Waiting for a round**" if mv["prs"] else "**Waiting to merge**") + f" ({len(rest)}), most-unblocking "
+              "first. A task that depends on one starts only once its PR merges:"]
+        L += [self.merge_line(r) for r in rest] or ["- (nothing)"]
         L += [""]
         no_pr = [t for t in tasks.values() if t.status == PR and not t.pr_number]
         if no_pr:
