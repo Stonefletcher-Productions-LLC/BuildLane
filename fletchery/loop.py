@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -343,6 +344,67 @@ class Engine:
             self.snapshot["held"] = on
         self.wake()
 
+    # ---- the Merge section: finished PRs waiting to merge, what each one sets moving ----
+    def merge_rows(self, tasks: dict[int, Task], prs: dict[int, PullRequest]) -> list[dict]:
+        """One row per task whose PR is open, most-unblocking first: merge order for the release round. A task only
+        counts as done when its issue closes (its PR merges), so a long chain waits on its first PR."""
+        cache: dict = self.__dict__.setdefault("_merge_files", {})
+        flags_cfg = [f for f in (self.cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
+        url = f"https://github.com/{self.cfg.repo}"
+        rows = []
+        for t in tasks.values():
+            if t.status != PR or not t.pr_number:
+                continue
+            pr = prs.get(t.pr_number)
+            downstream = graph.unblocks(tasks, t.number)
+            direct = sorted(n for n, o in tasks.items() if t.number in o.depends_on)
+            flags: list[str] = []
+            if pr and flags_cfg:
+                key = (pr.number, pr.head_sha)
+                if key not in cache:
+                    try:
+                        cache[key] = self.ctx.gh.pr_files(pr.number)
+                    except Exception as e:  # a file list is a nicety; never fail the pass for it
+                        self.ctx.log(f"merge flags: PR #{pr.number} files: {type(e).__name__}: {e}")
+                        cache[key] = None
+                files = cache[key] or []
+                for f in flags_cfg:
+                    rx = re.compile(f["paths"])
+                    if any(rx.search(p) for p in files) and f["flag"] not in flags:
+                        flags.append(f["flag"])
+            imports = ""
+            if pr:
+                m = re.search(r"^\s*lane-imports\s*:\s*(.*)$", pr.body or "", re.IGNORECASE | re.MULTILINE)
+                imports = m.group(1).strip() if m else ""
+            rows.append({"task": t.number, "title": t.title, "pr": t.pr_number, "pr_url": f"{url}/pull/{t.pr_number}",
+                         "head": pr.head_sha[:8] if pr else "", "unblocks": downstream, "direct": direct,
+                         "round": graph.merge_round(pr.labels) if pr else "",
+                         "ready": bool(pr and "ready" in pr.labels), "conflict": bool(pr and pr.mergeable is False),
+                         "imports": imports, "flags": flags,
+                         "fix_attempts": self.state.fix_attempts.get(str(t.pr_number), 0)})
+        rows.sort(key=lambda r: (-len(r["unblocks"]), r["pr"]))
+        return rows
+
+    @staticmethod
+    def merge_line(r: dict) -> str:
+        bits = [f"PR #{r['pr']} (#{r['task']} {r['title']})"]
+        if r["head"]:
+            bits.append(f"head `{r['head']}`")
+        bits.append(f"unblocks {len(r['unblocks'])}" + (": " + ", ".join(f"#{n}" for n in r["unblocks"][:12])
+                                                        + (" …" if len(r["unblocks"]) > 12 else "") if r["unblocks"] else ""))
+        if r["round"]:
+            bits.append(f"round {r['round']}")
+        if r["imports"]:
+            bits.append(f"imports: {r['imports']}")
+        bits += [f"**{f}**" for f in r["flags"]]
+        if r["conflict"]:
+            bits.append("**conflicts**")
+        if not r["ready"]:
+            bits.append("not `ready`")
+        if r["fix_attempts"]:
+            bits.append(f"fixed {r['fix_attempts']}×")
+        return "- " + " · ".join(bits)
+
     # ---- the dashboard's view of the last pass ----
     def make_snapshot(self, tasks: dict[int, Task], prs: dict[int, PullRequest], waiting: dict[int, str],
                       outcomes: list[Outcome]) -> dict:
@@ -362,7 +424,7 @@ class Engine:
                 "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,
                 "usage_week": self.usage_week(),
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
-                "limit_reason": st.paused_reason, "tasks": rows,
+                "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
                 "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),
@@ -392,11 +454,15 @@ class Engine:
         L += section("Running", [f"- #{t.number} {t.title} (since {st.running.get(str(t.number), '?')})" for t in running], "(nothing)")
         queued = [t for t in tasks.values() if t.status == QUEUED]
         L += section("Queue", [f"- #{t.number} {t.title}: {waiting.get(t.number, 'ready')}" for t in queued], "(empty)")
-        in_pr = [t for t in tasks.values() if t.status == PR]
-        L += section("In the lane", [f"- #{t.number} {t.title}" + (f" → PR #{t.pr_number}" if t.pr_number else "")
-                                     + (f" (fix attempts: {st.fix_attempts[str(t.pr_number)]})"
-                                        if t.pr_number and str(t.pr_number) in st.fix_attempts else "")
-                                     for t in in_pr], "(none)")
+        merge = self.merge_rows(tasks, prs)
+        moving = sum(1 for r in merge if r["unblocks"])
+        L += ["## Merge", "Finished PRs waiting to merge, most-unblocking first. A task that depends on one starts only "
+              "once its PR merges." + (f" Merging the top {moving} sets the waiting queue moving." if moving else ""), ""]
+        L += [self.merge_line(r) for r in merge] or ["- (nothing waiting)"]
+        L += [""]
+        no_pr = [t for t in tasks.values() if t.status == PR and not t.pr_number]
+        if no_pr:
+            L += section("In the lane, PR not found", [f"- #{t.number} {t.title}" for t in no_pr], "")
         blocked = [t for t in tasks.values() if t.status == BLOCKED]
         L += section("Blocked (needs a person)", [f"- #{t.number} {t.title}" for t in blocked], "(none)")
         if outcomes:

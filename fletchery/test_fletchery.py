@@ -78,7 +78,8 @@ assert ctx.repo.pushed == ["claude/foreman-10-first"]
 assert [c[0] for c in ctx.runtime.calls] == ["worker", "reviewer"]
 pr = ctx.gh.prs[0]
 assert pr.base == "Test-Staging" and "ready" in pr.labels and "Closes #10" in pr.body and "has not been through the full build" in pr.body
-assert "waits for #10" in ctx.gh.status_text and "→ PR #9000" in ctx.gh.status_text
+assert "waits for #10" in ctx.gh.status_text and "- PR #9000 (#10 First)" in ctx.gh.status_text
+assert "unblocks 1: #11" in ctx.gh.status_text, ctx.gh.status_text
 ctx.gh.close_issue(10)  # the lane lands the PR
 ctx.gh.prs.clear()
 fm, out = run_once(ctx, tmp)
@@ -202,7 +203,7 @@ assert parse_output(None, "no json") == {}
 # ---- status text sections ----
 ctx, tmp = ctx_with({1: T(1, "a"), 2: T(2, "b", status=BLOCKED)})
 fm, out = run_once(ctx, tmp)
-for needle in ("## Running", "## Queue", "## In the lane", "## Blocked (needs a person)", "- #2 b", "## This pass", "- #1: pr PR #9000"):
+for needle in ("## Running", "## Queue", "## Merge", "## Blocked (needs a person)", "- #2 b", "## This pass", "- #1: pr PR #9000"):
     assert needle in ctx.gh.status_text, needle
 
 # ---- usage limits: not a verdict on the task; the loop pauses dispatch ----
@@ -759,5 +760,27 @@ class _FixerJobsGH(_RealGH):
         raise AssertionError(path)
 fb = _FixerJobsGH("o/r").feedback_since(PullRequest(829, "t", "h", "b", "s" * 40, ["foreman"]), None)
 assert [f.text.split("`")[1] for f in fb] == ["Quick checks"], fb
+
+# ---- the Merge section: finished PRs, most-unblocking first, with round, imports and path flags ----
+from graph import unblocks, merge_round  # noqa: E402
+g = {1: T(1, "a", status=PR), 2: T(2, "b", "Depends on: #1"), 3: T(3, "c", "Depends on: #2"), 4: T(4, "d", status=PR),
+     5: T(5, "e", "Depends on: #4")}
+assert unblocks(g, 1) == [2, 3] and unblocks(g, 4) == [5] and unblocks(g, 3) == []
+assert merge_round(["ready", "round:7"]) == "7" and merge_round(["Round-12"]) == "12" and merge_round(["ready"]) == ""
+ctx, tmp = ctx_with({1: T(1, "a", status=PR), 2: T(2, "b", "Depends on: #1"), 3: T(3, "c", "Depends on: #2"),
+                     4: T(4, "d", status=PR), 5: T(5, "e", "Depends on: #4", status=BLOCKED), 6: T(6, "f", "Depends on: #4", status=BLOCKED)},
+                    cfg=Config(max_parallel=0, merge_flags=[{"paths": "^Content/Town/", "flag": "strict NavCheck on the PC"}]))
+ctx.gh.prs += [PullRequest(71, "t1", "claude/foreman-1-a", "Test-Staging", "a" * 40, ["foreman", "ready", "round:7"],
+                           "Closes #1\n\nLane-Imports: BuildTown"),
+               PullRequest(74, "t4", "claude/foreman-4-d", "Test-Staging", "b" * 40, ["foreman"], "Closes #4", False)]
+ctx.gh.files = {71: ["Content/Town/Source/town.json"], 74: ["Source/x.cpp"]}
+fm, out = run_once(ctx, tmp)
+rows = fm.snapshot["merge"]
+assert [r["pr"] for r in rows] == [71, 74] and rows[0]["unblocks"] == [2, 3] and rows[1]["unblocks"] == [5, 6]
+assert rows[0]["round"] == "7" and rows[0]["imports"] == "BuildTown" and rows[0]["flags"] == ["strict NavCheck on the PC"]
+assert rows[1]["conflict"] and not rows[1]["ready"] and rows[1]["flags"] == [] and rows[0]["head"] == "a" * 8
+s = ctx.gh.status_text
+assert "## Merge" in s and "- PR #71 (#1 a) · head `aaaaaaaa` · unblocks 2: #2, #3 · round 7 · imports: BuildTown · **strict NavCheck on the PC**" in s, s
+assert "**conflicts** · not `ready`" in s
 
 print("RESULT: PASS (Fletchery engine checks)")

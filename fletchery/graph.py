@@ -138,5 +138,30 @@ def readiness(tasks: dict[int, Task], known_closed: set[int] | None = None) -> R
     return Readiness(ready, waiting)
 
 
+def unblocks(tasks: dict[int, Task], number: int) -> list[int]:
+    """Every open task that waits, directly or through others, on `number`: what merging its PR sets moving."""
+    found: set[int] = set()
+    todo = [number]
+    while todo:
+        n = todo.pop()
+        for t in tasks.values():
+            if n in t.depends_on and t.number not in found and t.number != number:
+                found.add(t.number)
+                todo.append(t.number)
+    return sorted(found)
+
+
+_ROUND = re.compile(r"^round[\s:_-]*(\d+)$", re.IGNORECASE)
+
+
+def merge_round(labels: list[str]) -> str:
+    """A release round a PR was put in, from a `round:7` / `round-7` label on the PR ("" when none)."""
+    for l in labels:
+        m = _ROUND.match(l.strip())
+        if m:
+            return m.group(1)
+    return ""
+
+
 def pick(ready: list[Task], free_slots: int) -> list[Task]:
     return ready[: max(0, free_slots)]

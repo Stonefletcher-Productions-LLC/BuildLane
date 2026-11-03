@@ -341,7 +341,7 @@
 
   <div class="board-wrap" id="boardBox">
   <div class="board" id="board">
-    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Workers' PRs in the Build Lane<span class="n" id="n-pr"></span></h3><div class="scroll" tabindex="0" aria-label="Workers' PRs"><ul id="c-pr"></ul></div></div>
+    <div class="col pr"><h3><span class="glyph" aria-hidden="true">◆</span>Merge: finished PRs, most-unblocking first<span class="n" id="n-pr"></span></h3><div class="scroll" tabindex="0" aria-label="PRs waiting to merge"><ul id="c-pr"></ul></div></div>
     <div class="col blocked"><h3><span class="glyph" aria-hidden="true">✗</span>Needs you<span class="n" id="n-blocked"></span></h3><div class="scroll" tabindex="0" aria-label="Needs you"><ul id="c-blocked"></ul></div></div>
   </div>
   <div class="grip" data-resize="boardBox" data-key="board" role="separator" aria-orientation="horizontal" tabindex="0"
@@ -516,7 +516,27 @@ function render(d) {
     if (cols[col]) cols[col].push(t);
   }
   const empty = {pr: "None yet. A worker's PR appears here once it is opened.", blocked: "Nothing needs you."};
+  // the Merge column: one row per finished PR, in the order that frees the most waiting tasks
+  const mergeRows = d.merge || null;
+  if (mergeRows) {
+    const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
+    cols.pr = [];
+    $("n-pr").textContent = mergeRows.length || "";
+    $("c-pr").innerHTML = mergeRows.length ? mergeRows.map(r => {
+      const bits = [];
+      bits.push(r.unblocks.length ? `<b>Unblocks ${r.unblocks.length}</b>: ${r.unblocks.slice(0, 8).map(issue).join(", ")}${r.unblocks.length > 8 ? " …" : ""}` : "Unblocks nothing waiting");
+      if (r.round) bits.push(`round ${esc(r.round)}`);
+      if (r.imports) bits.push(`imports: ${esc(r.imports)}`);
+      for (const f of r.flags) bits.push(`<b>${esc(f)}</b>`);
+      if (r.conflict) bits.push("<b>conflicts</b>");
+      if (!r.ready) bits.push("not labelled ready");
+      if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
+      return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}</a>` +
+        `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
+    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+  }
   for (const [k, list] of Object.entries(cols)) {
+    if (k === "pr" && mergeRows) continue;
     $("n-" + k).textContent = list.length || "";
     $("c-" + k).innerHTML = list.length ? list.map(t => {
       let why = "";
