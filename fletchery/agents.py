@@ -110,6 +110,13 @@ def api_key_name(spec: "AgentSpec") -> str:
     return PROVIDER_KEYS.get((spec.model or "").split("/")[0], "")
 
 
+def codex_model(model: str) -> str:
+    """Codex takes a bare model name: 'openai/gpt-6.1-terra' (OpenCode's spelling) -> 'gpt-6.1-terra'. Codex refuses
+    the provider/model form outright (LifeShare, 2026-11-03: every review failed and blocked its task)."""
+    m = (model or "").strip()
+    return m.split("/", 1)[1] if m.lower().startswith("openai/") else m
+
+
 def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
     """The profile's `agents` list; none means one Claude agent (Fletchery before agents existed)."""
     if not raw:
@@ -124,6 +131,8 @@ def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
             s.vendor = DEFAULT_VENDOR.get(s.kind) or (s.model.split("/")[-1].split("-")[0] if s.model else s.kind)
         if s.kind == "claude" and not s.model:
             s.model = default_model
+        if s.kind == "codex":
+            s.model = codex_model(s.model)
         out.append(s)
     return out
 
@@ -475,11 +484,14 @@ class AgentPool:
                 return s.name
         return None
 
-    def reviewer_for(self, worker: str) -> str | None:
+    def reviewer_for(self, worker: str, besides: set[str] | frozenset = frozenset()) -> str | None:
         """A reviewer from another vendor than the worker, so nobody marks their own homework. Preference: the
-        profile's `routing.reviewers`, then strongest first. With one agent, that agent reviews itself."""
+        profile's `routing.reviewers`, then strongest first. With one agent, that agent reviews itself. `besides`:
+        reviewers that already failed to run on this task, so the next pick is someone else."""
+        def ok(n: str) -> bool:
+            return bool(n) and n not in besides and self.available(n, "reviewer")
         if not self.multi:
-            return worker if self.available(worker, "reviewer") else None
+            return worker if ok(worker) else None
         wv = self.specs[worker].vendor if worker in self.specs else ""
         if self.mode == "scores":  # best reviewer first, at least reviewMin
             sc = self.scored()
@@ -492,12 +504,12 @@ class AgentPool:
             names += [s.name for s in sorted(self.ordered(), key=lambda s: -s.tier) if s.name not in names]
             names = [n for n in names if self.specs[n].tier >= min_tier or n in (self.routing.get("reviewers") or [])]
         for n in names:
-            if self.specs[n].vendor != wv and self.available(n, "reviewer"):
+            if self.specs[n].vendor != wv and ok(n):
                 return n
         for n in names:  # no other vendor on and free: another agent, else a fresh session of the same one
-            if n != worker and self.available(n, "reviewer"):
+            if n != worker and ok(n):
                 return n
-        return worker if worker and self.available(worker, "reviewer") else None
+        return worker if ok(worker) else None
 
     def view(self, stats: Stats | None = None) -> list[dict]:
         """For the dashboard and the status issue."""
