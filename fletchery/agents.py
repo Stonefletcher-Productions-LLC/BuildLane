@@ -358,9 +358,28 @@ class AgentPool:
             return False
         return True
 
-    def pause(self, name: str, minutes: float, reason: str) -> None:
+    @staticmethod
+    def account_of(s: AgentSpec) -> str:
+        """Agents on one account share its limits: every Claude agent on the Claude plan, every Codex agent on one
+        ChatGPT sign-in, every OpenCode agent on one provider (opencode-go/...); an API key is its own account."""
+        if s.auth == "key":
+            return "key:" + (s.api_key_name or s.name)
+        if s.kind == "opencode":
+            return "opencode:" + (s.model or "").split("/")[0]
+        return s.kind if s.kind in ("claude", "codex") else "own:" + s.name
+
+    def pause(self, name: str, minutes: float, reason: str, shared: bool = True) -> list[str]:
+        """Pause an agent, and (shared) every agent on the same account: a plan's limit is the account's, not the
+        model's. Returns who was paused."""
         until = _now() + timedelta(minutes=minutes)
-        self.paused[name] = {"until": until.isoformat(timespec="seconds"), "reason": reason[:200]}
+        names = [name]
+        if shared and name in self.specs:
+            acct = self.account_of(self.specs[name])
+            names += [n for n, s in self.specs.items() if n != name and self.account_of(s) == acct]
+        for n in names:
+            why = reason if n == name else f"same account as {name}: {reason}"
+            self.paused[n] = {"until": until.isoformat(timespec="seconds"), "reason": why[:200]}
+        return names
 
     def any_available(self, role: str = "worker", besides: str = "") -> bool:
         return any(self.available(s.name, role) for s in self.ordered() if s.name != besides)

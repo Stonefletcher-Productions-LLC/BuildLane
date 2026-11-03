@@ -1054,10 +1054,10 @@ assert _sc.classify_skill("Radial menu", "The UMG widget's buttons and tooltip."
 assert _sc.classify_skill("Pronoun pass", "Edit docs/Strings.md and LSStrings.csv.", [])[0] == "docs"
 assert _sc.classify_skill("Clock", "Change LSClock.cpp.", [])[0] == "cpp"
 assert _sc.classify_skill("Anything", "", ["skill:docs"])[0] == "docs"
-SCORED = [{"name": "claude", "kind": "fake", "model": "claude-opus-5-5", "tier": 4, "vendor": "anthropic"},
-          {"name": "haiku", "kind": "fake", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
-          {"name": "deepseek-pro", "kind": "fake", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
-          {"name": "deepseek", "kind": "fake", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"},
+SCORED = [{"name": "claude", "kind": "claude", "model": "claude-opus-5-5", "tier": 4, "vendor": "anthropic"},
+          {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
+          {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
+          {"name": "deepseek", "kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"},
           {"name": "mystery", "kind": "fake", "model": "acme/unknown-1", "tier": 2, "vendor": "acme", "enabled": False}]
 sp = pool_with(agents=SCORED, routing={})
 assert sp.mode == "scores" and pool_with().mode == "lists", "lists in the profile keep list routing"
@@ -1074,6 +1074,11 @@ assert sp.choose("Clock 12/24h", "Change LSClock.cpp.", []).agent == "deepseek-p
 sp.busy["haiku"] = 0
 assert sp.escalate("deepseek", "worker", "cpp") == "haiku" and sp.escalate("claude", "worker", "cpp") is None
 assert sp.reviewer_for("haiku") == "deepseek-pro" and sp.reviewer_for("deepseek") == "claude"
+# a plan's limit is the account's: pausing one OpenCode Go agent pauses the others on opencode-go, not Claude
+who = sp.pause("deepseek-pro", 30, "usage limit: Go 5 hour limit")
+assert set(who) == {"deepseek-pro", "deepseek", "haiku"} and sp.available("claude") and not sp.available("haiku")
+assert "same account as deepseek-pro" in sp.paused["haiku"]["reason"]
+sp.paused.clear()
 # five failed medium C++ tasks pull haiku under the bar; its Python score is untouched
 st = _ag.Stats()
 for _ in range(5):
