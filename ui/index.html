@@ -274,6 +274,30 @@
   textarea { min-height: 150px; resize: vertical; }
   .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; align-items: center; }
   .row .msg { margin-right: auto; font-size: 14px; color: var(--blocked); }
+  /* ---- settings ---- */
+  dialog.wide { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; overflow: auto; }
+  dialog.wide form { padding: 22px 26px; }
+  .set-tabs { display: flex; gap: 6px; margin: 10px 0 14px; border-bottom: 1.5px solid var(--rule); }
+  .set-tabs button { border: 0; background: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 12px; font-weight: 600; color: var(--muted); }
+  .set-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent, #0a7d55); }
+  .set-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0 22px; }
+  .set-grid .f small.help { display: block; color: var(--muted); font-size: 12.5px; margin-top: 3px; font-weight: 400; }
+  .set-grid .f.bool label { display: flex; gap: 8px; align-items: center; }
+  .set-grid .f.bool input { width: auto; }
+  .set-group { margin: 6px 0 2px; font-size: 15px; }
+  .set-adv { margin-top: 12px; }
+  .set-adv > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+  .set-note { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; }
+  .checks { list-style: none; padding: 0; margin: 10px 0 0; font-size: 14px; }
+  .checks li { padding: 3px 0; }
+  .checks li.ok::before { content: "✓ "; color: var(--accent, #0a7d55); font-weight: 700; }
+  .checks li.bad::before { content: "✗ "; color: var(--blocked); font-weight: 700; }
+  .checks li span { color: var(--muted); }
+  .proj { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--rule); }
+  .proj .nm { font-weight: 700; }
+  .proj .rp { color: var(--muted); font-size: 13.5px; }
+  .proj .sp { flex: 1; }
+  .proj .cur { font-size: 12.5px; color: var(--accent, #0a7d55); font-weight: 700; }
 
   @media (max-width: 1000px) { .lower { grid-template-columns: 1fr; } }
   @media (max-width: 700px) { .board { grid-template-columns: 1fr; } }
@@ -379,6 +403,7 @@
     <div class="actions">
       <button id="hold" type="button">Pause</button>
       <button id="runnow" type="button">Check now</button>
+      <button id="settingsBtn" type="button" title="This project's settings, and your other projects">Settings</button>
       <button id="add" type="button" class="primary">Add task</button>
     </div>
   </header>
@@ -498,6 +523,50 @@
       <span class="msg" id="f-msg" role="alert"></span>
       <button type="button" id="f-cancel">Cancel</button>
       <button type="submit" class="primary" id="f-save">Add task</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="setDlg" class="wide" aria-labelledby="setdh">
+  <form id="setForm" method="dialog">
+    <h2 id="setdh">Settings</h2>
+    <p class="hint" id="set-where"></p>
+    <div class="set-tabs" role="tablist">
+      <button type="button" role="tab" id="tab-project" aria-selected="true" data-tab="project">This project</button>
+      <button type="button" role="tab" id="tab-projects" aria-selected="false" data-tab="projects">Projects</button>
+    </div>
+    <div id="pane-project" role="tabpanel" aria-labelledby="tab-project">
+      <div id="set-fields"></div>
+      <ul class="checks" id="set-checks"></ul>
+      <p class="set-note" id="set-restart" hidden></p>
+      <div class="row">
+        <span class="msg" id="set-msg" role="alert"></span>
+        <button type="button" id="set-check">Check the project</button>
+        <button type="button" id="set-restart-btn" hidden>Restart now</button>
+        <button type="button" id="set-close">Close</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </div>
+    <div id="pane-projects" role="tabpanel" aria-labelledby="tab-projects" hidden>
+      <p class="set-note">Fletchery works on one project at a time. Switching lets running sessions finish first, then opens the other project. Project files live in <code id="set-pdir"></code>.</p>
+      <div id="set-projects"></div>
+      <h3 class="set-group" style="margin-top:18px">Add a project</h3>
+      <p class="set-note">Clone the repository on this PC first (for example <code>git clone https://github.com/owner/name.git C:\Code\name</code>), then fill this in.</p>
+      <div class="set-grid">
+        <div class="f"><label for="np-name">Name</label><input id="np-name" autocomplete="off" placeholder="Desk App"></div>
+        <div class="f"><label for="np-repo">GitHub repository</label><input id="np-repo" autocomplete="off" placeholder="owner/name or its GitHub link"></div>
+        <div class="f"><label for="np-root">Local clone</label><input id="np-root" autocomplete="off" placeholder="C:\Code\desk-app"></div>
+        <div class="f"><label for="np-base">Base branch</label><input id="np-base" autocomplete="off" value="main"></div>
+        <div class="f"><label for="np-label">Task label <small>issues with it become tasks</small></label><input id="np-label" autocomplete="off" value="fletchery"></div>
+        <div class="f bool"><label><input type="checkbox" id="np-agents" checked> Use this project's agents</label>
+          <label><input type="checkbox" id="np-labels" checked> Create the labels on GitHub</label></div>
+      </div>
+      <ul class="checks" id="np-checks"></ul>
+      <div class="row">
+        <span class="msg" id="np-msg" role="alert"></span>
+        <button type="button" id="np-close">Close</button>
+        <button type="button" class="primary" id="np-add">Add project</button>
+      </div>
     </div>
   </form>
 </dialog>
@@ -638,6 +707,8 @@ function render(d) {
   // banners
   const hb = $("holdBanner");
   if (d.signed_out) { hb.innerHTML = `Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`; hb.classList.add("show"); }
+  else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
+  else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
   else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
   else hb.classList.remove("show");
@@ -1083,6 +1154,85 @@ $("agFold").onclick = () => setAgentsOpen($("agents").classList.contains("folded
 $("agh").onclick = () => setAgentsOpen($("agents").classList.contains("folded"), true);
 $("keysBox").open = foldPref("fletchery.keysOpen", false);
 $("keysBox").addEventListener("toggle", () => savePref("fletchery.keysOpen", $("keysBox").open));
+// ---- Settings ----
+let SET = null;
+function showTab(t) {
+  ["project", "projects"].forEach(x => { $("tab-" + x).setAttribute("aria-selected", String(x === t)); $("pane-" + x).hidden = x !== t; });
+}
+document.querySelectorAll(".set-tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function fieldHtml(f, v) {
+  const id = "sf-" + f.key, help = f.help ? `<small class="help">${esc(f.help)}</small>` : "";
+  const after = f.restart ? ` <small title="Takes effect after Fletchery restarts">(restart)</small>` : "";
+  if (f.type === "bool") return `<div class="f bool"><label><input type="checkbox" id="${id}" ${v ? "checked" : ""}> ${esc(f.label)}${after}</label>${help}</div>`;
+  const num = f.type === "int" || f.type === "float";
+  return `<div class="f"><label for="${id}">${esc(f.label)}${after}</label><input id="${id}" ${num ? `type="number" step="${f.type === "int" ? 1 : "any"}"` : ""}
+    ${f.min !== undefined ? `min="${f.min}"` : ""} ${f.max !== undefined ? `max="${f.max}"` : ""} value="${esc(v === null || v === undefined ? "" : v)}" autocomplete="off">${help}</div>`;
+}
+function renderSettings() {
+  const groups = [...new Set(SET.fields.map(f => f.group))];
+  $("set-fields").innerHTML = groups.map(g => {
+    const basic = SET.fields.filter(f => f.group === g && !f.advanced), adv = SET.fields.filter(f => f.group === g && f.advanced);
+    return `<h3 class="set-group">${esc(g)}</h3><div class="set-grid">${basic.map(f => fieldHtml(f, SET.values[f.key])).join("")}</div>` +
+      (adv.length ? `<details class="set-adv"><summary>More ${esc(g.toLowerCase())} settings</summary><div class="set-grid">${adv.map(f => fieldHtml(f, SET.values[f.key])).join("")}</div></details>` : "");
+  }).join("") + `<p class="set-note">Agents and their scores are set in the Agents panel. Which checks run, and your project's rules for workers, live in the repository's <code>.fletchery/</code> folder.</p>`;
+  $("set-where").innerHTML = `Saved in <code>${esc(SET.profile || "(no file)")}</code>. Fletchery's own state for this project: <code>${esc(SET.state_dir)}</code>.`;
+  $("set-pdir").textContent = SET.projects_dir;
+  $("set-projects").innerHTML = SET.projects.map(p => `<div class="proj"><span class="nm">${esc(p.name)}</span><span class="rp">${esc(p.repo || "no repository yet")}</span><span class="sp"></span>
+    ${p.current ? `<span class="cur">Open now</span>` : `<button type="button" data-switch="${esc(p.path)}">Switch to it</button>`}</div>`).join("") || "<p class='set-note'>No projects yet.</p>";
+}
+async function openSettings(tab) {
+  try { SET = await post("/api/settings/get", {}); } catch (e) { alert(e.message); return; }
+  renderSettings(); $("set-msg").textContent = ""; $("set-checks").innerHTML = ""; $("np-checks").innerHTML = ""; $("np-msg").textContent = "";
+  $("set-restart").hidden = $("set-restart-btn").hidden = true;
+  showTab(tab || "project"); $("setDlg").showModal();
+}
+$("settingsBtn").onclick = () => openSettings("project");
+$("set-close").onclick = $("np-close").onclick = () => $("setDlg").close();
+function checksHtml(list) { return (list || []).map(c => `<li class="${c.ok ? "ok" : "bad"}">${esc(c.what)}${c.detail ? ` <span>${esc(c.detail)}</span>` : ""}</li>`).join(""); }
+$("setForm").onsubmit = async ev => {
+  ev.preventDefault();
+  const changes = {};
+  for (const f of SET.fields) {
+    const el = $("sf-" + f.key); if (!el) continue;
+    const v = f.type === "bool" ? el.checked : el.value;
+    const old = SET.values[f.key];
+    if (f.type === "bool" ? v !== !!old : String(v) !== String(old === null || old === undefined ? "" : old)) changes[f.key] = v;
+  }
+  try {
+    const r = await post("/api/settings/save", {changes});
+    SET = await post("/api/settings/get", {}); renderSettings();
+    $("set-msg").textContent = "";
+    $("set-msg").style.color = "var(--muted)";
+    $("set-msg").textContent = r.saved.length ? "Saved: " + r.saved.join(", ") + "." : "Nothing changed.";
+    if (r.restart.length) {
+      $("set-restart").textContent = r.restart.join(", ") + " take effect after Fletchery restarts. Restart now lets running sessions finish first.";
+      $("set-restart").hidden = $("set-restart-btn").hidden = false;
+    }
+    refresh();
+  } catch (e) { $("set-msg").style.color = ""; $("set-msg").textContent = e.message; }
+};
+$("set-restart-btn").onclick = async () => { await agentCall("/api/restart", {}); $("setDlg").close(); };
+$("set-check").onclick = async () => {
+  $("set-checks").innerHTML = "<li>Checking…</li>";
+  try {
+    const r = await post("/api/settings/check", {repo: $("sf-repo").value, project_root: $("sf-project_root").value, base_branch: $("sf-base_branch").value});
+    $("set-checks").innerHTML = checksHtml(r.checks);
+  } catch (e) { $("set-checks").innerHTML = `<li class="bad">${esc(e.message)}</li>`; }
+};
+$("np-add").onclick = async () => {
+  $("np-msg").textContent = ""; $("np-checks").innerHTML = "<li>Adding and checking…</li>";
+  try {
+    const r = await post("/api/projects/new", {name: $("np-name").value, repo: $("np-repo").value, project_root: $("np-root").value,
+      base_branch: $("np-base").value, label: $("np-label").value, copy_agents: $("np-agents").checked, create_labels: $("np-labels").checked});
+    $("np-checks").innerHTML = checksHtml(r.checks) + `<li class="ok">Saved as ${esc(r.path)}. Press <b>Switch to it</b> above to start working on it.</li>`;
+    SET = await post("/api/settings/get", {}); renderSettings();
+  } catch (e) { $("np-checks").innerHTML = ""; $("np-msg").textContent = e.message; }
+};
+$("set-projects").addEventListener("click", async ev => {
+  const b = ev.target.closest("button[data-switch]"); if (!b) return;
+  if (!confirm("Switch projects? Running sessions finish first; then Fletchery opens the other project.")) return;
+  await agentCall("/api/projects/switch", {path: b.dataset.switch}); $("setDlg").close();
+});
 function scoresOpen() { try { return JSON.parse(localStorage.getItem("fletchery.scoresOpen") || "[]"); } catch (e) { return []; } }
 document.addEventListener("toggle", ev => {
   const d = ev.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.sc) return;

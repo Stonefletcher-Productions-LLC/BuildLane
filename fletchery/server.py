@@ -16,6 +16,12 @@
     POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
     POST /api/agents/scores   {name, scores: {cpp|scripts|ui|docs|review|cost: 0-100 or null}}: your own scores
     POST /api/agents/refresh-scores  fetch the newest benchmark catalog (model_scores.json) from Fletchery's main branch
+    POST /api/settings/get    the Settings page: this project's settings, and every project
+    POST /api/settings/save   {changes: {field: value}}: validate and save into the profile
+    POST /api/settings/check  {repo, project_root, base_branch}: can GitHub see it, is the clone that repo
+    POST /api/projects/new    {name, repo, project_root, base_branch, label, copy_agents, create_labels}
+    POST /api/projects/switch {path}: run that project (after running sessions finish)
+    POST /api/restart         restart Fletchery once running sessions finish
     POST /api/agents/auth     {name, mode: plan|key}: run that agent on its plan sign-in or on its stored API key
     POST /api/keys/set        {name, value}: store an API key in Windows Credential Manager (never shown again)
     POST /api/keys/clear      {name}
@@ -63,6 +69,8 @@ class Dashboard:
         snap["held"] = fm.state.held
         snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
+        snap["setup_needed"] = not fm.cfg.repo
+        snap["restarting"] = fm.restart_reason
         cfg = fm.cfg
         lane_view = None
         if cfg.lane_status_file:
@@ -329,6 +337,51 @@ class Dashboard:
         self.fm.ctx.log(f"benchmark list refreshed from {repo} (updated {cat.get('updated', '?')})")
         return {"updated": cat.get("updated", ""), "models": len(cat["models"])}
 
+    def settings_get(self, data: dict) -> dict:
+        import projects
+        out = projects.read_settings(self.fm.cfg)
+        out["projects"] = projects.list_projects(getattr(self.fm.cfg, "_path", None))
+        out["projects_dir"] = str(projects.projects_dir())
+        out["restarting"] = self.fm.restart_reason
+        return out
+
+    def settings_save(self, data: dict) -> dict:
+        import projects
+        res = projects.apply_settings(self.fm.cfg, data.get("changes") or {})
+        cfg = self.fm.cfg
+        self.fm.ctx.escalate = cfg.escalate
+        if self.fm.snapshot:
+            self.fm.snapshot.update(max_parallel=cfg.max_parallel, daily_budget=cfg.daily_budget_usd)
+        if res["saved"]:
+            self.fm.ctx.log("settings changed from the app: " + ", ".join(res["saved"]))
+            self.fm.wake()
+        return res
+
+    def settings_check(self, data: dict) -> dict:
+        import projects
+        return {"checks": projects.check_project(str(data.get("repo", "")), str(data.get("project_root", "")),
+                                                 str(data.get("base_branch", "")))}
+
+    def project_new(self, data: dict) -> dict:
+        import projects
+        res = projects.new_project(data, self.fm.cfg)
+        self.fm.ctx.log(f"project {res['name']} added from the app ({res['path']})")
+        return res
+
+    def project_switch(self, data: dict) -> dict:
+        import projects
+        p = Path(str(data.get("path", "")))
+        known = {str(Path(x["path"]).resolve()).lower() for x in projects.list_projects(getattr(self.fm.cfg, "_path", None))}
+        if not p.is_file() or str(p.resolve()).lower() not in known:
+            raise ValueError("That project file isn't in the list.")
+        projects.set_active(p)
+        self.fm.request_restart(f"switching to the project in {p.name}")
+        return {"switching": str(p), "message": "Switching once running sessions finish."}
+
+    def restart(self, data: dict) -> dict:
+        self.fm.request_restart("restarting for new settings")
+        return {"message": "Restarting once running sessions finish."}
+
     def set_escalate(self, data: dict) -> dict:
         on = bool(data.get("on"))
         self.fm.ctx.escalate = on
@@ -432,7 +485,10 @@ class Dashboard:
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
                               "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores,
-                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/keys/set": dash.set_key,
+                              "/api/agents/refresh-scores": dash.refresh_scores,
+                              "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
+                              "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
+                              "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))

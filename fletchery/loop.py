@@ -390,9 +390,10 @@ class Engine:
         loop = asyncio.get_running_loop()
         draining = False
         while True:
-            if not draining and code_changed and code_changed():
+            if not draining and (self.restart_reason or (code_changed and code_changed())):
                 draining = True
-                self.ctx.log("Fletchery's code changed on disk; restarting once running sessions finish")
+                self.ctx.log(f"{self.restart_reason or 'Fletchery' + chr(39) + 's code changed on disk'}; "
+                             "restarting once running sessions finish")
             try:
                 self.dispatch(draining=draining)
                 self.publish([])
@@ -423,11 +424,18 @@ class Engine:
                     break  # a slot is free: dispatch again now
                 if self._wake.is_set():
                     break
-                if not draining and code_changed and code_changed():
+                if not draining and (self.restart_reason or (code_changed and code_changed())):
                     break
             self._wake.clear()
 
     # ---- controls (called from the dashboard's thread) ----
+    restart_reason: str = ""  # set by request_restart: drain like a code update, then the launcher starts us again
+
+    def request_restart(self, reason: str) -> None:
+        """Finish running sessions, start nothing new, then restart (a project switch, a setting that needs it)."""
+        self.restart_reason = reason
+        self.wake()
+
     def wake(self) -> None:
         """Run a pass now instead of at the next poll."""
         if self._aloop and self._wake:

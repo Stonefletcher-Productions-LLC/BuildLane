@@ -67,11 +67,22 @@ if ($ProjectProfile) {
     $Copy = Join-Path $AppData "Projects\$Name.profile.json"
     if ((Resolve-Path $ProjectProfile).Path -ne $Copy) { Copy-Item $ProjectProfile $Copy -Force }
     $Settings | Add-Member -NotePropertyName profile -NotePropertyValue $Copy -Force
+    # a project chosen here wins over one last picked in the app's Settings
+    Remove-Item (Join-Path $AppData 'active-profile.txt') -ErrorAction SilentlyContinue
+}
+elseif (-not $Settings.profile) {
+    # first install without a profile: start on an empty project; the app's Settings page fills it in
+    $Starter = Join-Path $AppData 'Projects\My-project.profile.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path $Starter) | Out-Null
+    if (-not (Test-Path $Starter)) {
+        [IO.File]::WriteAllText($Starter, "{`n  ""name"": ""My project"",`n  ""repo"": """",`n  ""workers"": { ""enabled"": false }`n}`n")
+    }
+    $Settings | Add-Member -NotePropertyName profile -NotePropertyValue $Starter -Force
 }
 $Settings | Add-Member -NotePropertyName python -NotePropertyValue $Python -Force
 $Settings | Add-Member -NotePropertyName backend -NotePropertyValue $Dest -Force
 $Settings | ConvertTo-Json | Set-Content $SettingsFile -Encoding UTF8
-if (-not $Settings.profile) { Write-Warning 'No project profile yet: run this again with -Profile <file>.' }
+
 
 # --- shortcuts ---
 if (-not $NoShortcuts) {

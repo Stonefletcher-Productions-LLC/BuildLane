@@ -1060,6 +1060,9 @@ assert _sc.classify_skill("Radial menu", "The UMG widget's buttons and tooltip."
 assert _sc.classify_skill("Pronoun pass", "Edit docs/Strings.md and LSStrings.csv.", [])[0] == "docs"
 assert _sc.classify_skill("Clock", "Change LSClock.cpp.", [])[0] == "cpp"
 assert _sc.classify_skill("Anything", "", ["skill:docs"])[0] == "docs"
+# a C++ task whose template also names docs, strings and a Python check stays C++
+assert _sc.classify_skill("Pet animation: tail wag by mood", "Change LSPetAnim.cpp. Update docs/Pets.md and LSStrings.csv; "
+                          "run Tools/check.py.", [])[0] == "cpp"
 SCORED = [{"name": "claude", "kind": "claude", "model": "claude-opus-5-5", "tier": 4, "vendor": "anthropic"},
           {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3, "vendor": "anthropic"},
           {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
@@ -1112,5 +1115,53 @@ for bad in ({"cpp": 140}, {"speed": 3}, {"cpp": "lots"}):
         raise AssertionError(f"bad score accepted: {bad}")
     except ValueError:
         pass
+
+# ---- Settings page and projects: edit a profile, add a project, switch ----
+import os as _os  # noqa: E402
+_os.environ["FLETCHERY_HOME"] = tempfile.mkdtemp()
+import projects as _pj  # noqa: E402
+cfg_s = Config.load(prof)
+r = _pj.apply_settings(cfg_s, {"max_parallel": "0", "base_branch": "main", "repo": "https://github.com/acme/desk.git",
+                               "code_freeze": "on"})
+saved = _json_mod.loads(prof.read_text())
+assert saved["workers"]["maxParallel"] == 0 and saved["repo"] == "acme/desk" and saved["workers"]["codeFreeze"] is True
+assert "GitHub repository" in r["restart"] and "Workers at once" not in r["restart"]
+assert saved["workers"]["reviewerMaxTurns"] == 50, "keys the page doesn't show are kept"
+for bad in ({"max_parallel": 9}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
+    try:
+        _pj.apply_settings(cfg_s, bad)
+        raise AssertionError(f"bad setting accepted: {bad}")
+    except ValueError:
+        pass
+calls = []
+def fake_run(argv, timeout=30):
+    calls.append(argv)
+    if argv[:2] == ["git", "-C"]:
+        return 0, "https://github.com/acme/desk.git"
+    return 0, "ok"
+clone = Path(tempfile.mkdtemp())
+res = _pj.new_project({"name": "Desk App", "repo": "acme/desk", "project_root": str(clone), "base_branch": "main",
+                       "label": "desk", "copy_agents": True, "create_labels": True}, cfg_s, run=fake_run)
+newp = _json_mod.loads(Path(res["path"]).read_text())
+assert Path(res["path"]).name == "Desk-App.profile.json" and newp["workers"]["label"] == "desk" and newp["workers"]["agents"]
+assert all(c["ok"] for c in res["checks"]) and any(c[:3] == ["gh", "label", "create"] and "desk:queued" in c for c in calls)
+try:
+    _pj.new_project({"name": "Desk App", "repo": "acme/desk"}, cfg_s, run=fake_run)
+    raise AssertionError("a second project with the same file name")
+except ValueError:
+    pass
+bad = _pj.check_project("acme/desk", str(clone), "main", run=lambda a, timeout=30: (0, "https://github.com/other/thing") if a[0] == "git" else (0, "ok"))
+assert not bad[-1]["ok"] and "other/thing" in bad[-1]["detail"]
+names = [x["name"] for x in _pj.list_projects(prof)]
+assert names[0] == "X" and "Desk App" in names
+_pj.set_active(Path(res["path"]))
+assert _pj.active_profile() == Path(res["path"]).resolve()
+dash2 = Dashboard(fm, 0)
+got = dash2.settings_get({})
+assert got["values"]["max_parallel"] is not None and any(p["name"] == "Desk App" for p in got["projects"])
+dash2.project_switch({"path": res["path"]})
+assert fm.restart_reason.startswith("switching to the project")
+fm.restart_reason = ""
+del _os.environ["FLETCHERY_HOME"]
 
 print("RESULT: PASS (Fletchery engine checks)")
