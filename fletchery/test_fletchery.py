@@ -92,6 +92,11 @@ ctx, tmp = ctx_with({n: T(n, f"t{n}", created=f"2026-11-01T00:00:{n:02d}Z") for 
 fm, out = run_once(ctx, tmp)
 assert sorted(o.task for o in out) == [1, 2, 3] and "no free slot (3)" in ctx.gh.status_text
 
+# ---- 0 workers: nothing new is written, and the queue says why ----
+ctx, tmp = ctx_with({1: T(1, "a")}, cfg=Config(max_parallel=0, daily_budget_usd=60, base_branch="Test-Staging"))
+fm, out = run_once(ctx, tmp)
+assert out == [] and "writing paused: workers set to 0" in ctx.gh.status_text
+
 # ---- daily budget stops new dispatch ----
 ctx, tmp = ctx_with({1: T(1, "a")}, cfg=Config(daily_budget_usd=1.0))
 fm = Foreman(ctx, tmp / "state")
@@ -617,7 +622,8 @@ try:
     assert call("/api/workers", "POST", {"max_parallel": 3}, token=dash.token)[0] == 200
     assert fm.cfg.max_parallel == 3 and _json.loads(cf2.read_text())["workers"]["maxParallel"] == 3, "saved in the profile's workers block"
     assert _json.loads(call("/api/status")[1])["max_parallel"] == 3
-    assert call("/api/workers", "POST", {"max_parallel": 0}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 7}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": -1}, token=dash.token)[0] == 400
     assert call("/api/workers", "POST", {"max_parallel": 7}, token=dash.token)[0] == 400
     assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
 finally:

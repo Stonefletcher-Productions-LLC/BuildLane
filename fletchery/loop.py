@@ -274,7 +274,9 @@ class Engine:
             elif paused:
                 rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
             else:
-                rd.waiting[t.number] = "daily budget spent" if not budget_left else f"no free slot ({cfg.max_parallel})"
+                rd.waiting[t.number] = ("daily budget spent" if not budget_left else
+                                        "writing paused: workers set to 0" if cfg.max_parallel <= 0 else
+                                        f"no free slot ({cfg.max_parallel})")
         if not self.dry_run:
             for t in chosen:
                 st.running[str(t.number)] = now()
@@ -297,7 +299,8 @@ class Engine:
             self.ctx.log(f"lane watcher: {type(e).__name__}: {e}")
 
     def free_slots(self) -> int:
-        return self.cfg.max_parallel - len(self.jobs)
+        """0 workers: no new worker or fixer starts; merging, the Build Lane and issue closing are not slots."""
+        return max(0, self.cfg.max_parallel) - len(self.jobs)
 
     def _start(self, coro, task_no: int, pr_no: int | None, prior_seen) -> None:
         self.active.add(task_no)

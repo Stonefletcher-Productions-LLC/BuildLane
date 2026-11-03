@@ -110,12 +110,14 @@ class Dashboard:
             v = int(data.get("max_parallel"))
         except (TypeError, ValueError):
             raise ValueError("The number of workers is a whole number.")
-        if not 1 <= v <= 6:
-            raise ValueError("Workers go from 1 to 6. On a Claude plan, more workers use your plan's limits faster.")
+        if not 0 <= v <= 6:
+            raise ValueError("Workers go from 0 (write no new code; merging and builds carry on) to 6. On a plan, more "
+                             "workers use its limits faster.")
         self.fm.cfg.save(max_parallel=v)
         if self.fm.snapshot:
             self.fm.snapshot["max_parallel"] = v
-        self.fm.ctx.log(f"workers set to {v} from the app")
+        self.fm.ctx.log(f"workers set to {v} from the app" + (": no new code is written (running sessions finish); "
+                                                                  "merging, builds and issue closing carry on" if v == 0 else ""))
         self.fm.wake()  # more workers start now; fewer: running ones finish, no new one starts until below the limit
         return {"max_parallel": v}
 
