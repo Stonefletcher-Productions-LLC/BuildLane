@@ -55,6 +55,12 @@ class Repo:
         self.git("add", "-A", cwd=wt)
         self.git("-c", "user.name=Fletchery", "-c", "user.email=fletchery@localhost", "commit", "-q", "-m", message, cwd=wt)
 
+    def reset_to_base(self, wt: Path) -> None:
+        """Throw away a failed attempt's work (commits and files) before a stronger agent starts on the same branch.
+        Only ever inside the task's own worktree."""
+        self.git("reset", "--hard", f"{self.remote}/{self.base}", cwd=wt)
+        self.git("clean", "-fdq", cwd=wt)
+
     def lfs_tracked(self, wt: Path, files: list[str]) -> list[str]:
         if not files:
             return []
@@ -81,6 +87,7 @@ class FakeRepo:
         self.changed = changed or {}
         self.pushed: list[str] = []
         self.fetched = 0
+        self.resets: list[str] = []
 
     def fetch_base(self):
         self.fetched += 1
@@ -102,6 +109,9 @@ class FakeRepo:
 
     def commit_all(self, wt, message):
         pass
+
+    def reset_to_base(self, wt):
+        self.resets.append(wt.name)
 
     def push(self, wt, branch):
         self.pushed.append(branch)

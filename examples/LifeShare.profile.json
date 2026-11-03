@@ -26,6 +26,54 @@
     "auth": "subscription",
     "dailyBudgetUsd": 60,
     "dashboardPort": 8770,
-    "plugin": "Tools/ClaudePlugin/lifeshare-guard"
+    "plugin": "Tools/ClaudePlugin/lifeshare-guard",
+    "agents": [
+      {
+        "name": "claude",
+        "kind": "claude",
+        "tier": 4,
+        "vendor": "anthropic"
+      },
+      {
+        "name": "codex",
+        "kind": "codex",
+        "tier": 3,
+        "vendor": "openai",
+        "enabled": false
+      },
+      {
+        "name": "deepseek-pro",
+        "kind": "opencode",
+        "model": "opencode-go/deepseek-v4-pro",
+        "tier": 2,
+        "vendor": "deepseek"
+      },
+      {
+        "name": "deepseek",
+        "kind": "opencode",
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "tier": 1,
+        "vendor": "deepseek"
+      }
+    ],
+    "routing": {
+      "easy": [
+        "deepseek",
+        "deepseek-pro"
+      ],
+      "medium": [
+        "codex",
+        "claude",
+        "deepseek-pro"
+      ],
+      "hard": [
+        "claude",
+        "codex"
+      ],
+      "reviewers": [
+        "claude",
+        "codex"
+      ]
+    }
   }
 }

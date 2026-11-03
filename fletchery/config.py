@@ -42,7 +42,7 @@ WORKER_KEYS = {
     "gateTimeoutSeconds": "gate_timeout_s", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
     "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
-    "heavyLeaseFile": "heavy_lease_file",
+    "heavyLeaseFile": "heavy_lease_file", "agents": "agents", "routing": "routing", "escalate": "escalate",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -91,6 +91,11 @@ class Config:
     merge_flags: list = None
     merge_round_file: str = ""               # what the merge round is doing (merge.py); "" = <state_dir>/merge-round.json
     heavy_lease_file: str = ""               # who holds the PC for heavy work (HeavyLease.ps1's heavy.json); "" = not shown
+    # the coding agents (agents.py): [{"name", "kind": claude|codex|opencode, "model", "tier", "vendor", "enabled",
+    # "maxParallel", "keyEnv"}]; None = Claude only. `routing` says which agent takes which difficulty.
+    agents: list = None
+    routing: dict = None
+    escalate: bool = True                    # a failed attempt goes to a stronger agent before the task is blocked
     # the Build Lane, from the profile; "" hides the panel
     lane_status_file: str = ""
     lane_pause_file: str = ""

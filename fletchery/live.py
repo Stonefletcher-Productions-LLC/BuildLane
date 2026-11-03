@@ -30,6 +30,13 @@ class Live:
             a["stage_since"] = now_iso()
         self.log(f"#{task} {stage}")
 
+    def meta(self, task: int, **kw) -> None:
+        """Extra facts about a running task: which agent and role is on it."""
+        with self._lock:
+            a = self._activity.get(task)
+            if a is not None:
+                a.update(kw)
+
     def action(self, task: int, text: str) -> None:
         with self._lock:
             a = self._activity.get(task)

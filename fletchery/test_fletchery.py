@@ -822,4 +822,193 @@ fm, out = run_once(ctx, tmp)
 assert 20 in ctx.gh.closed and "merged into Test-Staging" in ctx.gh.comments[20][0], ctx.gh.writes
 assert [o.task for o in out] == [21], "the dependent starts in the same pass"
 
+
+# ---- several agents: routing, review by another vendor, escalation, per-agent limits, learning ----
+import agents as _ag  # noqa: E402
+import clis as _clis  # noqa: E402
+import keys as _keys  # noqa: E402
+
+assert _ag.classify("Fix typo in README", "Docs only.", [])[0] == "easy"
+assert _ag.classify("Bump save version", "Add a migration for v12.", [])[0] == "hard"
+assert _ag.classify("Clock 12/24h", "Change LSClock.cpp to read the setting.", [])[0] == "medium"
+assert _ag.classify("Fix typo", "Difficulty: hard", [])[0] == "hard"
+assert _ag.classify("x", "", ["difficulty:easy"])[0] == "easy"
+assert _ag.override("Agent: deepseek-pro\nbody", []) == "deepseek-pro" and _ag.override("", ["agent:codex"]) == "codex"
+
+AGENTS = [{"name": "claude", "kind": "fake", "tier": 4, "vendor": "anthropic"},
+          {"name": "codex", "kind": "fake", "tier": 3, "vendor": "openai", "enabled": False},
+          {"name": "deepseek-pro", "kind": "fake", "tier": 2, "vendor": "deepseek"},
+          {"name": "deepseek", "kind": "fake", "tier": 1, "vendor": "deepseek"}]
+ROUTING = {"easy": ["deepseek", "deepseek-pro"], "medium": ["codex", "claude"], "hard": ["claude", "codex"],
+           "reviewers": ["claude", "codex"]}
+
+
+def pool_with(fakes=None, agents=AGENTS, routing=ROUTING):
+    fakes = fakes or {}
+    specs = _ag.specs_from([dict(a) for a in agents])
+    return _ag.AgentPool(specs, dict(routing), lambda spec: fakes.setdefault(spec.name, FakeRuntime()))
+
+
+p = pool_with()
+assert p.choose("Fix typo in README", "", []).agent == "deepseek"
+assert p.choose("Clock 12/24h", "Change LSClock.cpp.", []).agent == "claude", "codex is off, so medium goes to claude"
+assert p.choose("Clock", "Agent: deepseek-pro", []).agent == "deepseek-pro"
+assert p.reviewer_for("deepseek") == "claude" and p.reviewer_for("claude") == "deepseek-pro", "codex off: another vendor reviews claude"
+p.set_enabled("deepseek-pro", False)
+assert p.reviewer_for("claude") == "claude", "no other strong vendor on: a fresh claude session reviews"
+p.set_enabled("deepseek-pro", True)
+assert p.escalate("deepseek") == "deepseek-pro" and p.escalate("deepseek-pro") == "claude" and p.escalate("claude") is None
+p.pause("deepseek", 30, "usage limit")
+assert p.choose("Fix typo in README", "", []).agent == "deepseek-pro", "a paused agent is skipped"
+assert p.choose("x", "Agent: deepseek", []) is None, "an asked-for agent that is paused is waited for"
+p.accounts["deepseek-pro"] = {"ok": False, "message": "not signed in"}
+assert p.choose("Fix typo in README", "", []).agent == "claude", "a signed-out agent is skipped too"
+
+# learning: an agent that passes enough medium tasks is tried first; one that fails them goes last
+st = _ag.Stats()
+for _ in range(6):
+    st.add("deepseek", "medium", True)
+for _ in range(6):
+    st.add("claude", "hard", False)
+p = pool_with()
+assert p.choose("Clock 12/24h", "Change LSClock.cpp.", [], stats=st).agent == "deepseek", "proven on medium: goes first"
+assert p.choose("Bump save version", "migration", [], stats=st).agent != "claude", "keeps failing hard: goes last"
+
+
+def multi_ctx(tasks, fakes, agents=AGENTS, gates_fn=PASS):
+    ctx, tmp = ctx_with(tasks, gates_fn=gates_fn)
+    ctx.agents = pool_with(fakes, agents)
+    return ctx, tmp
+
+
+# escalation: the cheap agent gives up, a stronger one finishes, a claude reviewer approves
+fakes = {"deepseek": FakeRuntime({("worker", 0): {"summary": "", "files": [], "build_steps": [], "checks": [],
+                                                   "unverified": [], "gave_up": "could not find the setting"}}),
+         "deepseek-pro": FakeRuntime(), "claude": FakeRuntime()}
+ctx, tmp = multi_ctx({30: T(30, "Fix typo in README", "Docs only.")}, fakes)
+fm, out = run_once(ctx, tmp)
+o = out[0]
+assert o.result == "pr" and o.agent == "deepseek-pro" and o.reviewer == "claude", o
+assert [(a["agent"], a["ok"]) for a in o.attempts] == [("deepseek", False), ("deepseek-pro", True)], o.attempts
+assert ctx.repo.resets == ["30-fix-typo-in-readme"], "the failed attempt's work is thrown away"
+assert [r for r, _, _ in fakes["claude"].calls] == ["reviewer"], "claude only reviewed"
+assert "Earlier attempts" in fakes["deepseek-pro"].calls[0][2], "the next agent is told what went wrong"
+assert "**Written by:** deepseek-pro (after deepseek) · **Reviewed by:** claude" in ctx.gh.prs[-1].body
+assert any("handing" in c or "starts again" in c for c in ctx.gh.comments[30])
+led = [_json_mod.loads(l) for l in (tmp / "state" / "ledger.jsonl").read_text().splitlines()]
+assert led[-1]["agent"] == "deepseek-pro" and len(led[-1]["attempts"]) == 2
+assert fm.stats().rate("deepseek", "easy") == (0.0, 1) and fm.stats().rate("deepseek-pro", "easy") == (1.0, 1)
+assert fm.snapshot["agents"]["multi"] and fm.snapshot["tasks"][0]["agent"] == "deepseek-pro"
+assert "## Agents" in ctx.gh.status_text and "**codex**" in ctx.gh.status_text
+
+# the strongest fails too: blocked, naming every agent tried
+bad = {"summary": "", "files": [], "build_steps": [], "checks": [], "unverified": [], "gave_up": "design decision"}
+fakes = {n: FakeRuntime({("worker", 0): bad}) for n in ("deepseek", "deepseek-pro", "claude")}
+ctx, tmp = multi_ctx({31: T(31, "Fix typo in README", "")}, fakes)
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "blocked" and "deepseek, deepseek-pro, claude" in out[0].detail, out[0].detail
+
+# a usage limit on one agent pauses only that agent; the task goes back to the queue and another agent takes it
+fakes = {"deepseek": FakeRuntime({("worker", 0): {"error": "You've hit your usage limit. Resets at 6pm."}}),
+         "deepseek-pro": FakeRuntime(), "claude": FakeRuntime()}
+ctx, tmp = multi_ctx({32: T(32, "Fix typo in README", "")}, fakes)
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "agent_paused" and "deepseek" in ctx.agents.paused, out[0]
+assert not fm.state.paused_until, "no whole-Fletchery pause while other agents are free"
+assert fm.state.agent_paused is ctx.agents.paused
+fm2, out2 = run_once(ctx, tmp)
+assert out2[0].result == "pr" and out2[0].agent == "deepseek-pro", out2
+
+# an asked-for agent that is off: the task waits, saying why, instead of starting and stopping
+ctx, tmp = multi_ctx({33: T(33, "x", "Agent: codex")}, {})
+fm, out = run_once(ctx, tmp)
+assert out == [] and "waits for agent codex" in ctx.gh.status_text, ctx.gh.status_text
+
+# the fixer is the agent that wrote the branch; the second attempt goes one tier up
+ctx, tmp = multi_ctx({}, {})
+ctx.task_agents["40"] = "deepseek"
+from pipeline import fixer_agent  # noqa: E402
+t40 = T(40, "y")
+assert fixer_agent(ctx, t40, 1) == "deepseek" and fixer_agent(ctx, t40, 2) == "deepseek-pro"
+ctx.agents.set_enabled("deepseek", False)
+assert fixer_agent(ctx, t40, 1) == "claude", "the writer is off: the router's pick for the task (medium -> claude)"
+
+# one agent (no agents block): unchanged behaviour, the PR body says Claude
+ctx, tmp = ctx_with({34: T(34, "Solo")})
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "pr" and "Written by" not in ctx.gh.prs[-1].body and fm.snapshot["agents"] is None
+
+# Codex/OpenCode plumbing
+sch = _clis.strict_schema(__import__("runtime").SCHEMAS["worker"])
+assert set(sch["required"]) == set(sch["properties"]) and sch["additionalProperties"] is False
+assert sch["properties"]["gave_up"]["type"] == ["string", "null"] and sch["properties"]["summary"]["type"] == "string"
+assert _clis.drop_nulls({"a": 1, "gave_up": None}) == {"a": 1}
+assert _clis.short_command('"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command \'python hello.py\'') == "python hello.py"
+cx = _clis.CodexRuntime(_ag.AgentSpec("codex", "codex"))
+seen, state = [], {"last_text": "", "errors": [], "cost": 0.0, "turns": 0, "session": ""}
+for ev in [{"type": "thread.started", "thread_id": "t1"},
+           {"type": "item.completed", "item": {"type": "command_execution", "command": "git status"}},
+           {"type": "item.completed", "item": {"type": "file_change", "changes": [{"path": "/w/a.py"}]}},
+           {"type": "item.completed", "item": {"type": "error", "message": "model metadata not found"}},
+           {"type": "item.completed", "item": {"type": "agent_message", "text": '{"summary": "s"}'}},
+           {"type": "turn.completed", "usage": {}}]:
+    cx.on_event(ev, state, "/w", seen.append)
+assert seen == ["$ git status", "Edit a.py"] and state["session"] == "t1" and state["turns"] == 1 and not state["errors"]
+pf = Path(tempfile.mkdtemp()) / "p.md"
+pf.write_text("x")
+argv, stdin, _ = cx.command("reviewer", pf, Path("/w"), pf.parent)
+assert "read-only" in argv and argv[-1] == "-" and stdin is not None
+oc = _clis.OpenCodeRuntime(_ag.AgentSpec("ds", "opencode", "opencode-go/deepseek-v4.1-flash"))
+assert '"required"' in (pf.parent / "schema.json").read_text()
+seen, state = [], {"last_text": "", "errors": [], "cost": 0.0, "turns": 0, "session": ""}
+for ev in [{"type": "tool_use", "sessionID": "s1", "part": {"tool": "edit", "state": {"input": {"filePath": "/w/b.py"}}}},
+           {"type": "tool_use", "part": {"tool": "bash", "state": {"input": {"command": "python  -m pytest"}}}},
+           {"type": "text", "part": {"text": '{"summary": "ok"}'}},
+           {"type": "step_finish", "part": {"cost": 0.012}}]:
+    oc.on_event(ev, state, "/w", seen.append)
+assert seen == ["Edit b.py", "$ python -m pytest"] and state["cost"] == 0.012 and state["session"] == "s1"
+argv, stdin, env = oc.command("reviewer", pf, Path("/w"), pf.parent)
+assert stdin is None and "-f" in argv and '"edit": "deny"' in env["OPENCODE_CONFIG_CONTENT"]
+argv, stdin, env = oc.command("worker", pf, Path("/w"), pf.parent)
+assert '"edit": "allow"' in env["OPENCODE_CONFIG_CONTENT"] and '"webfetch": "deny"' in env["OPENCODE_CONFIG_CONTENT"]
+
+# keys: stored, listed only by their last 4 characters, given only to agents that list them
+_keys.set_key("DEEPSEEK_API_KEY", "sk-test-123456789")
+row = next(k for k in _keys.listing() if k["name"] == "DEEPSEEK_API_KEY")
+assert row["set"] and row["hint"] == "…6789" and "sk-test" not in _json_mod.dumps(_keys.listing())
+assert _keys.env_for(["DEEPSEEK_API_KEY", "OPENAI_API_KEY"]) == {"DEEPSEEK_API_KEY": "sk-test-123456789"}
+for bad in ("lower_case", "X"):
+    try:
+        _keys.set_key(bad, "v")
+        raise AssertionError("bad key name accepted")
+    except ValueError:
+        pass
+_keys.delete("DEEPSEEK_API_KEY")
+assert _keys.get("DEEPSEEK_API_KEY") is None
+
+# the dashboard: switch an agent off and on, never the last one; it is saved in the profile
+from server import Dashboard  # noqa: E402
+prof = Path(tempfile.mkdtemp()) / "p.profile.json"
+prof.write_text(_json_mod.dumps({"name": "X", "repo": "o/r", "statusFile": "s", "workers": {"agents": AGENTS, "reviewerMaxTurns": 50}}))
+cfg = Config.load(prof)
+ctx, tmp = ctx_with({}, cfg=cfg)
+ctx.agents = pool_with(agents=cfg.agents)
+fm = Foreman(ctx, tmp / "state", dry_run=True)
+dash = Dashboard(fm, 0)
+dash.toggle_agent({"name": "deepseek", "on": False})
+saved = _json_mod.loads(prof.read_text())["workers"]
+assert next(a for a in saved["agents"] if a["name"] == "deepseek")["enabled"] is False and saved["reviewerMaxTurns"] == 50
+assert not ctx.agents.available("deepseek")
+dash.toggle_agent({"name": "claude", "on": False})
+try:  # codex was off from the start: deepseek-pro is the last one on
+    dash.toggle_agent({"name": "deepseek-pro", "on": False})
+    raise AssertionError("the last agent switched off")
+except ValueError:
+    pass
+dash.toggle_agent({"name": "claude", "on": True})
+dash.add_agent({"name": "kimi", "kind": "opencode", "model": "opencode-go/kimi-k3", "tier": 3, "vendor": "moonshot"})
+assert "kimi" in ctx.agents.specs and any(a["name"] == "kimi" for a in _json_mod.loads(prof.read_text())["workers"]["agents"])
+dash.remove_agent({"name": "kimi"})
+assert "kimi" not in ctx.agents.specs
+
 print("RESULT: PASS (Fletchery engine checks)")

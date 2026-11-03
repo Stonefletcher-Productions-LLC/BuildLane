@@ -28,6 +28,9 @@ class State:
     signed_out: str = ""                                      # why sessions cannot sign in; cleared once they can
     watch_seen: list = field(default_factory=list)            # build runs the lane watcher has handled
     watch_last: str = ""                                      # ISO: when the lane watcher last looked
+    agent_paused: dict = field(default_factory=dict)          # agent -> {"until", "reason"}: one agent's limit or sign-in
+    task_agent: dict = field(default_factory=dict)            # task number -> the agent that wrote its branch
+    accounts_checked: str = ""                                # ISO: when every agent's sign-in was last checked
 
     @staticmethod
     def load(path: Path) -> "State":
@@ -92,12 +95,60 @@ class Engine:
         self._waiting: dict = {}
         self._aloop: asyncio.AbstractEventLoop | None = None
         self.watcher = None
+        self._stats_cache: tuple[float, object] | None = None
+        if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
+            ctx.agents.paused = self.state.agent_paused
+            ctx.task_agents = self.state.task_agent
+            ctx.stats = self.stats
         if not dry_run and ctx.cfg.workers_enabled:
             try:
                 import watcher
                 self.watcher = watcher.make(ctx.cfg, ctx.gh, ctx.log)
             except Exception as e:  # never let the watcher keep the workers from starting
                 ctx.log(f"lane watcher off: {type(e).__name__}: {e}")
+
+    # ---- agents ----
+    def stats(self):
+        """Per-agent success rates from the ledger, re-read at most once a minute."""
+        import time
+        from agents import Stats
+        if self._stats_cache and time.time() - self._stats_cache[0] < 60:
+            return self._stats_cache[1]
+        st = Stats.from_ledger(self.state_dir / "ledger.jsonl")
+        self._stats_cache = (time.time(), st)
+        return st
+
+    def check_accounts(self, force: bool = False) -> None:
+        """Is each switched-on agent signed in? Every 30 minutes (or on request), on a thread: a CLI that hangs must
+        not stop the loop. An agent whose check fails is skipped by the router until a later check passes."""
+        pool = self.ctx.agents
+        if pool is None or self.dry_run or getattr(self, "_checking", False):
+            return
+        st = self.state
+        if not force and st.accounts_checked and (datetime.now(timezone.utc) - datetime.fromisoformat(st.accounts_checked)
+                                                  < timedelta(minutes=30)):
+            return
+        st.accounts_checked = now()
+        import threading
+
+        def run():
+            self._checking = True
+            try:
+                import clis
+                for spec in list(pool.specs.values()):
+                    if not spec.enabled:
+                        continue
+                    try:
+                        ok, msg = clis.check(spec, self.cfg.auth)
+                    except Exception as e:
+                        ok, msg = False, f"{type(e).__name__}: {e}"
+                    was = pool.accounts.get(spec.name, {}).get("ok")
+                    pool.accounts[spec.name] = {"ok": ok, "message": msg, "at": now()}
+                    if was is not ok:
+                        self.ctx.log(f"agent {spec.name}: {'ready' if ok else 'not available'} ({msg})")
+            finally:
+                self._checking = False
+        threading.Thread(target=run, name="fletchery-accounts", daemon=True).start()
 
     # ---- the pass ----
     async def once(self) -> list[Outcome]:
@@ -161,6 +212,12 @@ class Engine:
                 st.signed_out = ""
             else:
                 st.signed_out = msg
+        pool = self.ctx.agents
+        if pool is not None:
+            pool.clear_expired()
+            self.check_accounts()
+            if pool.multi and st.signed_out and pool.any_available():
+                st.signed_out = ""  # Claude's sign-in is one agent's problem now: the others carry on (agents panel)
         paused = limit_paused or st.held or bool(st.signed_out) or draining
 
         # 1. feedback on open PRs -> fixers (one per task at a time)
@@ -188,6 +245,18 @@ class Engine:
         closed_deps = {d for t in tasks.values() for d in t.depends_on if d not in tasks and gh.issue_closed(d)}
         rd = readiness(tasks, closed_deps)
         rd.ready = [t for t in rd.ready if t.number not in self.active]
+        if pool is not None:  # a task whose agents are all off, paused or busy waits instead of starting and stopping
+            stats = self.stats()
+            free = []
+            for t in rd.ready:
+                if pool.choose(t.title, t.body, t.labels, len(t.depends_on), stats) is not None:
+                    free.append(t)
+                else:
+                    from agents import override
+                    want = override(t.body, t.labels)
+                    rd.waiting[t.number] = (f"waits for agent {want} (off, paused or busy)" if want
+                                            else "waits for a free agent: every suitable one is off, paused or busy")
+            rd.ready = free
         spent = st.spent.get(today(), 0.0)
         budget_left = spent < cfg.daily_budget_usd
         chosen = pick(rd.ready, self.free_slots()) if budget_left and not paused else []
@@ -262,7 +331,7 @@ class Engine:
             self._ledger(o)
             if o.result == "fixed" and o.pr_number is not None:
                 st.seen[str(o.pr_number)] = now()
-            if o.result in ("signed_out", "limited") and pr_n is not None:  # retry this fix later, uncounted
+            if o.result in ("signed_out", "limited", "agent_paused") and pr_n is not None:  # retry this fix later, uncounted
                 st.fix_attempts[str(pr_n)] = max(0, st.fix_attempts.get(str(pr_n), 1) - 1)
                 if prior is None:
                     st.seen.pop(str(pr_n), None)
@@ -441,6 +510,7 @@ class Engine:
                          "depends": t.depends_on, "pr": t.pr_number, "branch": t.branch,
                          "fix_attempts": st.fix_attempts.get(str(t.pr_number), 0) if t.pr_number else 0,
                          "since": st.running.get(str(t.number), ""), "url": f"{url}/issues/{t.number}",
+                         "agent": st.task_agent.get(str(t.number), ""),
                          "pr_url": f"{url}/pull/{t.pr_number}" if t.pr_number else ""})
         return {"repo": cfg.repo, "repo_url": url, "project": cfg.name, "label": graph.PREFIX,
                 "workers_enabled": cfg.workers_enabled, "last_pass": st.last_pass, "auth": cfg.auth,
@@ -454,7 +524,17 @@ class Engine:
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
                 "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),
                           "last": st.watch_last, "recent": list(getattr(self.watcher, "recent", []))[:8]},
-                "dry_run": self.dry_run}
+                "dry_run": self.dry_run, "agents": self.agents_view()}
+
+    def agents_view(self) -> dict | None:
+        pool = self.ctx.agents
+        if pool is None:
+            return None
+        import keys
+        used = sorted({k for s in pool.specs.values() for k in (s.key_env or [])})
+        return {"multi": pool.multi, "list": pool.view(self.stats()), "keys": keys.listing(used),
+                "escalate": self.ctx.escalate, "routing": {k: v for k, v in (pool.routing or {}).items()
+                                                            if k in ("easy", "medium", "hard", "reviewers")}}
 
     # ---- status issue ----
     def status_text(self, tasks: dict[int, Task], prs: dict[int, PullRequest], waiting: dict[int, str],
@@ -476,7 +556,10 @@ class Engine:
             return [f"## {title}", *(rows or [f"- {empty}"]), ""]
 
         running = [t for t in tasks.values() if t.status == RUNNING]
-        L += section("Running", [f"- #{t.number} {t.title} (since {st.running.get(str(t.number), '?')})" for t in running], "(nothing)")
+        pool = self.ctx.agents
+        multi = pool is not None and pool.multi
+        by = lambda t: f" · {st.task_agent[str(t.number)]}" if multi and str(t.number) in st.task_agent else ""  # noqa: E731
+        L += section("Running", [f"- #{t.number} {t.title} (since {st.running.get(str(t.number), '?')}{by(t)})" for t in running], "(nothing)")
         queued = [t for t in tasks.values() if t.status == QUEUED]
         L += section("Queue", [f"- #{t.number} {t.title}: {waiting.get(t.number, 'ready')}" for t in queued], "(empty)")
         merge = self.merge_rows(tasks, prs)
@@ -498,6 +581,16 @@ class Engine:
             L += section("In the lane, PR not found", [f"- #{t.number} {t.title}" for t in no_pr], "")
         blocked = [t for t in tasks.values() if t.status == BLOCKED]
         L += section("Blocked (needs a person)", [f"- #{t.number} {t.title}" for t in blocked], "(none)")
+        if multi:
+            rows = []
+            for a in pool.view(self.stats()):
+                state = ("off" if not a["enabled"] else f"paused until {a['paused_until']}: {a['paused_reason']}"
+                         if a["paused_until"] else "not signed in" if a["signed_in"] is False else "on")
+                rates = ", ".join(f"{lv} {a[lv]['rate']:.0%} of {a[lv]['tried']}" for lv in ("easy", "medium", "hard")
+                                  if a.get(lv, {}).get("tried"))
+                rows.append(f"- **{a['name']}** ({a['model'] or a['kind']}, tier {a['tier']}): {state}"
+                            + (f" · passed {rates}" if rates else ""))
+            L += section("Agents", rows, "")
         if outcomes:
             L += section("This pass", [f"- #{o.task}: {o.result} {o.detail.splitlines()[0] if o.detail else ''} "
                                        f"(${o.cost_usd:.2f})" for o in outcomes], "")
@@ -529,9 +622,13 @@ class Engine:
     def _ledger(self, o: Outcome) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with (self.state_dir / "ledger.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"at": now(), "task": o.task, "result": o.result, "pr": o.pr_number,
-                                "cost_usd": round(o.cost_usd, 4), "sessions": o.sessions,
-                                "detail": o.detail.splitlines()[0] if o.detail else ""}) + "\n")
+            row = {"at": now(), "task": o.task, "result": o.result, "pr": o.pr_number,
+                   "cost_usd": round(o.cost_usd, 4), "sessions": o.sessions,
+                   "detail": o.detail.splitlines()[0] if o.detail else ""}
+            if o.agent:
+                row.update(agent=o.agent, difficulty=o.difficulty, reviewer=o.reviewer, attempts=o.attempts)
+            f.write(json.dumps(row) + "\n")
+        self._stats_cache = None
 
     # ---- planning ----
     async def plan(self, goal: str, apply: bool = False) -> list[dict]:

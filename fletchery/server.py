@@ -8,6 +8,14 @@
     POST /api/task         {title, body, depends: [n]} -> a new `foreman` issue
     POST /api/lane/pause   pause the Build Lane (the same PAUSED file as Tools/CI/Pause.ps1)
     POST /api/lane/resume
+    POST /api/agents/toggle   {name, on}: switch one coding agent on or off (saved in the profile)
+    POST /api/agents/add      {name, kind, model, tier, vendor, keyEnv}: a new agent (saved in the profile)
+    POST /api/agents/remove   {name}
+    POST /api/agents/check    check every agent's sign-in now
+    POST /api/agents/login    {name}: open that agent's own sign-in in a console window on this PC
+    POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
+    POST /api/keys/set        {name, value}: store an API key in Windows Credential Manager (never shown again)
+    POST /api/keys/clear      {name}
 
 Every POST needs the header X-Fletchery-Token: a random value made at start and written only into the served page, so a
 web page from anywhere else cannot press the buttons. Requests whose Host is not this machine are refused (DNS
@@ -15,6 +23,7 @@ rebinding)."""
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +58,7 @@ class Dashboard:
                     "spent_today": 0, "held": fm.state.held, "last_pass": "", "poll_minutes": fm.cfg.poll_minutes,
                     "usage_week": fm.usage_week()}
         snap["held"] = fm.state.held
+        snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
         cfg = fm.cfg
         lane_view = None
@@ -120,6 +130,121 @@ class Dashboard:
             self.fm.snapshot["auth"] = want
         self.fm.ctx.log(f"sessions now run on {'the API key' if want == 'api' else 'the Claude plan'} (from the dashboard)")
         return {"auth": want, "message": msg}
+
+    # ---- agents and keys ----
+    def _pool(self):
+        pool = self.fm.ctx.agents
+        if pool is None:
+            raise ValueError("This project runs Claude only. Add a workers.agents list to its profile to use other agents.")
+        return pool
+
+    def _save_agents(self) -> None:
+        """Write the agents back into the profile, keeping any keys this version does not know."""
+        pool, cfg = self._pool(), self.fm.cfg
+        raw = {str(a.get("name")): dict(a) for a in (cfg.agents or [])}
+        out = []
+        for spec in pool.specs.values():
+            a = raw.get(spec.name, {"name": spec.name})
+            a.update({"kind": spec.kind, "tier": spec.tier, "vendor": spec.vendor, "enabled": spec.enabled})
+            if spec.model:
+                a["model"] = spec.model
+            if spec.key_env:
+                a["keyEnv"] = list(spec.key_env)
+            out.append(a)
+        cfg.save(agents=out)
+        self.fm.wake()
+
+    def toggle_agent(self, data: dict) -> dict:
+        pool = self._pool()
+        name, on = str(data.get("name", "")), bool(data.get("on"))
+        if name not in pool.specs:
+            raise ValueError(f"No agent called {name}.")
+        if not on and not any(s.enabled for s in pool.specs.values() if s.name != name):
+            raise ValueError("At least one agent has to stay on. Pause Fletchery instead to stop all work.")
+        pool.set_enabled(name, on)
+        if on:
+            pool.accounts.pop(name, None)
+            self.fm.check_accounts(force=True)
+        self._save_agents()
+        self.fm.ctx.log(f"agent {name} switched {'on' if on else 'off'} from the dashboard"
+                        + ("" if on else "; tasks it is running now finish"))
+        return {"name": name, "on": on}
+
+    def add_agent(self, data: dict) -> dict:
+        from agents import specs_from
+        pool = self._pool()
+        name = str(data.get("name", "")).strip()
+        kind = str(data.get("kind", "")).strip()
+        if not re.match(r"^[a-z0-9][a-z0-9._\-]{0,31}$", name):
+            raise ValueError("Name the agent in lower case, letters, digits and dashes (e.g. kimi).")
+        if name in pool.specs:
+            raise ValueError(f"There is already an agent called {name}.")
+        if kind not in ("claude", "codex", "opencode"):
+            raise ValueError("Kind is claude, codex or opencode.")
+        try:
+            tier = int(data.get("tier") or 2)
+        except (TypeError, ValueError):
+            raise ValueError("Tier is a whole number, 1 (cheapest) to 5.")
+        model = str(data.get("model", "")).strip()
+        if kind == "opencode" and "/" not in model:
+            raise ValueError("OpenCode models are provider/model, e.g. opencode-go/kimi-k3.")
+        key_env = [k.strip() for k in str(data.get("keyEnv", "")).split(",") if k.strip()]
+        raw = {"name": name, "kind": kind, "model": model, "tier": max(1, min(5, tier)),
+               "vendor": str(data.get("vendor", "")).strip(), "enabled": True, "keyEnv": key_env}
+        spec = specs_from([raw])[0]
+        pool.specs[name] = spec
+        self.fm.cfg.agents = list(self.fm.cfg.agents or []) + [{k: v for k, v in raw.items() if v not in ("", [])}]
+        self._save_agents()
+        self.fm.check_accounts(force=True)
+        self.fm.ctx.log(f"agent {name} ({spec.label}) added from the dashboard")
+        return {"name": name}
+
+    def remove_agent(self, data: dict) -> dict:
+        pool = self._pool()
+        name = str(data.get("name", ""))
+        if name not in pool.specs:
+            raise ValueError(f"No agent called {name}.")
+        if len(pool.specs) <= 1 or not any(s.enabled for s in pool.specs.values() if s.name != name):
+            raise ValueError("At least one switched-on agent has to stay.")
+        if pool.busy.get(name):
+            raise ValueError(f"{name} is working on a task. Switch it off first; remove it once that finishes.")
+        del pool.specs[name]
+        self.fm.cfg.agents = [a for a in (self.fm.cfg.agents or []) if a.get("name") != name]
+        self._save_agents()
+        self.fm.ctx.log(f"agent {name} removed from the dashboard")
+        return {"name": name}
+
+    def login_agent(self, data: dict) -> dict:
+        import clis
+        pool = self._pool()
+        name = str(data.get("name", ""))
+        if name not in pool.specs:
+            raise ValueError(f"No agent called {name}.")
+        msg = clis.open_login(pool.specs[name])
+        pool.accounts.pop(name, None)
+        return {"message": msg + " Press Check sign-ins when you are done."}
+
+    def set_escalate(self, data: dict) -> dict:
+        on = bool(data.get("on"))
+        self.fm.ctx.escalate = on
+        self.fm.cfg.save(escalate=on)
+        return {"on": on}
+
+    def set_key(self, data: dict) -> dict:
+        import keys
+        name = str(data.get("name", "")).strip().upper()
+        keys.set_key(name, str(data.get("value", "")))
+        self.fm.ctx.log(f"key {name} stored in Credential Manager from the dashboard")
+        self.fm.check_accounts(force=True)
+        return {"name": name, "set": True}
+
+    def clear_key(self, data: dict) -> dict:
+        import keys
+        name = str(data.get("name", "")).strip().upper()
+        keys.delete(name)
+        self.fm.ctx.log(f"key {name} removed from Credential Manager from the dashboard")
+        self.fm.check_accounts(force=True)
+        return {"name": name, "set": False}
 
     # ---- server ----
     def page(self) -> bytes:
@@ -198,6 +323,16 @@ class Dashboard:
                         return self._json(200, dash.set_workers(data))
                     if self.path == "/api/auth":
                         return self._json(200, dash.set_auth(data))
+                    routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
+                              "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
+                              "/api/agents/escalate": dash.set_escalate, "/api/keys/set": dash.set_key,
+                              "/api/keys/clear": dash.clear_key}
+                    if self.path in routes:
+                        return self._json(200, routes[self.path](data))
+                    if self.path == "/api/agents/check":
+                        dash._pool()
+                        dash.fm.check_accounts(force=True)
+                        return self._json(200, {"ok": True})
                     if self.path in ("/api/lane/pause", "/api/lane/resume"):
                         if not dash.fm.cfg.lane_pause_file:
                             return self._json(400, {"error": "No Build Lane pause file is configured."})

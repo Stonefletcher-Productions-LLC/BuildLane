@@ -114,14 +114,32 @@ def real_context(cfg: Config, dry_run: bool) -> Context:
     gh = GitHub(cfg.repo)
     root = Path(cfg.project_root) if cfg.project_root else Path.cwd()
     repo = Repo(root, Path(cfg.worktree_root), cfg.base_branch)
+    pool = None
     if dry_run or not cfg.workers_enabled:
         rt = FakeRuntime()
     else:
-        check_auth(cfg)
         plugin = cfg.resolve(cfg.plugin) if cfg.plugin else None
-        rt = AgentSdkRuntime(root, cfg.model or None, plugin_path=plugin if plugin and plugin.exists() else None, auth=cfg.auth)
+        plugin = plugin if plugin and plugin.exists() else None
+        if cfg.agents:
+            pool = agent_pool(cfg, root, plugin)
+            claude = next((s for s in pool.ordered() if s.kind == "claude"), None)
+            rt = pool.runtime(claude.name) if claude else pool.runtime(pool.top().name)  # the planner's
+            print("Agents: " + ", ".join(f"{s.label}{'' if s.enabled else ' (off)'}" for s in pool.specs.values()),
+                  flush=True)
+        else:
+            check_auth(cfg)
+            rt = AgentSdkRuntime(root, cfg.model or None, plugin_path=plugin, auth=cfg.auth)
     live = Live()
-    return Context(cfg, gh, repo, rt, log=lambda line: (print(line, flush=True), live.log(line)), live=live)
+    return Context(cfg, gh, repo, rt, log=lambda line: (print(line, flush=True), live.log(line)), live=live,
+                   agents=pool, escalate=cfg.escalate)
+
+
+def agent_pool(cfg: Config, root: Path, plugin: Path | None, fake=None):
+    """The profile's agents (workers.agents) with their runtimes, made on first use."""
+    from agents import AgentPool, specs_from
+    import clis
+    specs = specs_from(cfg.agents, cfg.model)
+    return AgentPool(specs, cfg.routing, lambda spec: clis.make_runtime(spec, cfg, root, plugin, fake))
 
 
 def start_dashboard(fm, port: int):
@@ -213,7 +231,22 @@ def demo_context(cfg: Config, tmp: Path, serve_delay: float = 0.0) -> Context:
     live = Live()
     ctx = Context(cfg, gh, repo, rt, run_gates=lambda cmds, cwd, **kw: [g.GateResult(c, True, "RESULT: PASS") for c in cmds],
                   log=lambda line: (print(line), live.log(line)), live=live)
+    if cfg.agents is None:  # the demo shows several agents (all fake) unless the profile names its own
+        cfg.agents, cfg.routing = DEMO_AGENTS, DEMO_ROUTING
+    if cfg.agents:
+        ctx.agents = agent_pool(cfg, tmp, None, fake=rt)
+        for spec in ctx.agents.specs.values():
+            if spec.enabled:
+                ctx.agents.accounts[spec.name] = {"ok": True, "message": "demo: signed in", "at": ""}
     return ctx
+
+
+DEMO_AGENTS = [{"name": "claude", "kind": "claude", "tier": 4, "vendor": "anthropic"},
+               {"name": "codex", "kind": "codex", "tier": 3, "vendor": "openai", "enabled": False},
+               {"name": "deepseek-pro", "kind": "opencode", "model": "opencode-go/deepseek-v4-pro", "tier": 2, "vendor": "deepseek"},
+               {"name": "deepseek", "kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash", "tier": 1, "vendor": "deepseek"}]
+DEMO_ROUTING = {"easy": ["deepseek", "deepseek-pro"], "medium": ["codex", "claude", "deepseek-pro"],
+                "hard": ["claude", "codex"], "reviewers": ["claude", "codex"]}
 
 
 def utf8_console() -> None:
@@ -270,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             graph.PREFIX = "foreman"
             ctx = demo_context(cfg, d, serve_delay=40.0)
         fm = Engine(ctx, d / "state")
+        fm.state.accounts_checked = "2999-01-01T00:00:00+00:00"  # the demo's agents are fake: never ask the real CLIs
         import json as _j
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         (d / "state").mkdir(parents=True, exist_ok=True)
@@ -293,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory() as d:
             ctx = demo_context(cfg, Path(d))
             fm = Engine(ctx, Path(d) / "state")
+            fm.state.accounts_checked = "2999-01-01T00:00:00+00:00"
             print("== pass 1 ==")
             asyncio.run(fm.once())
             print(ctx.gh.status_text)
