@@ -618,7 +618,10 @@ function render(d) {
   const running = d.live.length;
   // state line
   let state;
-  if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
+  if (d.max_parallel === 0) state = running
+      ? `<b>Writing pauses</b> once ${running} running ${running > 1 ? "sessions finish" : "session finishes"} (0 workers) · merging and builds carry on`
+      : `<b>Writing paused</b> (0 workers) · merging and builds carry on`;
+  else if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
   else if (d.passing) state = "Checking GitHub for work…";
   else if (d.held) state = "<b>Paused</b>";
   else state = `<b>Idle</b> · next check in ${until(d.next_pass_at) || "a moment"}`;
@@ -766,7 +769,8 @@ function render(d) {
 const CAP_STEP = v => v < 20 ? 5 : 10;
 function renderWorkers(d) {
   $("wVal").textContent = d.max_parallel;
-  $("wDown").disabled = d.max_parallel <= 1;
+  $("wDown").disabled = d.max_parallel <= 0;
+  $("wDown").title = d.max_parallel === 1 ? "0 workers: write no new code; merging and builds carry on" : "";
   $("wUp").disabled = d.max_parallel >= 6;
 }
 async function setWorkers(v) {
