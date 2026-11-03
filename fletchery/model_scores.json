@@ -1,0 +1,34 @@
+{
+  "updated": "2026-11-03",
+  "about": "Public benchmark numbers Fletchery seeds each model's scores from. Only numbers a source page states; a model with none here starts from its Strength. Refresh: edit this file on Fletchery's main branch and press Refresh benchmarks in the Agents panel.",
+  "sources": {
+    "morph": {"title": "Morph: Best AI model for coding, October 2026", "url": "https://www.morphllm.com/best-ai-model-for-coding", "date": "2026-10-24"},
+    "benchlm": {"title": "BenchLM: Claude Haiku 5.5", "url": "https://benchlm.ai/models/claude-haiku-5-5", "date": "2026-10-29"},
+    "vals": {"title": "Vals AI: SWE-bench Verified (archived)", "url": "https://www.vals.ai/benchmarks/swebench", "date": "2026-09-01"},
+    "aimade": {"title": "AI Made Tools: DeepSeek V4 Pro guide", "url": "https://www.aimadetools.com/blog/deepseek-v4-pro-complete-guide/", "date": "2026-08-17"}
+  },
+  "benchmarks": {
+    "tb4": {"name": "Terminal-Bench 4.0", "weight": 1.0, "offset": 25, "note": "agentic coding in a terminal; the closest to Fletchery's work"},
+    "swepro": {"name": "SWE-bench Pro", "weight": 1.0, "offset": 10, "note": "real repository fixes, harder than Verified"},
+    "verified": {"name": "SWE-bench Verified", "weight": 0.5, "offset": -30, "note": "nearly saturated, so it counts half"}
+  },
+  "aliases": {"claude": "claude-opus-5-5", "codex": "gpt-6-astra"},
+  "models": {
+    "claude-opus-5-5":   {"tb4": [66.4, "morph"], "price": [4, 20, "morph"]},
+    "claude-sonnet-5-5": {"tb4": [70.6, "morph"], "price": [2, 10, "morph"]},
+    "claude-haiku-5-5":  {"tb4": [39.2, "benchlm"], "price": [0.10, 0.50, "benchlm"], "tokens_per_s": [241, "benchlm"]},
+    "claude-fable-5-1":  {"tb4": [55.8, "morph"], "price": [10, 50, "morph"]},
+    "gpt-6-astra":       {"tb4": [57.9, "morph"], "price": [10, 50, "morph"]},
+    "gpt-6-luna":        {"tb4": [16.4, "morph"], "price": [0.10, 0.50, "morph"]},
+    "gpt-6-sol":         {"price": [2, 10, "morph"]},
+    "gpt-5.6-sol":       {"tb4": [37.3, "morph"], "swepro": [64.6, "morph"], "verified": [96.2, "vals"], "price": [4, 20, "morph"]},
+    "gemini-3.8-flash":  {"tb4": [19.1, "morph"], "verified": [80.0, "vals"], "price": [0.75, 3.75, "morph"]},
+    "grok-4.7":          {"tb4": [38.0, "morph"], "price": [2, 6, "morph"]},
+    "kimi-k3":           {"verified": [93.4, "vals"], "price": [2.5, 14, "morph"]},
+    "glm-5.3":           {"verified": [95.4, "vals"], "price": [1.19, 6, "morph"]},
+    "qwen3.8-max":       {"swepro": [67.7, "morph"], "verified": [85.6, "vals"]},
+    "minimax-m3":        {"verified": [75.0, "vals"]},
+    "deepseek-v4-pro":   {"swepro": [55.4, "aimade"], "verified": [96.4, "vals"], "price": [1.32, 3.96, "aimade"]},
+    "deepseek-v4.1-flash": {"tb4": [31.2, "morph"], "price": [0.30, 1.20, "morph"]}
+  }
+}

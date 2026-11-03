@@ -299,6 +299,12 @@
   .ag .acct { font-size: 13.5px; overflow-wrap: anywhere; }
   .ag .rates { font-size: 13.5px; color: var(--muted); }
   .ag .rates b { color: var(--ink); }
+  .ag .sc { display: grid; grid-template-columns: auto 1fr 2.2em auto; gap: 3px 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .ag .sc .bar { height: 7px; border-radius: 4px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
+  .ag .sc .bar i { display: block; height: 100%; background: var(--accent, #0a7d55); border-radius: 4px; }
+  .ag .sc .bar i.you { background: #2563eb; }
+  .ag .sc b { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .ag .sc .src { font-size: 12px; white-space: nowrap; }
   .ag .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .ag .row2 button { min-height: 32px; padding: 3px 10px; font-size: 13.5px; }
   .switch[aria-pressed="true"] { background: var(--running); border-color: var(--running); color: #fff; }
@@ -393,6 +399,7 @@
       <span class="sp"></span>
       <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
       <button type="button" id="agCheck">Check sign-ins</button>
+      <button type="button" id="agRefresh">Refresh benchmarks</button>
       <button type="button" id="agAdd">Add agent</button>
     </div>
     <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes.</p>
@@ -463,6 +470,20 @@
       <span class="msg" id="f-msg" role="alert"></span>
       <button type="button" id="f-cancel">Cancel</button>
       <button type="submit" class="primary" id="f-save">Add task</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="scDlg" aria-labelledby="scdh">
+  <form id="scForm" method="dialog">
+    <h2 id="scdh">Scores for <span id="sc-name"></span></h2>
+    <p class="hint">0 to 100. Leave a box empty to keep it automatic (the number shown in grey). A task goes to the cheapest free agent whose score for that kind of work clears the bar: easy <span id="sc-bars"></span>.</p>
+    <div id="sc-rows"></div>
+    <div class="row">
+      <span class="msg" id="sc-msg" role="alert"></span>
+      <button type="button" id="sc-auto">All automatic</button>
+      <button type="button" id="sc-cancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
     </div>
   </form>
 </dialog>
@@ -939,6 +960,13 @@ function renderAgents(d) {
       const a = A.list.find(x => x.name === n);
       return a && !a.enabled ? `<s>${esc(n)}</s>` : esc(n);
     }).join(" → ") : "strongest first";
+  if (A.mode === "scores") {
+    const B = A.bars || {}, C = A.catalog || {};
+    const srcs = (C.sources || []).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title.split(":")[0])}</a> ${esc(s.date || "")}`).join(", ");
+    $("agRoute").innerHTML = `<b>Picks by score.</b> Each task's kind (C++ / Unreal, Python &amp; tools, UI, Docs &amp; data) and difficulty set a bar ` +
+      `(easy <b>${B.easy}</b>, medium <b>${B.medium}</b>, hard <b>${B.hard}</b>); the cheapest free agent that clears it gets the task, and reviews go to the best reviewer from another company. ` +
+      `<span>Scores start from public benchmarks (list of ${C.models || 0} models, updated ${esc(C.updated || "?")}: ${srcs}), then move with Fletchery's own pass/fail results. You can set any score yourself.</span>`;
+  } else
   $("agRoute").innerHTML = `<b>Easy</b> ${rl("easy")} · <b>Medium</b> ${rl("medium")} · <b>Hard</b> ${rl("hard")} · <b>Reviews</b> ${rl("reviewers")}` +
     " <span>(an agent that is off, out of its limit or not signed in is skipped; one that keeps passing a level is tried first)</span>";
   $("agGrid").innerHTML = A.list.map(a => {
@@ -953,7 +981,8 @@ function renderAgents(d) {
     const acct = a.paused_until ? a.paused_reason : a.account;
     return `<div class="ag${a.enabled ? "" : " off"}">
       <div class="top"><span class="nm">${esc(a.name)}</span><span class="chip ${cls}">${esc(chip)}</span></div>
-      <div class="model">${esc(a.kind)}${a.model ? " · " + esc(a.model) : ""} · strength ${a.tier} · ${esc(a.vendor)}</div>
+      <div class="model">${esc(a.kind)}${a.model ? " · " + esc(a.model) : ""} · ${esc(a.vendor)}</div>
+      ${a.scores ? scoreRows(a) : ""}
       ${acct ? `<div class="acct">${esc(acct)}</div>` : ""}
       <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : ""}</div>
       <div class="row2"><span class="rates">Runs on</span>
@@ -965,6 +994,7 @@ function renderAgents(d) {
       <div class="row2">
         <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button>
         ${a.kind !== "fake" ? `<button type="button" data-ag-login="${esc(a.name)}">Sign in</button>` : ""}
+        ${a.scores ? `<button type="button" data-ag-scores="${esc(a.name)}">Edit scores</button>` : ""}
         <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
       </div></div>`;
   }).join("");
@@ -974,6 +1004,52 @@ function renderAgents(d) {
       ${k.set ? `<button type="button" data-key-clear="${esc(k.name)}">Remove</button>` : ""}</td></tr>`).join("") +
     `<tr><td colspan="4" class="b" style="text-align:left"><button type="button" class="linkbtn" data-key-set="">Add another key</button></td></tr>`;
 }
+const SKILL_NAMES = {cpp: "C++ / Unreal", scripts: "Python & tools", ui: "UI", docs: "Docs & data", review: "Review"};
+function scoreSource(r, seed) {
+  if (r.from === "you") return ["you set it", "You set this score."];
+  const base = seed.from === "benchmarks"
+    ? "Started at " + r.seed + " from " + seed.detail.map(x => `${x.bench} ${x.value}% (${x.source}, ${x.date})`).join("; ")
+    : "Started at " + r.seed + " from its Strength: no benchmark lists this model";
+  if (r.from === "results") return [`${r.passed}/${r.tasks} passed`, base + `. Fletchery's results moved it: ${r.passed} of ${r.tasks} tasks passed.`];
+  return [seed.from === "benchmarks" ? "benchmarks" : "estimate", base + "."];
+}
+function scoreRows(a) {
+  const S = a.scores, seed = S.seed;
+  const rows = Object.keys(SKILL_NAMES).map(k => {
+    const r = S.skills[k], [tag, tip] = scoreSource(r, seed);
+    return `<span>${SKILL_NAMES[k]}</span><span class="bar" role="img" aria-label="${r.score} of 100"><i class="${r.from === "you" ? "you" : ""}" style="width:${r.score}%"></i></span><b>${r.score}</b><span class="src" title="${esc(tip)}">${esc(tag)}</span>`;
+  });
+  const price = seed.price ? `$${seed.price[0]} / $${seed.price[1]} per million tokens` : "no price listed, so guessed from its Strength";
+  rows.push(`<span>Cheapness</span><span class="bar" role="img" aria-label="${S.cost} of 100"><i class="${S.cost_from === "you" ? "you" : ""}" style="width:${S.cost}%"></i></span><b>${S.cost}</b><span class="src" title="${esc(S.cost_from === "you" ? "You set this score." : "From the list price: " + price + ". Higher is cheaper.")}">${S.cost_from === "you" ? "you set it" : S.cost_from === "price" ? "list price" : "estimate"}</span>`);
+  return `<div class="sc">${rows.join("")}</div>`;
+}
+let scAgent = "";
+function openScores(name) {
+  const a = (last.agents.list || []).find(x => x.name === name); if (!a) return;
+  scAgent = name; $("sc-name").textContent = name; $("sc-msg").textContent = "";
+  const B = last.agents.bars || {}; $("sc-bars").textContent = `${B.easy}, medium ${B.medium}, hard ${B.hard}`;
+  const keys = Object.keys(SKILL_NAMES).concat(["cost"]);
+  $("sc-rows").innerHTML = keys.map(k => {
+    const r = k === "cost" ? {score: a.scores.cost, from: a.scores.cost_from, auto: a.scores.seed.cost} : a.scores.skills[k];
+    const auto = k === "cost" ? r.auto : (r.from === "you" ? r.seed : r.score);
+    return `<label for="sc-${k}">${k === "cost" ? "Cheapness <small>higher is cheaper</small>" : SKILL_NAMES[k]}</label>
+      <input id="sc-${k}" type="number" min="0" max="100" inputmode="numeric" placeholder="${auto} (automatic)" value="${r.from === "you" ? r.score : ""}">`;
+  }).join("");
+  $("scDlg").showModal();
+}
+$("sc-cancel").onclick = () => $("scDlg").close();
+$("sc-auto").onclick = () => { $("sc-rows").querySelectorAll("input").forEach(i => i.value = ""); };
+$("scForm").onsubmit = async ev => {
+  ev.preventDefault();
+  const body = {};
+  Object.keys(SKILL_NAMES).concat(["cost"]).forEach(k => { const v = $("sc-" + k).value.trim(); body[k] = v === "" ? null : +v; });
+  try { await post("/api/agents/scores", {name: scAgent, scores: body}); $("scDlg").close(); refresh(); }
+  catch (e) { $("sc-msg").textContent = e.message; }
+};
+$("agRefresh").onclick = async () => {
+  const r = await agentCall("/api/agents/refresh-scores", {});
+  if (r) $("state").textContent = `Benchmark list refreshed (updated ${r.updated}, ${r.models} models).`;
+};
 const PLAN_LABEL = {claude: "Claude plan", codex: "ChatGPT", opencode: "OpenCode sign-in"};
 const PLAN_NAME = {claude: "Your Claude plan (shares its limits with your own chats)", codex: "Your ChatGPT sign-in (codex login)",
                    opencode: "OpenCode's own sign-in, e.g. OpenCode Go (opencode auth login)"};
@@ -987,6 +1063,8 @@ $("agents").addEventListener("click", ev => {
     if (b.getAttribute("aria-pressed") === "true") return;
     if (b.dataset.agAuth === "key" && !confirm(`Run ${b.dataset.ag} on its API key? Its sessions are then billed per token. Running sessions finish as they are.`)) return;
     agentCall("/api/agents/auth", {name: b.dataset.ag, mode: b.dataset.agAuth});
+  } else if (b.dataset.agScores) {
+    openScores(b.dataset.agScores);
   } else if (b.dataset.agToggle) {
     const on = b.getAttribute("aria-pressed") !== "true";
     agentCall("/api/agents/toggle", {name: b.dataset.agToggle, on});

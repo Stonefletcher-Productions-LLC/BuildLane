@@ -62,6 +62,7 @@ class Outcome:
     sessions: list[str] = field(default_factory=list)
     agent: str = ""          # the agent whose work this outcome is (the last one tried)
     difficulty: str = ""
+    skill: str = ""          # the kind of work (scores.SKILLS) the router saw
     route: str = ""          # why the router picked the first agent
     reviewer: str = ""
     attempts: list[dict] = field(default_factory=list)  # [{"agent", "difficulty", "role", "ok", "why"}]: what Stats learns from
@@ -153,7 +154,7 @@ async def _run_task_body(task: Task, ctx: Context, out: Outcome, agent: str | No
             gh.set_status(task.number, QUEUED)
             out.result, out.detail = "waiting_agent", "no agent free for it"
             return out
-        agent, out.difficulty, out.route = choice.agent, choice.difficulty, choice.why
+        agent, out.difficulty, out.route, out.skill = choice.agent, choice.difficulty, choice.why, choice.skill
     if pool is not None:
         pool.acquire(agent)
     try:
@@ -242,7 +243,7 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     except Exception as e:
         return _requeue_or_block(ctx, task, out, f"push or PR failed: {e}")
     gh.set_status(task.number, PR)
-    out.attempts.append({"agent": agent or "", "difficulty": out.difficulty, "role": "worker", "ok": True})
+    out.attempts.append({"agent": agent or "", "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": True})
     by = f" Written by {agent}, reviewed by {out.reviewer}." if pool is not None and pool.multi else ""
     gh.comment(task.number, f"Fletchery opened PR #{pr} from `{task.branch}` (cost ${out.cost_usd:.2f}).{by} "
                             f"The Build Lane builds it; it still needs review before it merges.")
@@ -352,9 +353,9 @@ def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, w
     pool = ctx.agents
     first_line = why.splitlines()[0] if why else ""
     if agent:
-        out.attempts.append({"agent": agent, "difficulty": out.difficulty, "role": "worker", "ok": False,
+        out.attempts.append({"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
                              "why": first_line[:200]})
-    nxt = pool.escalate(agent) if pool is not None and pool.multi and ctx.escalate and agent else None
+    nxt = pool.escalate(agent, "worker", out.skill) if pool is not None and pool.multi and ctx.escalate and agent else None
     if not nxt:
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:
