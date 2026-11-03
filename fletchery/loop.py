@@ -372,7 +372,7 @@ class Engine:
             for t in tasks.values():  # what this process runs right now shows as running, whatever GitHub says yet
                 if t.number in self.active:
                     t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
-        waiting = {n: w for n, w in self._waiting.items() if n in tasks}
+        waiting = graph.refresh_waits(tasks, {n: w for n, w in self._waiting.items() if n in tasks})
         text = self.status_text(tasks, prs, waiting, outcomes)
         self.snapshot = self.make_snapshot(tasks, prs, waiting, outcomes)
         if not self.dry_run:

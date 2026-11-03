@@ -66,7 +66,7 @@ g = {1: T(1, "a", "Depends on: #7", created="2026-11-02T00:00:00Z"), 2: T(2, "b"
      3: T(3, "c", created="2026-11-01T00:00:00Z"), 4: T(4, "d", "Depends on: #99"), 5: T(5, "e", status=RUNNING)}
 r = readiness(g, known_closed={7})
 assert [x.number for x in r.ready] == [3, 1], "closed deps count as done; oldest first"
-assert r.waiting[2] == "waits for #1" and r.waiting[4] == "depends on missing issue #99" and 5 not in r.waiting
+assert r.waiting[2] == "waits for #1 (queued)" and r.waiting[4] == "depends on missing issue #99" and 5 not in r.waiting
 assert [x.number for x in pick(r.ready, 1)] == [3] and pick(r.ready, 0) == []
 
 # ---- happy path: worker -> gates -> reviewer -> PR; dependents wait, then run next pass ----
@@ -78,7 +78,7 @@ assert ctx.repo.pushed == ["claude/foreman-10-first"]
 assert [c[0] for c in ctx.runtime.calls] == ["worker", "reviewer"]
 pr = ctx.gh.prs[0]
 assert pr.base == "Test-Staging" and "ready" in pr.labels and "Closes #10" in pr.body and "has not been through the full build" in pr.body
-assert "waits for #10" in ctx.gh.status_text and "- PR #9000 (#10 First)" in ctx.gh.status_text
+assert "waits for #10 (PR #9000 waiting to merge)" in ctx.gh.status_text and "- PR #9000 (#10 First)" in ctx.gh.status_text
 assert "unblocks 1: #11" in ctx.gh.status_text, ctx.gh.status_text
 ctx.gh.close_issue(10)  # the lane lands the PR
 ctx.gh.prs.clear()
@@ -334,7 +334,7 @@ try:
     assert call("/?open=week")[0] == 200 and call("/api/status?x=1")[0] == 200, "a query string does not change the page"
     code, st = call("/api/status"); st = _json.loads(st)
     assert code == 200 and {t["number"]: t["status"] for t in st["tasks"]} == {1: "pr", 2: "queued"}
-    assert st["tasks"][1]["why"] == "waits for #1" and st["max_parallel"] == 4 and st["history"][0]["task"] == 1
+    assert st["tasks"][1]["why"].startswith("waits for #1 (PR") and st["max_parallel"] == 4 and st["history"][0]["task"] == 1
     assert call("/api/status", host="evil.example:%d" % port)[0] == 403, "another host name is refused (DNS rebinding)"
     assert call("/api/pause", "POST", {})[0] == 403, "buttons need the page's token"
     assert call("/api/pause", "POST", {}, token="wrong")[0] == 403

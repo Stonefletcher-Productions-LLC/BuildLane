@@ -131,11 +131,39 @@ def readiness(tasks: dict[int, Task], known_closed: set[int] | None = None) -> R
         if missing:
             waiting[n] = "depends on missing issue " + ", ".join(f"#{d}" for d in missing)
         elif open_deps:
-            waiting[n] = "waits for " + ", ".join(f"#{d}" for d in open_deps)
+            waiting[n] = waits_text(tasks, open_deps)
         else:
             ready.append(t)
     ready.sort(key=lambda t: (t.created_at, t.number))
     return Readiness(ready, waiting)
+
+
+def waits_text(tasks: dict[int, Task], deps: list[int]) -> str:
+    return "waits for " + ", ".join(f"#{d} ({_dep_state(tasks[d])})" for d in deps)
+
+
+def refresh_waits(tasks: dict[int, Task], waiting: dict[int, str]) -> dict[int, str]:
+    """Re-describe the dependencies of "waits for" reasons from `tasks` as they are now (a dependency may have opened its
+    PR since the reason was written earlier in the pass)."""
+    out = dict(waiting)
+    for n, why in waiting.items():
+        if why.startswith("waits for ") and n in tasks:
+            deps = [d for d in tasks[n].depends_on if d in tasks]
+            if deps:
+                out[n] = waits_text(tasks, deps)
+    return out
+
+
+def _dep_state(t: Task) -> str:
+    """Where a dependency is, in words, so a blocker is never just a bare number (LifeShare #780 waited in the Merge
+    list as PR #920 while the queue only said "waits for #780", 2026-11-03)."""
+    if t.status == PR:
+        return f"PR #{t.pr_number} waiting to merge" if t.pr_number else "PR in the lane"
+    if t.status == RUNNING:
+        return "being worked on"
+    if t.status == BLOCKED:
+        return "blocked, needs you"
+    return "queued"
 
 
 def unblocks(tasks: dict[int, Task], number: int) -> list[int]:
