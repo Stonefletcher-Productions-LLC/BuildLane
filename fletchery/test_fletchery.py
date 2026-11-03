@@ -1010,6 +1010,22 @@ dash.toggle_agent({"name": "claude", "on": True})
 dash.add_agent({"name": "kimi", "kind": "opencode", "model": "opencode-go/kimi-k3", "tier": 3, "vendor": "moonshot"})
 assert "kimi" in ctx.agents.specs and any(a["name"] == "kimi" for a in _json_mod.loads(prof.read_text())["workers"]["agents"])
 dash.remove_agent({"name": "kimi"})
+# Add agent: the name is tidied ("Haiku" -> haiku), the company comes from the model, and a model OpenCode
+# doesn't offer is refused with the nearest real names
+import clis as _clis  # noqa: E402
+_clis._models_cache[""] = (9e18, ["opencode-go/claude-haiku-5-5", "opencode-go/kimi-k3", "anthropic/claude-haiku-5-5"])
+try:
+    dash.add_agent({"name": "Haiku", "kind": "opencode", "model": "opencode-go/haiku-5.5", "tier": 3})
+    raise AssertionError("a model OpenCode doesn't offer was accepted")
+except ValueError as e:
+    assert "opencode-go/claude-haiku-5-5" in str(e), e
+dash.add_agent({"name": "Haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5", "tier": 3})
+assert "haiku" in ctx.agents.specs and ctx.agents.specs["haiku"].vendor == "anthropic"
+dash.remove_agent({"name": "haiku"})
+dash.add_agent({"name": "opencode-go/kimi-k3", "kind": "opencode"})  # the model typed into the name box
+assert ctx.agents.specs["kimi-k3"].model == "opencode-go/kimi-k3" and ctx.agents.specs["kimi-k3"].vendor == "moonshot"
+dash.remove_agent({"name": "kimi-k3"})
+_clis._models_cache.clear()
 assert "kimi" not in ctx.agents.specs
 from agents import AgentSpec as _Spec  # noqa: E402
 assert _Spec("c", "claude").api_key_name == "ANTHROPIC_API_KEY" and _Spec("x", "codex").api_key_name == "OPENAI_API_KEY"

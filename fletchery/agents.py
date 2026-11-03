@@ -69,6 +69,31 @@ _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", 
 DEFAULT_VENDOR = {"claude": "anthropic", "codex": "openai"}
 
 
+# model words -> the company behind it (reviews come from a different company than the writer)
+VENDOR_WORDS = [("claude|haiku|sonnet|opus|fable", "anthropic"), ("gpt|codex|^o\\d", "openai"), ("deepseek", "deepseek"),
+                ("kimi|moonshot", "moonshot"), ("glm|zhipu", "zhipu"), ("qwen", "alibaba"), ("gemini", "google"),
+                ("grok", "xai"), ("minimax", "minimax"), ("mimo", "xiaomi"), ("mistral", "mistral")]
+
+
+def guess_vendor(kind: str, model: str) -> str:
+    if kind == "claude":
+        return "anthropic"
+    if kind == "codex":
+        return "openai"
+    name = (model or "").split("/")[-1].lower()
+    for words, vendor in VENDOR_WORDS:
+        if re.search(words, name):
+            return vendor
+    return ""
+
+
+def tidy_name(name: str, model: str = "") -> str:
+    """'Haiku' -> 'haiku'; empty -> from the model ('opencode-go/claude-haiku-5-5' -> 'claude-haiku-5-5')."""
+    n = (name or "").strip() or (model or "").split("/")[-1]
+    n = re.sub(r"[^a-z0-9._\-]+", "-", n.lower()).strip("-.")
+    return n[:32]
+
+
 # OpenCode provider -> the key its API takes
 PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "openrouter": "OPENROUTER_API_KEY", "moonshotai": "MOONSHOT_API_KEY",
                  "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
