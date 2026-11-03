@@ -470,17 +470,18 @@
 <dialog id="agDlg" aria-labelledby="agdh">
   <form id="agForm" method="dialog">
     <h2 id="agdh">Add an agent</h2>
-    <p class="hint">An OpenCode agent reaches any model OpenCode is signed in to (e.g. <code>opencode-go/kimi-k3</code>); run <code>opencode models</code> for the list.</p>
-    <label for="a-name">Name</label>
-    <input id="a-name" required maxlength="32" autocomplete="off" placeholder="kimi">
+    <p class="hint">Pick the model first; the name and company fill in from it. An OpenCode agent reaches any model OpenCode is signed in to.</p>
     <label for="a-kind">Kind</label>
     <select id="a-kind"><option value="opencode">OpenCode</option><option value="codex">Codex</option><option value="claude">Claude</option></select>
-    <label for="a-model">Model <small>provider/model for OpenCode; empty for the CLI's default</small></label>
-    <input id="a-model" maxlength="120" autocomplete="off" placeholder="opencode-go/kimi-k3">
+    <label for="a-model">Model <small>e.g. opencode-go/claude-haiku-5-5; empty for Codex's or Claude's default</small></label>
+    <input id="a-model" maxlength="120" autocomplete="off" list="a-models" placeholder="start typing: haiku, kimi, deepseek…">
+    <datalist id="a-models"></datalist>
+    <label for="a-name">Name <small>short, shown on the cards, e.g. haiku</small></label>
+    <input id="a-name" required maxlength="32" autocomplete="off" placeholder="haiku">
     <label for="a-tier">Strength <small>1 cheapest … 5 strongest; failed work moves up</small></label>
     <input id="a-tier" type="number" min="1" max="5" value="2">
     <label for="a-vendor">Company <small>reviews come from a different one than the writer</small></label>
-    <input id="a-vendor" maxlength="40" autocomplete="off" placeholder="moonshot">
+    <input id="a-vendor" maxlength="40" autocomplete="off" placeholder="filled in from the model">
     <label for="a-keys">Keys it needs <small>optional, e.g. MOONSHOT_API_KEY</small></label>
     <input id="a-keys" maxlength="200" autocomplete="off">
     <div class="row">
@@ -999,7 +1000,27 @@ $("agents").addEventListener("click", ev => {
 });
 $("escBtn").onclick = () => agentCall("/api/agents/escalate", {on: $("escBtn").getAttribute("aria-pressed") !== "true"});
 $("agCheck").onclick = async () => { await agentCall("/api/agents/check", {}); $("state").textContent = "Checking every agent's sign-in…"; setTimeout(refresh, 4000); };
-$("agAdd").onclick = () => { $("agForm").reset(); $("a-msg").textContent = ""; $("agDlg").showModal(); $("a-name").focus(); };
+const VENDOR_WORDS = [[/claude|haiku|sonnet|opus|fable/, "anthropic"], [/gpt|codex|^o\d/, "openai"], [/deepseek/, "deepseek"],
+  [/kimi|moonshot/, "moonshot"], [/glm|zhipu/, "zhipu"], [/qwen/, "alibaba"], [/gemini/, "google"], [/grok/, "xai"],
+  [/minimax/, "minimax"], [/mimo/, "xiaomi"], [/mistral/, "mistral"]];
+let agNameTyped = false, agVendorTyped = false;
+function agFill() {
+  const kind = $("a-kind").value, tail = $("a-model").value.trim().split("/").pop().toLowerCase();
+  if (!agNameTyped) $("a-name").value = (tail || (kind === "opencode" ? "" : kind)).replace(/[^a-z0-9._-]+/g, "-").slice(0, 32);
+  if (!agVendorTyped) $("a-vendor").value = kind === "claude" ? "anthropic" : kind === "codex" ? "openai"
+    : ((VENDOR_WORDS.find(([re]) => re.test(tail)) || [])[1] || "");
+}
+$("a-model").oninput = agFill;
+$("a-kind").onchange = agFill;
+$("a-name").oninput = () => { agNameTyped = !!$("a-name").value; $("a-name").value = $("a-name").value.toLowerCase().replace(/\s+/g, "-"); };
+$("a-vendor").oninput = () => { agVendorTyped = !!$("a-vendor").value; };
+$("agAdd").onclick = async () => {
+  $("agForm").reset(); agNameTyped = agVendorTyped = false; $("a-msg").textContent = ""; $("agDlg").showModal(); $("a-model").focus();
+  try {
+    const r = await post("/api/agents/models", {});
+    $("a-models").innerHTML = (r.models || []).map(m => `<option value="${esc(m)}">`).join("");
+  } catch (e) { /* the list is a convenience; typing still works */ }
+};
 $("a-cancel").onclick = () => $("agDlg").close();
 $("agForm").onsubmit = async ev => {
   ev.preventDefault();

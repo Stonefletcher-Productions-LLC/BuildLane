@@ -83,6 +83,28 @@ def find_codex(explicit: str = "") -> str:
     return shutil.which("codex") or "codex"
 
 
+_models_cache: dict = {}
+
+
+def opencode_models(command: str = "", max_age: float = 600) -> list[str]:
+    """`opencode models`: every provider/model OpenCode can reach right now. [] if it can't be asked."""
+    import subprocess
+    import time
+    hit = _models_cache.get(command)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    try:
+        p = subprocess.run([find_opencode(command), "models"], capture_output=True, text=True, timeout=60,
+                           encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout or "")
+    models = [l.strip() for l in out.splitlines() if re.match(r"^[\w.\-]+/[\w.:\-]+$", l.strip())]
+    if models:
+        _models_cache[command] = (time.time(), models)
+    return models
+
+
 def find_opencode(explicit: str = "") -> str:
     """OpenCode's own binary, not npm's .cmd/.ps1 shims (cmd.exe would re-parse the arguments)."""
     if explicit:

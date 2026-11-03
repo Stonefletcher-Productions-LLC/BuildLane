@@ -173,10 +173,14 @@ class Dashboard:
         return {"name": name, "on": on}
 
     def add_agent(self, data: dict) -> dict:
-        from agents import specs_from
+        from agents import guess_vendor, specs_from, tidy_name
         pool = self._pool()
-        name = str(data.get("name", "")).strip()
         kind = str(data.get("kind", "")).strip()
+        model = str(data.get("model", "")).strip()
+        name = str(data.get("name", "")).strip()
+        if "/" in name and not model:  # a model typed into the name box
+            model, name = name, ""
+        name = tidy_name(name, model)
         if not re.match(r"^[a-z0-9][a-z0-9._\-]{0,31}$", name):
             raise ValueError("Name the agent in lower case, letters, digits and dashes (e.g. kimi).")
         if name in pool.specs:
@@ -187,12 +191,21 @@ class Dashboard:
             tier = int(data.get("tier") or 2)
         except (TypeError, ValueError):
             raise ValueError("Tier is a whole number, 1 (cheapest) to 5.")
-        model = str(data.get("model", "")).strip()
         if kind == "opencode" and "/" not in model:
             raise ValueError("OpenCode models are provider/model, e.g. opencode-go/kimi-k3.")
+        if kind == "opencode":
+            import clis
+            known = clis.opencode_models()
+            if known and model not in known:
+                import difflib
+                tail = model.split("/")[-1].lower()
+                near = [m for m in known if tail and all(w in m.lower() for w in re.split(r"[\-._]", tail) if w)]
+                near = (near or difflib.get_close_matches(model, known, n=3, cutoff=0.5))[:3]
+                raise ValueError(f"OpenCode doesn't offer {model}." + (f" Did you mean {' or '.join(near)}?" if near
+                                 else " Run `opencode models` for the list."))
         key_env = [k.strip() for k in str(data.get("keyEnv", "")).split(",") if k.strip()]
         raw = {"name": name, "kind": kind, "model": model, "tier": max(1, min(5, tier)),
-               "vendor": str(data.get("vendor", "")).strip(), "enabled": True, "keyEnv": key_env}
+               "vendor": str(data.get("vendor", "")).strip().lower() or guess_vendor(kind, model), "enabled": True, "keyEnv": key_env}
         spec = specs_from([raw])[0]
         pool.specs[name] = spec
         self.fm.cfg.agents = list(self.fm.cfg.agents or []) + [{k: v for k, v in raw.items() if v not in ("", [])}]
@@ -200,6 +213,10 @@ class Dashboard:
         self.fm.check_accounts(force=True)
         self.fm.ctx.log(f"agent {name} ({spec.label}) added from the dashboard")
         return {"name": name}
+
+    def list_models(self, data: dict) -> dict:
+        import clis
+        return {"models": clis.opencode_models()}
 
     def remove_agent(self, data: dict) -> dict:
         pool = self._pool()
@@ -359,7 +376,8 @@ class Dashboard:
                         return self._json(200, dash.set_auth(data))
                     routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
-                              "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth, "/api/keys/set": dash.set_key,
+                              "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
+                              "/api/agents/models": dash.list_models, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))
