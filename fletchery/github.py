@@ -3,6 +3,7 @@ and an in-memory fake with the same surface for tests and `--dry-run`."""
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -163,6 +164,8 @@ class GitHub:
                 out.append(Feedback(pr.number, "comment", body, c["created_at"]))
         runs = self.api(f"repos/{self.repo}/commits/{pr.head_sha}/check-runs?per_page=100") or {}
         for r in runs.get("check_runs", []):
+            if _is_merge_fixer_run(r.get("name") or ""):
+                continue
             if r.get("conclusion") in ("failure", "timed_out") and (not since or (r.get("completed_at") or "") > since):
                 out.append(Feedback(pr.number, "check", f"check `{r['name']}` {r['conclusion']}: {r.get('html_url', '')}",
                                     r.get("completed_at") or ""))
@@ -181,6 +184,16 @@ class GitHub:
 
 
 _LANE_MARKERS = ("taken out", "lost `ready`", "failed", "conflict", "Build Lane", "staging controller", "FAIL ")
+
+
+_MERGE_FIXER_JOB = re.compile(r"^(fix \(\d+,|find$)")
+
+
+def _is_merge_fixer_run(name: str) -> bool:
+    """Jobs of the project's "Claude merge fixer" workflow ("find", "fix (855, branch, title)"). That workflow fires on
+    any PR event, so its jobs land on whichever PR's head triggered it, and they fix OTHER PRs. A failed one is not a
+    verdict on this PR: LifeShare #829 was sent back twice and stopped on fixer jobs for #853 and #855 (2026-11-03)."""
+    return bool(_MERGE_FIXER_JOB.match(name.strip()))
 
 
 def _is_lane_feedback(body: str) -> bool:

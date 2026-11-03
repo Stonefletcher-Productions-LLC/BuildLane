@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 RULES_DIR = ".fletchery"
+NO_GATE = {"", "none", "n/a", "na", "-", "no", "nothing"}
 
 
 @dataclass
@@ -41,7 +42,9 @@ class Rules:
             if any(rx.search(p) for p in changed):
                 cmds += [r for r in runs if r not in cmds]
         for e in extra:
-            e = e.strip()
+            e = e.strip().strip("`").strip()
+            if e.lower().rstrip(".") in NO_GATE:
+                continue  # "Gate: none" means no extra check; it used to run `node none` and block (LifeShare #846-#848)
             if e and e not in cmds:
                 cmds.append(e if e.split()[0] in ("python3", "python", "node") else f"python3 {e}" if e.endswith(".py") else f"node {e}")
         return cmds
