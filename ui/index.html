@@ -1496,7 +1496,7 @@ $("taskForm").onsubmit = async ev => {
   finally { save.disabled = false; }
 };
 
-// ?open=week|add opens that dialog, and #<section id> scrolls to it, once the first data is in (docs screenshots).
+// ?open=week|add|settings|accounts|projects opens that dialog, ?scores=<agent> opens that agent's scores, and #<section id> scrolls to it, once the first data is in (docs screenshots).
 const params = new URLSearchParams(location.search);
 // ?only=queue|workers|lane|board shows just that part (the docs' section screenshots)
 const only = params.get("only");
@@ -1507,6 +1507,8 @@ if (only) {
 refresh().then(() => {
   if (params.get("open") === "week" && last) { renderWeek(last); $("weekDlg").showModal(); }
   if (params.get("open") === "add") { $("dlg").showModal(); }
+  if (["settings", "accounts", "projects"].includes(params.get("open"))) openSettings(params.get("open") === "settings" ? "project" : params.get("open"));
+  if (params.get("scores")) document.querySelectorAll("details.mrow").forEach(d => { if (d.dataset.sc === params.get("scores")) d.open = true; });
   if (location.hash) { const el = document.getElementById(location.hash.slice(1)); if (el) el.scrollIntoView(); }
 });
 setInterval(refresh, 3000);
