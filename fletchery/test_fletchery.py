@@ -78,7 +78,8 @@ assert ctx.repo.pushed == ["claude/foreman-10-first"]
 assert [c[0] for c in ctx.runtime.calls] == ["worker", "reviewer"]
 pr = ctx.gh.prs[0]
 assert pr.base == "Test-Staging" and "ready" in pr.labels and "Closes #10" in pr.body and "has not been through the full build" in pr.body
-assert "waits for #10" in ctx.gh.status_text and "→ PR #9000" in ctx.gh.status_text
+assert "waits for #10" in ctx.gh.status_text and "- PR #9000 (#10 First)" in ctx.gh.status_text
+assert "unblocks 1: #11" in ctx.gh.status_text, ctx.gh.status_text
 ctx.gh.close_issue(10)  # the lane lands the PR
 ctx.gh.prs.clear()
 fm, out = run_once(ctx, tmp)
@@ -202,7 +203,7 @@ assert parse_output(None, "no json") == {}
 # ---- status text sections ----
 ctx, tmp = ctx_with({1: T(1, "a"), 2: T(2, "b", status=BLOCKED)})
 fm, out = run_once(ctx, tmp)
-for needle in ("## Running", "## Queue", "## In the lane", "## Blocked (needs a person)", "- #2 b", "## This pass", "- #1: pr PR #9000"):
+for needle in ("## Running", "## Queue", "## Merge", "## Blocked (needs a person)", "- #2 b", "## This pass", "- #1: pr PR #9000"):
     assert needle in ctx.gh.status_text, needle
 
 # ---- usage limits: not a verdict on the task; the loop pauses dispatch ----
@@ -759,5 +760,59 @@ class _FixerJobsGH(_RealGH):
         raise AssertionError(path)
 fb = _FixerJobsGH("o/r").feedback_since(PullRequest(829, "t", "h", "b", "s" * 40, ["foreman"]), None)
 assert [f.text.split("`")[1] for f in fb] == ["Quick checks"], fb
+
+# ---- the Merge section: finished PRs, most-unblocking first, with round, imports and path flags ----
+from graph import unblocks, merge_round  # noqa: E402
+g = {1: T(1, "a", status=PR), 2: T(2, "b", "Depends on: #1"), 3: T(3, "c", "Depends on: #2"), 4: T(4, "d", status=PR),
+     5: T(5, "e", "Depends on: #4")}
+assert unblocks(g, 1) == [2, 3] and unblocks(g, 4) == [5] and unblocks(g, 3) == []
+assert merge_round(["ready", "round:7"]) == "7" and merge_round(["Round-12"]) == "12" and merge_round(["ready"]) == ""
+ctx, tmp = ctx_with({1: T(1, "a", status=PR), 2: T(2, "b", "Depends on: #1"), 3: T(3, "c", "Depends on: #2"),
+                     4: T(4, "d", status=PR), 5: T(5, "e", "Depends on: #4", status=BLOCKED), 6: T(6, "f", "Depends on: #4", status=BLOCKED)},
+                    cfg=Config(max_parallel=0, merge_flags=[{"paths": "^Content/Town/", "flag": "strict NavCheck on the PC"}]))
+ctx.gh.prs += [PullRequest(71, "t1", "claude/foreman-1-a", "Test-Staging", "a" * 40, ["foreman", "ready", "round:7"],
+                           "Closes #1\n\nLane-Imports: BuildTown"),
+               PullRequest(74, "t4", "claude/foreman-4-d", "Test-Staging", "b" * 40, ["foreman"], "Closes #4", False)]
+ctx.gh.files = {71: ["Content/Town/Source/town.json"], 74: ["Source/x.cpp"]}
+fm, out = run_once(ctx, tmp)
+rows = fm.snapshot["merge"]
+assert [r["pr"] for r in rows] == [71, 74] and rows[0]["unblocks"] == [2, 3] and rows[1]["unblocks"] == [5, 6]
+assert rows[0]["round"] == "7" and rows[0]["imports"] == "BuildTown" and rows[0]["flags"] == ["strict NavCheck on the PC"]
+assert rows[1]["conflict"] and not rows[1]["ready"] and rows[1]["flags"] == [] and rows[0]["head"] == "a" * 8
+s = ctx.gh.status_text
+assert "## Merge" in s and "- PR #71 (#1 a) · head `aaaaaaaa` · unblocks 2: #2, #3 · round 7 · imports: BuildTown · **strict NavCheck on the PC**" in s, s
+assert "**conflicts** · not `ready`" in s
+assert "No merge round running" in s
+
+# ---- what the merge round is doing: a plain headline from merge-round.json and the PC's heavy lease ----
+import merge as merge_mod  # noqa: E402
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+mt = Path(tempfile.mkdtemp())
+(mt / "heavy.json").write_text(_json_mod.dumps({"token": "x", "purpose": "Tools\\RunFlowTest.ps1",
+                                                 "workspaces": "E:\\lifeshare-scratch\\toilet-w1",
+                                                 "acquiredUtc": "2026-11-03T15:16:56.71Z"}), encoding="utf-8")
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "started": "2026-11-03T13:40:00Z", "updated": "2026-11-03T15:00:00Z",
+    "prs": [71, 74], "steps": [{"name": "Merge the PRs", "state": "done"}, {"name": "BuildTown", "state": "waiting"},
+                               {"name": "NavCheck", "state": "todo"}, {"name": "Game specs", "state": "todo"}]}), encoding="utf-8")
+at = _dt(2026, 11, 3, 15, 20, tzinfo=_tz.utc)
+v = merge_mod.view(mt / "round.json", mt / "heavy.json", {}, now=at)
+assert v["state"] == "waiting" and v["round"] == "7" and v["next"] == "NavCheck" and not v["stale"], v
+assert v["headline"].startswith("Merging round 7: 2 PRs, step 2 of 4, waiting to run BuildTown. Waiting because the PC is busy "
+                                "with RunFlowTest.ps1 in toilet-w1 (since 15:16Z); started 13:40Z; then NavCheck."), v["headline"]
+v = merge_mod.view(mt / "round.json", mt / "missing.json", {}, now=_dt(2026, 11, 3, 18, 0, tzinfo=_tz.utc))
+assert v["stale"] and "may be stuck" in v["headline"], v["headline"]
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "state": "done"}), encoding="utf-8")
+assert merge_mod.view(mt / "round.json", mt / "heavy.json", {}, now=at)["headline"].startswith("No merge round running")
+# the round's PRs come first in the status issue, under their own heading
+(mt / "round.json").write_text(_json_mod.dumps({"round": "7", "prs": [74], "steps": [{"name": "BuildTown", "state": "running"}]}),
+                               encoding="utf-8")
+ctx, tmp = ctx_with({1: T(1, "a", status=PR), 4: T(4, "d", status=PR)},
+                    cfg=Config(max_parallel=0, merge_round_file=str(mt / "round.json")))
+ctx.gh.prs += [PullRequest(71, "t1", "claude/foreman-1-a", "Test-Staging", "a" * 40, ["foreman", "ready"], "Closes #1"),
+               PullRequest(74, "t4", "claude/foreman-4-d", "Test-Staging", "b" * 40, ["foreman", "ready"], "Closes #4")]
+fm, out = run_once(ctx, tmp)
+s = ctx.gh.status_text
+assert "**Now:** Merging round 7: 1 PR, step 1 of 1, running BuildTown." in s and "Steps: ▶ BuildTown" in s, s
+assert s.index("**In round 7** (1):") < s.index("- PR #74") < s.index("**Waiting for a round** (1)") < s.index("- PR #71"), s
 
 print("RESULT: PASS (Fletchery engine checks)")

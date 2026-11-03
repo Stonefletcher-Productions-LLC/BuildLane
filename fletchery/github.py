@@ -144,6 +144,10 @@ class GitHub:
                                    labels, p.get("body") or "", p.get("mergeable")))
         return out
 
+    def pr_files(self, number: int) -> list[str]:
+        items = self.api(f"repos/{self.repo}/pulls/{number}/files?per_page=100", paginate=True) or []
+        return [f["filename"] for f in items]
+
     def create_pr(self, head: str, base: str, title: str, body: str, labels: list[str], assignee: str | None) -> int:
         p = self.api(f"repos/{self.repo}/pulls", "POST", {"title": title, "head": head, "base": base, "body": body})
         patch: dict = {"labels": labels}
@@ -263,6 +267,9 @@ class FakeGitHub:
 
     def open_prs(self):
         return list(self.prs)
+
+    def pr_files(self, number):
+        return list(getattr(self, "files", {}).get(number, []))
 
     def create_pr(self, head, base, title, body, labels, assignee):
         n = self._next_pr
