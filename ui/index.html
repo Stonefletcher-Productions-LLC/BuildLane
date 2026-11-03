@@ -286,6 +286,21 @@
   .ag-sub { margin: 4px 0 12px; color: var(--muted); font-size: 14.5px; }
   .ag-route { font-size: 14px; color: var(--muted); margin: 0 0 12px; overflow-wrap: anywhere; }
   .ag-route b { color: var(--ink); }
+  .ag-fold { border: 0; background: none; padding: 2px 6px; min-height: 0; font-size: 13px; color: var(--muted); cursor: pointer; border-radius: 6px; }
+  .ag-fold .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #agh { cursor: pointer; }
+  .ag-fold .chev { display: inline-block; transition: transform .15s; }
+  .ag-fold[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  .ag-sum { font-size: 13.5px; color: var(--muted); }
+  .ag-sum b { color: var(--ink); }
+  section.agents.folded .ag-body { display: none; }
+  section.agents:not(.folded) .ag-sum { display: none; }
+  #agBox { --h: 640px; }
+  details.keys > summary { cursor: pointer; list-style: none; }
+  details.keys > summary::-webkit-details-marker { display: none; }
+  details.keys > summary h3 { display: inline; }
+  details.keys > summary .chev { display: inline-block; transition: transform .15s; font-size: 11px; color: var(--muted); margin-right: 4px; }
+  details.keys[open] > summary .chev { transform: rotate(90deg); }
   .ag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .ag { border: 1.5px solid var(--rule); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .ag.off { background: #F4F6F8; color: var(--muted); }
@@ -305,6 +320,13 @@
   .ag .sc .bar i.you { background: #2563eb; }
   .ag .sc b { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
   .ag .sc .src { font-size: 12px; white-space: nowrap; }
+  .ag details.scd > summary { list-style: none; cursor: pointer; border-radius: 6px; }
+  .ag details.scd > summary::-webkit-details-marker { display: none; }
+  .ag details.scd > summary:focus-visible { outline: 2px solid var(--accent, #0a7d55); outline-offset: 2px; }
+  .ag details.scd > summary .sc { color: var(--ink); font-weight: 600; }
+  .ag details.scd > summary .chev { display: inline-block; transition: transform .15s; font-size: 11px; color: var(--muted); }
+  .ag details.scd[open] > summary .chev { transform: rotate(90deg); }
+  .ag details.scd > .sc { margin: 6px 0 0 14px; }
   .ag .row2 { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .ag .row2 button { min-height: 32px; padding: 3px 10px; font-size: 13.5px; }
   .switch[aria-pressed="true"] { background: var(--running); border-color: var(--running); color: #fff; }
@@ -395,19 +417,25 @@
 
   <section class="agents" id="agents" aria-labelledby="agh" hidden>
     <div class="ag-head">
+      <button type="button" class="ag-fold" id="agFold" aria-expanded="true" aria-controls="agBody" title="Show or hide the agents"><span class="chev" aria-hidden="true">▶</span><span class="sr">Show or hide the agents</span></button>
       <h2 id="agh">Agents</h2>
+      <span class="ag-sum" id="agSum" role="status"></span>
       <span class="sp"></span>
       <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
       <button type="button" id="agCheck">Check sign-ins</button>
       <button type="button" id="agRefresh">Refresh benchmarks</button>
       <button type="button" id="agAdd">Add agent</button>
     </div>
+    <div class="ag-body" id="agBody">
     <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes.</p>
     <p class="ag-route" id="agRoute"></p>
-    <div class="ag-grid" id="agGrid"></div>
-    <div class="keys">
-      <h3>API keys <span style="color:var(--muted);font-weight:400">kept in Windows Credential Manager, never shown again</span></h3>
+    <div class="slots-scroll" id="agBox" tabindex="-1"><div class="ag-grid" id="agGrid"></div></div>
+    <div class="grip" data-resize="agBox" data-key="agents" role="separator" aria-orientation="horizontal" tabindex="0"
+         aria-label="Resize Agents: drag, or use the up and down arrow keys" title="Drag to resize; double-click to reset"></div>
+    <details class="keys" id="keysBox">
+      <summary><span class="chev" aria-hidden="true">▶</span><h3>API keys</h3> <span id="keysCount" style="color:var(--muted)"></span> <span style="color:var(--muted);font-weight:400">kept in Windows Credential Manager, never shown again</span></summary>
       <table><tbody id="keyRows"></tbody></table>
+    </details>
     </div>
   </section>
 
@@ -998,6 +1026,14 @@ function renderAgents(d) {
         <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
       </div></div>`;
   }).join("");
+  const kset = (A.keys || []).filter(k => k.set).length;
+  $("keysCount").textContent = `· ${kset} of ${(A.keys || []).length} set`;
+  const on = A.list.filter(a => a.enabled), work = on.filter(a => a.busy), paused = on.filter(a => a.paused_until),
+        out = on.filter(a => a.signed_in === false && !a.paused_until);
+  $("agSum").innerHTML = `<b>${on.length}</b> of ${A.list.length} on` +
+    (work.length ? ` · working: ${work.map(a => `<b>${esc(a.name)}</b> (${a.busy})`).join(", ")}` : " · none working") +
+    (paused.length ? ` · paused: ${paused.map(a => esc(a.name)).join(", ")}` : "") +
+    (out.length ? ` · not signed in: ${out.map(a => esc(a.name)).join(", ")}` : "");
   $("keyRows").innerHTML = (A.keys || []).map(k => `<tr><td class="k">${esc(k.name)}</td><td class="w">${esc(k.what)}</td>
       <td>${k.set ? `Set <span style="color:var(--muted)">${esc(k.hint)}</span>` : `<span style="color:var(--muted)">not set</span>`}</td>
       <td class="b"><button type="button" data-key-set="${esc(k.name)}">${k.set ? "Replace" : "Set"}</button>
@@ -1021,8 +1057,34 @@ function scoreRows(a) {
   });
   const price = seed.price ? `$${seed.price[0]} / $${seed.price[1]} per million tokens` : "no price listed, so guessed from its Strength";
   rows.push(`<span>Cheapness</span><span class="bar" role="img" aria-label="${S.cost} of 100"><i class="${S.cost_from === "you" ? "you" : ""}" style="width:${S.cost}%"></i></span><b>${S.cost}</b><span class="src" title="${esc(S.cost_from === "you" ? "You set this score." : "From the list price: " + price + ". Higher is cheaper.")}">${S.cost_from === "you" ? "you set it" : S.cost_from === "price" ? "list price" : "estimate"}</span>`);
-  return `<div class="sc">${rows.join("")}</div>`;
+  const open = scoresOpen().includes(a.name);
+  const how = `Overall = the average of its C++ / Unreal, Python & tools, UI and Docs & data scores (${["cpp", "scripts", "ui", "docs"].map(k => S.skills[k].score).join(", ")}). Review and Cheapness are kept apart: the router uses the score for each task's own kind, not this average.`;
+  const tags = [...new Set(["cpp", "scripts", "ui", "docs"].map(k => scoreSource(S.skills[k], seed)[0].replace(/^\d+\/\d+ passed$/, "results")))];
+  return `<details class="scd" data-sc="${esc(a.name)}"${open ? " open" : ""}>
+    <summary title="${esc(how)}" aria-label="${esc(a.name)} overall score ${S.overall} of 100; show the score for each kind of work">
+      <div class="sc"><span><span class="chev" aria-hidden="true">▶</span> Overall</span><span class="bar" role="img" aria-label="${S.overall} of 100"><i style="width:${S.overall}%"></i></span><b>${S.overall}</b><span class="src">${esc(tags.join(" + "))}</span></div>
+    </summary>
+    <div class="sc">${rows.join("")}</div>
+    <div class="rates" style="margin:4px 0 0 14px">Overall is the average of the four kinds of coding; each task uses the score for its own kind.</div>
+  </details>`;
 }
+function foldPref(key, dflt) { try { const v = localStorage.getItem(key); return v === null ? dflt : v === "1"; } catch (e) { return dflt; } }
+function savePref(key, on) { try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* not remembered */ } }
+function setAgentsOpen(open, save) {
+  $("agents").classList.toggle("folded", !open); $("agFold").setAttribute("aria-expanded", String(open));
+  if (save) savePref("fletchery.agentsOpen", open);
+}
+setAgentsOpen(foldPref("fletchery.agentsOpen", true), false);
+$("agFold").onclick = () => setAgentsOpen($("agents").classList.contains("folded"), true);
+$("agh").onclick = () => setAgentsOpen($("agents").classList.contains("folded"), true);
+$("keysBox").open = foldPref("fletchery.keysOpen", false);
+$("keysBox").addEventListener("toggle", () => savePref("fletchery.keysOpen", $("keysBox").open));
+function scoresOpen() { try { return JSON.parse(localStorage.getItem("fletchery.scoresOpen") || "[]"); } catch (e) { return []; } }
+document.addEventListener("toggle", ev => {
+  const d = ev.target; if (!(d instanceof HTMLDetailsElement) || !d.dataset.sc) return;
+  const set = new Set(scoresOpen()); d.open ? set.add(d.dataset.sc) : set.delete(d.dataset.sc);
+  try { localStorage.setItem("fletchery.scoresOpen", JSON.stringify([...set])); } catch (e) { /* remembered for this view only */ }
+}, true);
 let scAgent = "";
 function openScores(name) {
   const a = (last.agents.list || []).find(x => x.name === name); if (!a) return;
