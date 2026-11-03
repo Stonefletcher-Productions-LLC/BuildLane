@@ -815,4 +815,11 @@ s = ctx.gh.status_text
 assert "**Now:** Merging round 7: 1 PR, step 1 of 1, running BuildTown." in s and "Steps: ▶ BuildTown" in s, s
 assert s.index("**In round 7** (1):") < s.index("- PR #74") < s.index("**Waiting for a round** (1)") < s.index("- PR #71"), s
 
+# ---- a PR merged into Test-Staging leaves its issue open; Fletchery closes it so dependents start ----
+ctx, tmp = ctx_with({20: T(20, "Root", status=PR), 21: T(21, "Child", "Depends on: #20")})
+ctx.gh.merged = {"claude/foreman-20-root": (916, "Test-Staging", "2026-11-03T17:05:00Z")}
+fm, out = run_once(ctx, tmp)
+assert 20 in ctx.gh.closed and "merged into Test-Staging" in ctx.gh.comments[20][0], ctx.gh.writes
+assert [o.task for o in out] == [21], "the dependent starts in the same pass"
+
 print("RESULT: PASS (Fletchery engine checks)")

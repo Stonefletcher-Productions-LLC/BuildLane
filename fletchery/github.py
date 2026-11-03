@@ -62,7 +62,9 @@ class GitHub:
             cmd.append("--paginate")
         if body is not None:
             cmd += ["--input", "-"]
-        p = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True)
+        # gh prints UTF-8; Windows' default (cp1252) can't decode some bytes and the whole pass failed (2026-11-03)
+        p = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         if p.returncode != 0:
             raise RuntimeError(f"gh api {method} {path}: {p.stderr.strip() or p.stdout.strip()}")
         return parse_pages(p.stdout) if paginate else (json.loads(p.stdout) if p.stdout.strip() else None)
@@ -110,6 +112,16 @@ class GitHub:
 
     def close_issue(self, number: int) -> None:
         self.api(f"repos/{self.repo}/issues/{number}", "PATCH", {"state": "closed", "state_reason": "completed"})
+
+    def merged_pr(self, branch: str) -> tuple[int, str, str] | None:
+        """(number, base, merged_at) of the merged PR from `branch`, or None. A merge into a branch other than the
+        default one (LifeShare's Test-Staging) does not close the issue its "Closes #n" names."""
+        owner = self.repo.split("/")[0]
+        items = self.api(f"repos/{self.repo}/pulls?state=closed&head={owner}:{branch}&per_page=10") or []
+        for p in items:
+            if p.get("merged_at"):
+                return p["number"], p["base"]["ref"], p["merged_at"]
+        return None
 
     def compare_commits(self, base: str, head: str) -> list[dict]:
         """Commits in `head` that `base` does not have, oldest first: sha, message, author."""
@@ -283,6 +295,9 @@ class FakeGitHub:
 
     def compare_commits(self, base, head):
         return list(getattr(self, "commits", []))
+
+    def merged_pr(self, branch):
+        return getattr(self, "merged", {}).get(branch)
 
     def close_issue(self, number):  # also what the lane does when a PR with "Closes #n" lands
         self.writes.append(f"close #{number}")

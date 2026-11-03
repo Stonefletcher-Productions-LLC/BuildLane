@@ -131,6 +131,25 @@ class Engine:
                     st.running.pop(str(t.number), None)
                     self.ctx.log(f"#{t.number} was left running by an earlier Fletchery; back in the queue")
         by_pr = _tasks_by_pr(tasks, prs)
+        # A task whose PR merged into a non-default branch (Test-Staging) stays open: GitHub only acts on "Closes #n"
+        # for the default branch. Close it here, or everything depending on it waits forever (round 7, 2026-11-03).
+        for t in [t for t in tasks.values() if t.status == PR and not t.pr_number]:
+            try:
+                m = gh.merged_pr(t.branch)
+            except Exception as e:
+                self.ctx.log(f"#{t.number}: could not look up its merged PR: {type(e).__name__}: {e}")
+                continue
+            if not m:
+                continue
+            self.last_plan.append(f"close #{t.number}: PR #{m[0]} merged into {m[1]}")
+            if self.dry_run:
+                continue
+            gh.comment(t.number, f"Fletchery: PR #{m[0]} merged into {m[1]} at {m[2]}. GitHub closes an issue from a PR's "
+                                 f"`Closes #{t.number}` only for merges into the default branch, so Fletchery closes it, "
+                                 "and the tasks that depend on it can start.")
+            gh.close_issue(t.number)
+            tasks.pop(t.number, None)
+            self.ctx.log(f"#{t.number} closed: PR #{m[0]} merged into {m[1]}")
         limit_paused = bool(st.paused_until) and now() < st.paused_until
         if not limit_paused and st.paused_until:
             st.paused_until, st.paused_reason = "", ""
