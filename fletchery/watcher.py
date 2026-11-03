@@ -261,9 +261,13 @@ class Watcher:
         runs = [r for r in self.source.recent() if r.event not in PR_EVENTS and r.workflow not in self.skip]
         newest: dict[str, Run] = {}
         last_pass: dict[str, Run] = {}
+        running: dict[str, Run] = {}  # a run still going, newer than the newest result
         for r in sorted(runs, key=lambda r: (r.created_at, int(r.id) if r.id.isdigit() else 0)):
             if r.conclusion in ("success", "failure", "timed_out"):
                 newest[r.key] = r
+                running.pop(r.key, None)
+            elif not r.conclusion and _age_minutes(r.created_at, now) < 6 * 60:  # older: stuck, not running
+                running[r.key] = r
             if r.conclusion == "success":
                 last_pass[r.key] = r
         tasks = self.gh.open_tasks()
@@ -292,7 +296,7 @@ class Watcher:
             if age > self.max_age * 60:
                 seen.append(r.id)
                 continue
-            if age < self.grace:  # give a quick re-run or the next scheduled run a chance to fix it first
+            if age < self.grace or r.key in running:  # a quick re-run or the next run may fix it: wait for it
                 continue
             seen.append(r.id)
             if isinstance(self.source, GitHubRuns):
@@ -325,7 +329,7 @@ class Watcher:
 
     def _file(self, r: Run, job: Job, step: str, text: str, kind: str, why: str, sig: str, good: Run | None) -> int:
         what = r.name or r.workflow
-        part = f"{job.name} › {step}" if step else job.name
+        part = f"{job.name} / {step}" if step else job.name
         if kind == "code":
             title = f"Fix the build: {what} fails at {step or job.name}"
         else:
@@ -392,7 +396,7 @@ class Watcher:
             return text
         if not log:
             return text
-        return f"{text}\n\nFailing step: {job.name} › {step}\n```text\n{log}\n```"
+        return f"{text}\n\nFailing step: {job.name} / {step}\n```text\n{log}\n```"
 
 
 def _num(s: str) -> int:

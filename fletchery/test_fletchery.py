@@ -660,6 +660,8 @@ _run(wroot, 900000000112, "ci.yml", "failure", 20, branch="claude/someone", even
 _run(wroot, 900000000113, "lane-regression.yml", "failure", 3, log=code_log)                                         # too new yet
 _run(wroot, 900000000114, "nightly.yml", "failure", 50, log=code_log)
 _run(wroot, 900000000115, "nightly.yml", "success", 40)                                                              # fixed already
+_run(wroot, 900000000116, "release.yml", "failure", 60, log=code_log)
+_run(wroot, 900000000117, "release.yml", "", 30)                                                                   # still running: wait for it
 assert wmod.LocalRunnerRuns(wroot).get("900000000110").key == "staging-checkpoint.yml@lane/checkpoint-control"
 
 ex = wmod.excerpt(code_log, "Run Tools/CI/TestRoadSpec.ps1")
@@ -689,6 +691,7 @@ assert "Expected mocked launch" in code_t.body and "Road spec: launch from the m
 assert "rate limit" in infra_t.body and "no worker has been started" in infra_t.body
 assert code_t.title.startswith("Fix the build: staging-checkpoint fails at Run Tools/CI/TestRoadSpec.ps1")
 assert w.watch(seen) == []  # nothing new: no duplicates
+assert not any("release" in t.title for t in wgh.tasks.values()) and "900000000116" not in seen
 
 # the same failure on a later checkpoint branch: a comment on the open issue, not a new issue
 _run(wroot, 900000000120, "staging-checkpoint.yml", "failure", 15, branch="lane/checkpoint-control-99999999-8888-7777-6666-555555555555",
