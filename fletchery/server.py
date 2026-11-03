@@ -207,6 +207,12 @@ class Dashboard:
             tier = int(data["tier"]) if data.get("tier") not in (None, "") else 0
         except (TypeError, ValueError):
             raise ValueError("Tier is a whole number, 1 (cheapest) to 5.")
+        if kind == "codex":
+            from agents import codex_model
+            model = codex_model(model)
+            if "/" in model:
+                raise ValueError(f"Codex takes a plain model name such as gpt-6-astra, not {model}. "
+                                 "For a provider/model name, add it as an OpenCode agent.")
         if kind == "opencode" and "/" not in model:
             raise ValueError("OpenCode models are provider/model, e.g. opencode-go/kimi-k3.")
         if kind == "opencode":

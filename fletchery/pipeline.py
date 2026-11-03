@@ -3,6 +3,7 @@ several calls concurrently. Every outcome is a plain record the loop writes to t
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -431,19 +432,41 @@ async def _review(ctx: Context, task: Task, wt: Path, out: Outcome, worker: str 
     """A fresh, read-only session. With several agents the reviewer comes from another vendor than the worker
     (agents.AgentPool.reviewer_for), so no model marks its own homework."""
     cfg, pool = ctx.cfg, ctx.agents
-    name = ""
-    if pool is not None:
-        name = pool.reviewer_for(worker or "") or ""
-        if not name:
-            raise Limited("no agent is free to review", 0.0, "limited", "")
-        out.reviewer = name
-    rt = pool.runtime(name) if pool is not None else ctx.runtime
     prompt = role_prompt("reviewer", task.rules, project=cfg.name, issue=issue or _issue_text(task), branch=task.branch, base=cfg.base_branch)
-    r = await _LimitGuard(rt, ctx, task.number, name).run("reviewer", prompt, wt, cfg.reviewer_budget_usd, cfg.reviewer_max_turns)
-    _account(out, r)
-    if not r.ok:
-        return {"verdict": "escalate", "findings": [{"file": "-", "line": 0, "rule": "review", "note": r.error}]}
-    return r.output
+    failed: dict[str, str] = {}  # reviewers whose session failed to run on this task -> why
+    while True:
+        name = ""
+        if pool is not None:
+            name = pool.reviewer_for(worker or "", besides=set(failed)) or ""
+            if not name:
+                if failed:  # every reviewer there is failed to run: that's Fletchery's setup, not the work
+                    why = "; ".join(f"{n}: {e[:300]}" for n, e in failed.items())
+                    return {"verdict": "escalate", "findings": [{"file": "-", "line": 0, "rule": "review",
+                                                                 "note": f"no reviewer could run ({why})"}]}
+                raise Limited("no agent is free to review", 0.0, "limited", "")
+            out.reviewer = name
+        rt = pool.runtime(name) if pool is not None else ctx.runtime
+        r = await _LimitGuard(rt, ctx, task.number, name).run("reviewer", prompt, wt, cfg.reviewer_budget_usd, cfg.reviewer_max_turns)
+        _account(out, r)
+        if r.ok:
+            return r.output
+        err = (r.error or "the session failed").strip()
+        if pool is None or not pool.multi or not name:
+            return {"verdict": "escalate", "findings": [{"file": "-", "line": 0, "rule": "review", "note": err}]}
+        # The review never happened (a model the CLI refuses, a crash): that says nothing about the work, so another
+        # reviewer takes it instead of the task being blocked. LifeShare 2026-11-03: a Codex agent saved with an
+        # OpenCode-style model name failed every review and blocked four finished tasks in half an hour.
+        failed[name] = err
+        if _CANT_RUN.search(err):  # it will fail the same way next time: keep it off reviews until someone looks
+            pool.pause(name, max(120, cfg.limit_backoff_minutes), "can't run: " + err[:160], shared=False)
+            ctx.log(f"#{task.number}: reviewer {name} can't run ({err[:120]}); paused, another reviewer takes it")
+        else:
+            ctx.log(f"#{task.number}: reviewer {name} failed to run ({err[:120]}); another reviewer takes it")
+
+
+# Errors that mean the agent can't run at all (wrong model name, refused by the account), not a one-off failure.
+_CANT_RUN = re.compile(r"not supported|unsupported model|unknown model|model[^.\n]{0,60}(not found|does not exist|"
+                       r"not available|invalid)|invalid model|no such model|not have access to (the )?model", re.IGNORECASE)
 
 
 def _findings_text(review: dict) -> str:

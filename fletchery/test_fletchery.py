@@ -940,6 +940,28 @@ assert fixer_agent(ctx, t40, 1) == "deepseek" and fixer_agent(ctx, t40, 2) == "d
 ctx.agents.set_enabled("deepseek", False)
 assert fixer_agent(ctx, t40, 1) == "claude", "the writer is off: the router's pick for the task (medium -> claude)"
 
+# a reviewer that can't run (a model its CLI refuses) is paused and another reviewer takes the task; it isn't blocked
+fakes = {"claude": FakeRuntime(), "deepseek": FakeRuntime(),
+         "deepseek-pro": FakeRuntime({("reviewer", 0): {"error": "The 'openai/x' model is not supported when using Codex with a ChatGPT account."}})}
+ctx, tmp = multi_ctx({35: T(35, "Clock 12/24h", "Change LSClock.cpp.")}, fakes)
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "pr" and out[0].agent == "claude" and out[0].reviewer not in ("", "deepseek-pro"), out[0]
+assert "can't run" in ctx.agents.paused["deepseek-pro"]["reason"], ctx.agents.paused
+assert "deepseek" not in ctx.agents.paused, "only the broken agent is paused, not its whole account"
+p = pool_with()
+assert p.reviewer_for("claude", besides={"deepseek-pro"}) not in (None, "deepseek-pro")
+assert p.reviewer_for("claude", besides={n for n in p.specs}) is None
+# every reviewer fails to run: blocked, saying no reviewer could run (not a bare "reviewer escalated:")
+err = {"error": "crashed"}
+fakes = {"claude": FakeRuntime({("reviewer", 0): err}), "deepseek": FakeRuntime({("reviewer", 0): err}),
+         "deepseek-pro": FakeRuntime({("reviewer", 0): err})}
+ctx, tmp = multi_ctx({36: T(36, "Clock 12/24h", "Change LSClock.cpp.")}, fakes)
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "blocked" and "no reviewer could run" in out[0].detail, out[0].detail
+# Codex takes bare model names: OpenCode's openai/ spelling is tidied, other provider/model names are refused
+assert _ag.codex_model("openai/gpt-6.1-terra") == "gpt-6.1-terra" and _ag.codex_model("gpt-6-astra") == "gpt-6-astra"
+assert _ag.specs_from([{"name": "t", "kind": "codex", "model": "openai/gpt-6.1-terra"}])[0].model == "gpt-6.1-terra"
+
 # one agent (no agents block): unchanged behaviour, the PR body says Claude
 ctx, tmp = ctx_with({34: T(34, "Solo")})
 fm, out = run_once(ctx, tmp)
