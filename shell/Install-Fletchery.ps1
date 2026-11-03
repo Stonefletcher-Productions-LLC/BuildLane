@@ -24,8 +24,9 @@ if (-not $Python) {
     }
 }
 if (-not $Python -or -not (Test-Path $Python)) { throw 'Python 3.10 or newer was not found. Install it from python.org (tick "Add to PATH"), then run this again, or pass -Python <path>.' }
-$Ver = & $Python -c 'import sys; print("%d.%d" % sys.version_info[:2])'
-if ([version]$Ver -lt [version]'3.10') { throw "Fletchery needs Python 3.10 or newer; $Python is $Ver." }
+# no double quotes inside: Windows PowerShell 5.1 drops them when it passes arguments to a native program
+$Ver = & $Python -c "import sys; print('{}.{}'.format(*sys.version_info[:2]))"
+if (-not $Ver -or [version]$Ver -lt [version]'3.10') { throw "Fletchery needs Python 3.10 or newer; $Python is $Ver." }
 & $Python -c 'import claude_agent_sdk' 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Installing the Claude Agent SDK for this user'
