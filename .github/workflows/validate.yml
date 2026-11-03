@@ -45,6 +45,9 @@ jobs:
       - name: Tall window and repeated handoff layout checks
         timeout-minutes: 4
         run: ./app/TestLaneLayout.ps1
+      - name: Advisory build choices and request correlation
+        timeout-minutes: 4
+        run: ./app/TestLanePlanning.ps1
       - name: GitHub pagination regression checks
         timeout-minutes: 4
         run: ./app/TestLaneGitHub.ps1

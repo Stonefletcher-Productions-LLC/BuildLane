@@ -14,6 +14,7 @@ function Test-LaneProfile($Value) {
     foreach ($Key in @('name','repo','branch','workflow','statusFile','pauseFile','runnerPath','drive','serviceFilter')) {
         if ([string]::IsNullOrWhiteSpace([string]$Value.$Key)) { throw "Enter a value for $Key." }
     }
+    if ($Value.planWorkflow -and [string]$Value.planWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Planning workflow must be a YAML filename, for example build-plan-shadow.yml.' }
     if ($Value.activeJobs) { [void]@(Get-LaneActivityTargets $Value.activeJobs) }
     if ($Value.integrationWorkflow -and [string]$Value.integrationWorkflow -notmatch '^[A-Za-z0-9_.-]+\.ya?ml$') { throw 'Integration controller must be a YAML filename.' }
     if ($Value.integrationWorkflow -and $Value.branch -ne 'main') { throw 'This integration controller uses trusted main; the PR integration branch is reported by the backend.' }
@@ -61,5 +62,5 @@ function ConvertTo-LaneRepository([string]$Text) {
 }
 function New-LaneProjectDefaults {
     $Folder=Join-Path $env:LOCALAPPDATA 'Buildlane\Runner'
-    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';activeJobs='';integrationWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
+    [pscustomobject]@{name='';repo='';branch='main';workflow='lane.yml';planWorkflow='';activeJobs='';integrationWorkflow='';statusFile=(Join-Path $Folder 'status.json');pauseFile=(Join-Path $Folder 'PAUSED');runnerPath=$Folder;drive=([IO.Path]::GetPathRoot($Folder)).Substring(0,1);serviceFilter='*your-project*';cachePort=0;minimumFreeGB=12;cleanBelowGB=25}
 }

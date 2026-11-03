@@ -59,7 +59,7 @@ $script:ActionWorker={
     $Result
 }
 function Start-LaneAction([ValidateSet('create','prepareQueue','queue','unqueue','close','connect')][string]$Operation,$Milestone,[Alias('Title')][string]$ReleaseTitle,[int[]]$Numbers=@(),[string]$Token,[scriptblock]$Worker,$Context) {
-    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob -or ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending) { return }
+    if ($script:ActionJob -or $script:MoveJob -or $script:CommandJob -or ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending -or $script:PlanJob) { return }
     if ($Operation -ne 'connect' -and -not (Test-LaneLegacyOperationsAllowed)) { throw 'Legacy release mutations are unavailable in the current integration mode. Use authoritative integration controls.' }
     if ($Config.setupRequired) { throw 'Save your project first.' }
     if (-not $Token) { $Token=$script:Token }

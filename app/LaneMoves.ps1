@@ -35,7 +35,7 @@ $script:MoveWorker={
     @{Succeeded=@($Succeeded);Failed=@($Failed);DispatchError=$DispatchError}
 }
 function Start-LaneMove([int[]]$Numbers,$Milestone,[string]$Target,[scriptblock]$Worker) {
-    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending) { return }
+    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or ($script:IntegrationJob -and $script:IntegrationJob.Kind -eq 'request') -or $script:IntegrationPending -or $script:PlanJob) { return }
     if (-not (Test-LaneLegacyOperationsAllowed)) { throw 'Legacy PR moves are unavailable until integration state is verified.' }
     if (-not $Numbers.Count) { throw 'Tick the PRs to move first.' }
     if ($Config.setupRequired) { throw 'Save your project first.' }

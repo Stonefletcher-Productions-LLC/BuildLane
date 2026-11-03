@@ -3,6 +3,7 @@
   "repo": "example/project",
   "branch": "main",
   "workflow": "lane.yml",
+  "planWorkflow": "",
   "integrationWorkflow": "",
   "activeJobs": "",
   "statusFile": "%LOCALAPPDATA%\\Buildlane\\Runner\\status.json",

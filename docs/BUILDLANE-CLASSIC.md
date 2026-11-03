@@ -109,6 +109,7 @@ reported yet* — that is a path problem, not a crash.
 | **Overview** | The live picture: the build, its step, both progress bars, the steps so far, and the queue. Buttons open the live log, the status page, and the step log. Drag the marked dividers to resize the queue, step log and release lists; their sizes are remembered. |
 | **Releases** | In staging mode, enter a version, refresh eligibility, then queue full tests and a package of the frozen staging revision. In validation-first mode, manage milestone releases and their pull requests. |
 | **Integration** | Read the confirmed server mode, change it when eligible, or request a staging checkpoint. A checkpoint is separate from a packaged release. |
+| **Build choices** | Preview Auto/Focused/Full test scope and compilation choices for fixed source/base commits. Previews are advisory and never start a build. |
 | **Timing history** | Job and step times for reported runs, with source commit, attempt and result. Failed and cancelled attempts stay visible. |
 | **System** | Runner health: free disk, cache size, the services the lane needs. Read-only. |
 | **Projects** | The project editor: add, edit, import and export profiles, and switch which project is on screen. |
@@ -159,6 +160,22 @@ Queue length stays unknown until the current run reports it; a previous run's ze
 follow the displayed run and attempt. API errors or old observations are labeled unconfirmed, and newer runner
 reports take precedence over older GitHub evidence. Old profiles without the optional setting retain local reporting.
 
+**Build choices** is available when Projects > Advanced settings has a planning workflow configured. Enter a PR
+number, commit or branch and the comparison revision, choose a context, test scope and compilation mode, then
+press **Preview plan**. The app resolves both revisions to immutable commits before sending. Release and nightly
+contexts force the full suite; no-compilation runtime validation is refused until verified binary receipts exist.
+Focused checks are diagnostic and cannot certify a merge or release.
+
+Requests run in the background and carry a unique ID. The app matches that ID, source/base, branch and workflow,
+shows the run and attempt separately, and keeps earlier failed attempts visible. **Open preview attempt** opens
+the observed attempt; before a match is found, **Open preview runs** opens the workflow list. An uncertain POST
+is never resent automatically. Workflow success means an advisory plan was produced, not that compilation,
+tests or packaging passed. Plan artifacts are untrusted advice and are never automatically executed.
+
+Old profiles keep previews disabled. The LifeShare example opts into `build-plan-shadow.yml`; merge the compatible
+backend (LifeShare PR #494, including `request_id` support) before enabling that setting in an existing profile.
+Reduced-test execution is a separate, release-owner-reviewed backend change. Existing release validation stays full.
+
 ## Where your settings live
 
 | What | Where |
@@ -198,6 +215,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneFeedb
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActions.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneHistory.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneActivity.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLanePlanning.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneResources.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\app\TestLaneProcesses.ps1
 ```

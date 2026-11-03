@@ -22,7 +22,7 @@ function Stop-LaneRefresh {
     }
 }
 function Start-LaneRefresh([string]$Kind = 'releases', [scriptblock]$Worker) {
-    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:ActivityJob -or $script:IntegrationJob) { return }
+    if ($script:MoveJob -or $script:CommandJob -or $script:ActionJob -or $script:ActivityJob -or $script:IntegrationJob -or $script:PlanJob) { return }
     if ($Config.setupRequired -and -not $Worker) { return }
     if ($script:RefreshJob -or ($SmokeTest -and -not $Worker)) { return }
     if ($Kind -notin @('controller','history','pulls') -and [datetime]::UtcNow -lt $script:NextRefresh) {
