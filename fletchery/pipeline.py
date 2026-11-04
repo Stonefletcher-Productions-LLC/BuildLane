@@ -320,10 +320,16 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
     pool = ctx.agents
     if pool is None:
         return None
+    from agents import classify
+    import scores
+    level, _ = classify(task.title, task.body, task.labels, pool.routing.get("hardPatterns"),
+                        pool.routing.get("easyPatterns"), len(task.depends_on), pool.routing.get("hardScore"))
+    skill, _ = scores.classify_skill(task.title, task.body, task.labels, pool.routing.get("defaultSkill", "cpp"))
     agent = ctx.task_agents.get(str(task.number))
     if agent and attempt >= 2:
-        agent = pool.escalate(agent, "fixer") or agent
-    if agent and pool.available(agent, "fixer"):
+        agent = pool.escalate(agent, "fixer", skill, level) or agent
+    if (agent and pool.available(agent, "fixer")
+            and (pool.specs[agent].levels is None or level in pool.specs[agent].levels)):
         return agent
     c = pool.choose(task.title, task.body, task.labels, len(task.depends_on), _stats(ctx), role="fixer")
     return c.agent if c else None
@@ -369,7 +375,7 @@ def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, w
     if agent:
         out.attempts.append({"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
                              "why": first_line[:200]})
-    nxt = pool.escalate(agent, "worker", out.skill) if pool is not None and pool.multi and ctx.escalate and agent else None
+    nxt = pool.escalate(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
     if not nxt:
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:

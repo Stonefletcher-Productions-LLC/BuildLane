@@ -1413,6 +1413,43 @@ _policy.set_enabled("native", False)
 assert _policy.choose("Hard", "", ["difficulty:hard"]) is None
 assert _policy.choose("Docs", "", ["difficulty:easy"]).agent == "flash"
 
+# Escalation must preserve the same level/provider policy as initial routing.
+_escalation_specs = [
+    {"name": "native-low", "kind": "codex", "vendor": "openai", "tier": 1, "scores": {"cpp": 50, "scripts": 50, "cost": 100}},
+    {"name": "native-high", "kind": "claude", "vendor": "anthropic", "tier": 3, "scores": {"cpp": 70, "scripts": 70, "cost": 20}},
+    {"name": "flash", "kind": "opencode", "vendor": "deepseek", "tier": 4, "levels": ["easy"], "roles": ["worker", "fixer"], "scores": {"cpp": 90, "scripts": 90, "cost": 100}},
+    {"name": "other", "kind": "opencode", "vendor": "other", "tier": 2, "scores": {"cpp": 60, "scripts": 60, "cost": 90}},
+]
+_escalation_routing = {"preferredKindsByLevel": {"medium": ["codex", "claude"], "hard": ["codex", "claude"]}}
+_escalation = pool_with(agents=_escalation_specs, routing=_escalation_routing)
+assert _escalation.escalate("native-low", "worker", "cpp", "medium") == "native-high"
+assert _escalation.escalate("native-high", "worker", "cpp", "medium") is None, "easy-only Flash cannot take a medium escalation"
+assert _escalation.escalate("native-high", "worker", "cpp", "hard") is None
+assert _escalation.escalate("native-high", "worker", "cpp", "easy") == "flash", "Flash remains available for easy work"
+assert _escalation.escalate("native-high", "worker", "cpp") is None, "unknown difficulty cannot bypass an easy-only limit"
+_escalation_lists = pool_with(agents=_escalation_specs, routing={**_escalation_routing, "mode": "lists"})
+assert _escalation_lists.escalate("native-low", "worker", level="medium") == "native-high"
+assert _escalation_lists.escalate("native-high", "worker", level="medium") is None
+assert _escalation_lists.escalate("native-high", "worker", level="easy") == "flash"
+
+# A real failed worker carries its classified difficulty into the escalation call.
+_escalation_fakes = {"native-low": FakeRuntime({("worker", 0): {"gave_up": "needs a stronger implementation", "summary": "", "files": [], "build_steps": [], "checks": [], "unverified": []}})}
+_escalation = pool_with(_escalation_fakes, agents=_escalation_specs, routing=_escalation_routing)
+_escalation_task = T(997, "Clock change", "LSClock.cpp")
+_escalation_task.labels += ["difficulty:medium", "agent:native-low"]
+ctx, tmp = ctx_with({997: _escalation_task})
+ctx.agents = _escalation
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "pr" and out[0].agent == "native-high", out
+assert "flash" not in _escalation_fakes, "no medium worker or reviewer session may be sent to easy-only Flash"
+
+# Fixers classify the task too; neither original assignment nor attempt-two escalation can bypass limits.
+from pipeline import fixer_agent as _fixer_agent
+ctx.task_agents[str(_escalation_task.number)] = "native-low"
+assert _fixer_agent(ctx, _escalation_task, 2) == "native-high"
+ctx.task_agents[str(_escalation_task.number)] = "flash"
+assert _fixer_agent(ctx, _escalation_task, 1) != "flash"
+
 # A large PR backlog cannot monopolize dispatch ahead of a ready writer; polling rotates.
 _backlog_tasks = {n: Task(n, f"Existing {n}", labels=["foreman", "foreman:pr"]) for n in range(1, 11)}
 _backlog_tasks[99] = Task(99, "Ready writer", labels=["foreman", "foreman:queued"])

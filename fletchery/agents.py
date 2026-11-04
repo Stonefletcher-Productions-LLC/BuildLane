@@ -483,21 +483,28 @@ class AgentPool:
                 return Choice(n, level, "; ".join(bits), skill)
         return None
 
-    def escalate(self, name: str, role: str = "worker", skill: str = "") -> str | None:
-        """The next stronger available agent, or None when `name` is already the strongest there is. With scores: the
-        smallest step up in the task's kind of work."""
+    def escalate(self, name: str, role: str = "worker", skill: str = "", level: str = "") -> str | None:
+        """Choose a stronger agent without bypassing task-level, role or provider policy.
+        With no known difficulty, agents restricted to explicit levels are ineligible."""
+        def eligible(n: str) -> bool:
+            return (n != name and self.available(n, role)
+                    and (self.specs[n].levels is None or level in self.specs[n].levels))
+
+        def preferred(names: list[str]) -> list[str]:
+            kinds = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+            native = [n for n in names if self.specs[n].kind in kinds]
+            return native or names
+
         if self.mode == "scores":
             sc = self.scored()
             val = (lambda n: sc[n]["skills"][skill]["score"]) if skill in ("cpp", "scripts", "ui", "docs") else \
                   (lambda n: sc[n]["overall"])
             cur = val(name) if name in self.specs else -1
-            up = [n for n in self.specs if n != name and val(n) > cur and self.available(n, role)]
+            up = preferred([n for n in self.specs if val(n) > cur and eligible(n)])
             return min(up, key=val) if up else None
         cur = self.specs[name].tier if name in self.specs else 0
-        for s in self.ordered():
-            if s.tier > cur and self.available(s.name, role):
-                return s.name
-        return None
+        up = preferred([s.name for s in self.ordered() if s.tier > cur and eligible(s.name)])
+        return up[0] if up else None
 
     def reviewer_for(self, worker: str, besides: set[str] | frozenset = frozenset()) -> str | None:
         """A reviewer from another vendor than the worker, so nobody marks their own homework. Preference: the
