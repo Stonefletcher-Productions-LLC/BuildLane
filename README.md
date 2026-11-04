@@ -193,6 +193,7 @@ Each project can tell its workers how it likes things done, in a `.fletchery/` f
 | `conventions.md` | Read by every worker, reviewer and fixer: naming, style, what not to touch |
 | `gates.json` | The quick checks Fletchery runs on every change, chosen by which files changed |
 | `worker.md`, `reviewer.md`, `fixer.md` | Extra notes for that role |
+| `merger.md` | How a merge round builds, imports and tests (see Merge rounds below) |
 
 [Writing project rules](docs/WORKERS.md) has examples. With no rules, workers follow the code around them, and the
 reviewer and your Build Lane still check the result.
@@ -207,6 +208,18 @@ workers are marked.
 
 Releases, the integration mode, timing history and merge controls are still in the classic BuildLane app for now
 ([its guide](docs/BUILDLANE-CLASSIC.md)); they are moving into Fletchery next.
+
+## Merge rounds
+
+Turn on **Settings > Merging > Merge rounds** and Fletchery keeps merging by itself. Whenever pull requests labelled
+`ready` wait on the base branch and no round is running, it starts one: an agent in its own worktree merges them
+together, builds and tests them the way `.fletchery/merger.md` says (or the file in **Round instructions file**), leaves
+out any PR it can't make pass with a comment saying why, and lands the rest through one "Merge round N" PR that it merges
+itself. Nobody is asked for approval: turning rounds on is the approval. Workers at 0 don't stop rounds.
+
+The Merge section shows the round's steps, the last result, and **Pause merging** / **Merge now**. A round that landed
+nothing waits **Retry a failed round after** minutes before trying the same PRs again, unless one of them changes.
+`examples/LifeShare.merger.md` is a full example of round instructions.
 
 ## Safe by design
 

@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 from runtime import SCHEMAS, RunResult, Runtime, is_limit, is_signed_out, parse_output
 
-DEFAULT_TIMEOUT_MIN = {"worker": 60, "fixer": 45, "reviewer": 20, "planner": 20}
+DEFAULT_TIMEOUT_MIN = {"worker": 60, "fixer": 45, "reviewer": 20, "planner": 20, "merger": 720}
 READ_ONLY = ("reviewer", "planner")
 GIT_NOTE = ("\n\n(If `git add` or `git commit` is refused by your sandbox, leave the changes in the working tree: "
             "Fletchery commits them after you finish. Do not try to work around the sandbox.)")

@@ -519,6 +519,17 @@ class AgentPool:
                 return n
         return worker if ok(worker) else None
 
+    def merger(self, prefer: str = "") -> str | None:
+        """Who runs a merge round: `prefer` when it is on and free, else the available agent with the best C++ score
+        that can run commands and reach GitHub (Claude first, then OpenCode; Codex's sandbox has no network)."""
+        if prefer and prefer in self.specs and self.available(prefer, "merger"):
+            return prefer
+        sc = self.scored()
+        ok = [s for s in self.specs.values() if s.kind in ("claude", "opencode", "fake") and self.available(s.name, "merger")]
+        if not ok:
+            return None
+        return max(ok, key=lambda s: (s.kind == "claude", sc[s.name]["skills"]["cpp"]["score"])).name
+
     def view(self, stats: Stats | None = None) -> list[dict]:
         """For the dashboard and the status issue."""
         rows = []

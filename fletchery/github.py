@@ -166,6 +166,18 @@ class GitHub:
                                    labels, p.get("body") or "", p.get("mergeable")))
         return out
 
+    def labelled_prs(self, label: str, base: str) -> list[PullRequest]:
+        """Every open PR into `base` with `label`, whoever opened it (merge rounds take threads' PRs too)."""
+        items = self.api(f"repos/{self.repo}/pulls?state=open&base={base}&per_page=100", paginate=True) or []
+        out = []
+        for p in items:
+            labels = [l["name"] for l in p["labels"]]
+            if label.lower() not in [l.lower() for l in labels] or p.get("draft"):
+                continue
+            out.append(PullRequest(p["number"], p["title"], p["head"]["ref"], p["base"]["ref"], p["head"]["sha"],
+                                   labels, p.get("body") or "", p.get("mergeable")))
+        return out
+
     def pr_files(self, number: int) -> list[str]:
         items = self.api(f"repos/{self.repo}/pulls/{number}/files?per_page=100", paginate=True) or []
         return [f["filename"] for f in items]
@@ -296,6 +308,9 @@ class FakeGitHub:
 
     def open_prs(self):
         return list(self.prs)
+
+    def labelled_prs(self, label, base):
+        return [p for p in self.prs if p.base == base and label.lower() in [l.lower() for l in p.labels]]
 
     def pr_files(self, number):
         return list(getattr(self, "files", {}).get(number, []))

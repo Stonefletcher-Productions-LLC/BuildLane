@@ -1210,4 +1210,84 @@ assert fm.restart_reason.startswith("switching to the project")
 fm.restart_reason = ""
 del _os.environ["FLETCHERY_HOME"]
 
+
+# ---- merge rounds (rounds.py): Fletchery keeps ready PRs merging by itself ----
+import rounds as _rounds  # noqa: E402
+from github import PullRequest as _PR  # noqa: E402
+_cfg = Config(max_parallel=0, daily_budget_usd=60, base_branch="Test-Staging", merge_rounds=True, merge_round_max=2)
+ctx, tmp = ctx_with({}, cfg=_cfg)
+ctx.gh.prs = [_PR(12, "Pets", "b12", "Test-Staging", "a" * 40, ["ready", "foreman"]),
+              _PR(11, "Town", "b11", "Test-Staging", "b" * 40, ["ready"]),
+              _PR(13, "Not ready", "b13", "Test-Staging", "c" * 40, ["foreman"]),
+              _PR(14, "Main pin", "b14", "main", "d" * 40, ["ready"]),
+              _PR(15, "Third", "b15", "Test-Staging", "e" * 40, ["ready"])]
+_ans = {"state": "landed", "landed_pr": 77, "merged": [11, 12], "left_out": [], "summary": "Merged 11 and 12; built; tests passed."}
+ctx.runtime.script[("merger", 0)] = _ans
+fm, _ = run_once(ctx, tmp)  # workers at 0: no new code, but merging goes on
+calls = [c for c in ctx.runtime.calls if c[0] == "merger"]
+assert len(calls) == 1, ctx.runtime.calls
+assert "#11 Town" in calls[0][2] and "#12 Pets" in calls[0][2] and "#15" not in calls[0][2], "oldest first, at most 2"
+assert "#13" not in calls[0][2] and "#14" not in calls[0][2], "only `ready` PRs into the base"
+assert "never stop to ask for approval" in calls[0][2]
+assert fm.state.merge_last["result"] == "landed" and fm.state.merge_last["pr"] == 77 and fm.state.merge_round_no == 1
+rf = _rounds.read_file(str(tmp / "state" / "merge-round.json"))
+assert rf["state"] == "done" and rf["prs"] == [11, 12] and "Landed as #77" in rf["note"], rf
+assert not any(c[0] == "worker" for c in ctx.runtime.calls)
+# a round that landed nothing waits before trying the same PRs again; a changed PR or Merge now retries at once
+ctx.runtime.script[("merger", 0)] = {"state": "failed", "landed_pr": 0, "merged": [], "left_out": [{"pr": 11, "why": "compile"}],
+                                     "summary": "Build failed."}
+ctx.runtime.calls.clear()
+asyncio.run(fm.once())
+assert fm.state.merge_last["result"] == "failed" and fm.state.merge_round_no == 2
+ctx.runtime.calls.clear()
+asyncio.run(fm.once())
+assert not [c for c in ctx.runtime.calls if c[0] == "merger"], "same PRs, inside the retry wait: no new round"
+assert "tried again" in fm.merge_why, fm.merge_why
+ctx.gh.prs[0] = _PR(12, "Pets", "b12", "Test-Staging", "f" * 40, ["ready"])  # a fixer pushed a new head
+asyncio.run(fm.once())
+assert [c for c in ctx.runtime.calls if c[0] == "merger"], "a new head is tried at once"
+ctx.runtime.calls.clear()
+fm.merge_now()
+asyncio.run(fm.once())
+assert [c for c in ctx.runtime.calls if c[0] == "merger"], "Merge now retries without waiting"
+# paused merging, or rounds off: nothing starts
+ctx.runtime.calls.clear()
+fm.hold_merging(True)
+asyncio.run(fm.once())
+assert not [c for c in ctx.runtime.calls if c[0] == "merger"] and fm.merge_why == "merging is paused"
+fm.hold_merging(False)
+_cfg.merge_rounds = False
+asyncio.run(fm.once())
+assert not [c for c in ctx.runtime.calls if c[0] == "merger"]
+_cfg.merge_rounds = True
+# the snapshot carries what the Merge section shows
+assert "merge_auto" in fm.snapshot and fm.snapshot["merge_auto"]["last"]["round"] >= 2
+ok, why = _rounds.should_start(_cfg, {}, False, True, False, ctx.gh.prs)
+assert not ok and "restarting" in why
+# the project's own notes reach the prompt: .fletchery/merger.md, else the mergeNotes file
+_notes = tmp / "merger-notes.md"
+_notes.write_text("Run Tools/Build.ps1, then strict NavCheck.", encoding="utf-8")
+_cfg.merge_notes = str(_notes)
+assert "strict NavCheck" in _rounds.notes_text(None, _cfg)
+
+
+# the round's worktree is made once and reset to origin/<base> for every round (build output stays)
+import subprocess as _sp  # noqa: E402
+from repo import Repo as _Repo  # noqa: E402
+_d = Path(tempfile.mkdtemp())
+_g = lambda *a, cwd=None: _sp.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout  # noqa: E731
+_g("init", "-q", "--bare", "-b", "Test-Staging", str(_d / "origin.git"))
+_g("clone", "-q", str(_d / "origin.git"), str(_d / "host"))
+for _k, _v in (("user.email", "t@t"), ("user.name", "t")):
+    _g("config", _k, _v, cwd=_d / "host")
+(_d / "host" / "a.txt").write_text("1", encoding="utf-8")
+_g("add", ".", cwd=_d / "host"); _g("commit", "-qm", "one", cwd=_d / "host"); _g("push", "-q", "origin", "HEAD:Test-Staging", cwd=_d / "host")
+_r = _Repo(_d / "host", _d / "wt", "Test-Staging")
+_w = _rounds.prepare_worktree(_r, "fletchery/merge-round-1")
+assert (_w / "a.txt").exists() and _g("branch", "--show-current", cwd=_w).strip() == "fletchery/merge-round-1"
+(_w / "a.txt").write_text("half-merged", encoding="utf-8"); (_w / "stray.txt").write_text("x", encoding="utf-8")
+_w2 = _rounds.prepare_worktree(_r, "fletchery/merge-round-2")
+assert _w2 == _w and (_w / "a.txt").read_text(encoding="utf-8") == "1" and not (_w / "stray.txt").exists()
+assert _g("branch", "--show-current", cwd=_w).strip() == "fletchery/merge-round-2"
+
 print("RESULT: PASS (Fletchery engine checks)")
