@@ -128,8 +128,9 @@ The same rules apply to every agent:
 | Role | Claude | Codex | OpenCode |
 |---|---|---|---|
 | worker, fixer | edit, git, node, python, read tools; no web | `--sandbox workspace-write` (no network) | edit and bash allowed; web fetch and search denied; nothing outside the worktree |
+| merger | commands, edit and GitHub access for the configured round | `--sandbox danger-full-access`, approval policy `never` | commands/edit and external directories allowed for builds, shared inputs and progress; web fetch/search denied |
 | reviewer, planner | read only (git diff/log/show, grep) | `--sandbox read-only` | edit denied; bash only for git diff/log/show/status, cat, grep, rg, ls |
 
-Codex's sandbox doesn't let it write the repository's `.git` folder, so it can't commit. Fletchery commits whatever it
-leaves in the worktree, which is the same safety net Claude workers have always had. Codex also reads your own
+Codex workers' sandbox doesn't let them write the repository's `.git` folder, so they can't commit. Fletchery commits whatever they
+leave in the worktree, which is the same safety net Claude workers have always had. Codex also reads your own
 `~/.codex` settings and skills.

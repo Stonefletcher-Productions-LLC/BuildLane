@@ -72,6 +72,11 @@ class Dashboard:
                     "spent_today": 0, "held": fm.state.held, "last_pass": "", "poll_minutes": fm.cfg.poll_minutes,
                     "usage_week": fm.usage_week()}
         snap["held"] = fm.state.held
+        # Merge controls must reflect a click immediately, even during a slow GitHub poll.
+        snap["merge_auto"] = {**snap.get("merge_auto", {}), "on": bool(fm.cfg.merge_rounds),
+                              "held": fm.state.merge_held, "running": dict(fm.round_info),
+                              "last": dict(fm.state.merge_last),
+                              "why": "merging is paused" if fm.state.merge_held else fm.merge_why}
         snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
         snap["setup_needed"] = not fm.cfg.repo
@@ -162,8 +167,8 @@ class Dashboard:
             v = int(data.get("max_parallel"))
         except (TypeError, ValueError):
             raise ValueError("The number of workers is a whole number.")
-        if not 0 <= v <= 6:
-            raise ValueError("Workers go from 0 (write no new code; merging and builds carry on) to 6. On a plan, more "
+        if not 0 <= v <= 10:
+            raise ValueError("Workers go from 0 (write no new code; merging and builds carry on) to 10. On a plan, more "
                              "workers use its limits faster.")
         self.fm.cfg.save(max_parallel=v)
         if self.fm.snapshot:

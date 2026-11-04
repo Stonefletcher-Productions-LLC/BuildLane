@@ -38,7 +38,8 @@ def project_with_rules() -> Path:
 
 
 def ctx_with(tasks, script=None, closed=(), gates_fn=PASS, cfg=None, changed=None):
-    cfg = cfg or Config(max_parallel=4, daily_budget_usd=60, base_branch="Test-Staging")
+    cfg = cfg or Config(max_parallel=4, daily_budget_usd=60, base_branch="Test-Staging", auto_prerequisites=False)
+    cfg.auto_prerequisites = False  # Legacy pipeline fixtures; automatic planning has separate cases below.
     if not cfg.project_root:
         cfg.project_root = str(project_with_rules())
     gh = FakeGitHub(tasks, set(closed))
@@ -634,9 +635,9 @@ try:
     assert call("/api/workers", "POST", {"max_parallel": 3}, token=dash.token)[0] == 200
     assert fm.cfg.max_parallel == 3 and _json.loads(cf2.read_text())["workers"]["maxParallel"] == 3, "saved in the profile's workers block"
     assert _json.loads(call("/api/status")[1])["max_parallel"] == 3
-    assert call("/api/workers", "POST", {"max_parallel": 7}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 10}, token=dash.token)[0] == 200
     assert call("/api/workers", "POST", {"max_parallel": -1}, token=dash.token)[0] == 400
-    assert call("/api/workers", "POST", {"max_parallel": 7}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 11}, token=dash.token)[0] == 400
     assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
 finally:
     dash.stop()
@@ -1173,7 +1174,7 @@ saved = _json_mod.loads(prof.read_text())
 assert saved["workers"]["maxParallel"] == 0 and saved["repo"] == "acme/desk" and saved["workers"]["codeFreeze"] is True
 assert "GitHub repository" in r["restart"] and "Workers at once" not in r["restart"]
 assert saved["workers"]["reviewerMaxTurns"] == 50, "keys the page doesn't show are kept"
-for bad in ({"max_parallel": 9}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
+for bad in ({"max_parallel": 11}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
     try:
         _pj.apply_settings(cfg_s, bad)
         raise AssertionError(f"bad setting accepted: {bad}")

@@ -950,7 +950,7 @@ function renderWorkers(d) {
   $("wVal").textContent = d.max_parallel;
   $("wDown").disabled = d.max_parallel <= 0;
   $("wDown").title = d.max_parallel === 1 ? "0 workers: write no new code; merging and builds carry on" : "";
-  $("wUp").disabled = d.max_parallel >= 6;
+  $("wUp").disabled = d.max_parallel >= 10;
 }
 async function setWorkers(v) {
   try { await post("/api/workers", {max_parallel: v}); await refresh(); } catch (e) { alert(e.message); }

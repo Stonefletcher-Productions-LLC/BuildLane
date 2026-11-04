@@ -76,6 +76,13 @@ Extra notes added to that role's instructions, after the conventions:
 
 ## Writing good tasks
 
+Actionable blockers are planned automatically by default: the harness creates at most three independent same-project
+prerequisites, or links existing tasks, then adds `Depends on:` to the original issue and queues it to wait. The planner
+is read-only; GitHub changes are made by the harness. It preserves task bodies, checks dependency cycles and uses durable
+plan/issue markers to resume partial operations after failures. Generated prerequisites do not expand recursively.
+Missing decisions, credentials, source inputs and inaccessible capabilities remain in Needs you. Human explanations are
+cached until the task or a person's comments change. Disable this with `workers.autoPrerequisites: false`.
+
 Rules say how; the issue says what. A task a worker finishes on its own usually has:
 
 - **What to change**, in a sentence or two.

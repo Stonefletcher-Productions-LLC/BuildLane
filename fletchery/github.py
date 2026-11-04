@@ -123,6 +123,14 @@ class GitHub:
     def close_issue(self, number: int) -> None:
         self.api(f"repos/{self.repo}/issues/{number}", "PATCH", {"state": "closed", "state_reason": "completed"})
 
+    def edit_body(self, number: int, body: str) -> None:
+        self.api(f"repos/{self.repo}/issues/{number}", "PATCH", {"body": body})
+
+    def marked_issues(self, marker: str) -> list[dict]:
+        # Include closed issues: a crash after creation must not recreate a completed prerequisite.
+        items = self.api(f"repos/{self.repo}/issues?state=all&labels={graph.PREFIX}&per_page=100", paginate=True) or []
+        return [i for i in items if not i.get("pull_request") and marker in (i.get("body") or "")]
+
     def merged_pr(self, branch: str) -> tuple[int, str, str] | None:
         """(number, base, merged_at) of the merged PR from `branch`, or None. A merge into a branch other than the
         default one (LifeShare's Test-Staging) does not close the issue its "Closes #n" names."""
@@ -298,6 +306,13 @@ class FakeGitHub:
         self.tasks[n] = Task(n, title, body, list(labels), False, _now())
         self.writes.append(f"issue #{n} {title}")
         return n
+
+    def edit_body(self, number, body):
+        self.tasks[number].body = body
+        self.writes.append(f"body #{number}")
+
+    def marked_issues(self, marker):
+        return [{"number": t.number, "body": t.body} for t in self.tasks.values() if marker in t.body]
 
     def status_issue(self):
         return 1

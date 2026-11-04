@@ -8,7 +8,8 @@ Cost is reported when the CLI reports it (OpenCode does, Codex on a ChatGPT plan
 What each role may do, as with Claude (runtime.TOOLS):
 - worker, fixer: edit files in the worktree and run commands; no web.
 - reviewer, planner: read only.
-Codex enforces it with its sandbox (workspace-write / read-only; no network in either). OpenCode with its permission
+Codex workers use workspace-write and reviewers/planners read-only. Merger sessions use danger-full-access with
+approval_policy=never for native builds, shared inputs and GitHub. OpenCode uses a role-specific permission
 config, passed in OPENCODE_CONFIG_CONTENT. Neither may write the repository's .git from inside the sandbox on every
 platform, so the role prompts say a failed `git commit` is fine: Fletchery commits what is left (pipeline.py).
 """
@@ -157,7 +158,7 @@ class CliRuntime(Runtime):
         result = RunResult(role, False)
         workdir = Path(tempfile.mkdtemp(prefix=f"fletchery-{self.kind}-"))
         prompt_file = workdir / "prompt.md"
-        prompt_file.write_text(prompt + ("" if role in READ_ONLY else GIT_NOTE), encoding="utf-8")
+        prompt_file.write_text(prompt + (GIT_NOTE if role in ("worker", "fixer") else ""), encoding="utf-8")
         argv, stdin_text, extra_env = self.command(role, prompt_file, Path(cwd), workdir)
         minutes = (self.spec.timeout_minutes or {}).get(role) or DEFAULT_TIMEOUT_MIN.get(role, 30)
         import keys
@@ -258,7 +259,9 @@ class CodexRuntime(CliRuntime):
         schema.write_text(json.dumps(strict_schema(SCHEMAS[role])), encoding="utf-8")
         argv = [find_codex(self.spec.command), "exec", "--json", "--skip-git-repo-check",
                 "--output-schema", str(schema), "-o", str(workdir / "last.txt"), "-C", str(cwd),
-                "-s", "read-only" if role in READ_ONLY else "workspace-write"]
+                "-s", "danger-full-access" if role == "merger" else "read-only" if role in READ_ONLY else "workspace-write"]
+        if role == "merger":
+            argv += ["-c", 'approval_policy="never"']
         if self.spec.model:
             argv += ["-m", self.spec.model]
         argv.append("-")  # the prompt comes on stdin: a long prompt does not fit a Windows command line
@@ -299,6 +302,7 @@ class CodexRuntime(CliRuntime):
 
 # OpenCode permissions per role. Everything not named keeps OpenCode's default (read, grep, glob, list: allowed).
 OPENCODE_PERMISSIONS = {
+    "merge": {"edit": "allow", "bash": "allow", "webfetch": "deny", "websearch": "deny", "external_directory": "allow"},
     "write": {"edit": "allow", "bash": "allow", "webfetch": "deny", "websearch": "deny", "external_directory": "deny"},
     "read": {"edit": "deny", "webfetch": "deny", "websearch": "deny", "external_directory": "deny",
              "bash": {"*": "deny", "git diff*": "allow", "git log*": "allow", "git show*": "allow",
@@ -316,7 +320,7 @@ class OpenCodeRuntime(CliRuntime):
     kind = "opencode"
 
     def command(self, role, prompt_file, cwd, workdir):
-        perms = OPENCODE_PERMISSIONS["read" if role in READ_ONLY else "write"]
+        perms = OPENCODE_PERMISSIONS["merge" if role == "merger" else "read" if role in READ_ONLY else "write"]
         config = {"$schema": "https://opencode.ai/config.json", "permission": perms, "share": "disabled",
                   "autoupdate": False}
         # --standalone: a private server, never the OpenCode app's background service. On the service a session
