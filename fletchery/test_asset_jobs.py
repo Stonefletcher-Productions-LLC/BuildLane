@@ -36,6 +36,9 @@ class AssetJobs(unittest.TestCase):
     self.assertEqual(args[args.index('-s')+1],want)
    args,_,_=rt.command('worker',prompt,self.worktrees/'992-hair',self.root)
    self.assertEqual(args[args.index('-s')+1],'workspace-write')
+   rt.asset_tasks={'991':{'paths':['Art/Hair/'],'mode':'delete'}}
+   args,_,_=rt.command('worker',prompt,self.wt,self.root)
+   self.assertEqual(args[args.index('-s')+1],'workspace-write')
  def test_opencode_allows_installed_mcp_only_for_authorized_write_jobs(self):
   rt=OpenCodeRuntime(AgentSpec('deepseek',kind='opencode'));rt.asset_tasks=self.grants;rt.worktree_root=self.worktrees
   prompt=self.root/'prompt.md';prompt.write_text('task')

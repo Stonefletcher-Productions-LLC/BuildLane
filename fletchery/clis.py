@@ -261,7 +261,8 @@ class CodexRuntime(CliRuntime):
         schema = workdir / "schema.json"
         schema.write_text(json.dumps(strict_schema(SCHEMAS[role])), encoding="utf-8")
         from asset_jobs import grant_for
-        asset = role in ("worker","fixer") and bool(grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd))
+        grant = grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd)
+        asset = role in ("worker","fixer") and bool(grant and grant.get("mode","author")=="author")
         argv = [find_codex(self.spec.command), "exec", "--json", "--skip-git-repo-check",
                 "--output-schema", str(schema), "-o", str(workdir / "last.txt"), "-C", str(cwd),
                 "-s", "danger-full-access" if role == "merger" or asset else "read-only" if role in READ_ONLY else "workspace-write"]
@@ -327,7 +328,8 @@ class OpenCodeRuntime(CliRuntime):
     def command(self, role, prompt_file, cwd, workdir):
         perms = OPENCODE_PERMISSIONS["merge" if role == "merger" else "read" if role in READ_ONLY else "write"]
         from asset_jobs import grant_for
-        if role in ("worker","fixer") and grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd):
+        grant=grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd)
+        if role in ("worker","fixer") and grant and grant.get("mode","author")=="author":
             perms=copy.deepcopy(perms)
             perms["external_directory"]="allow"
         config = {"$schema": "https://opencode.ai/config.json", "permission": perms, "share": "disabled",
