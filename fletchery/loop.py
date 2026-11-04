@@ -339,6 +339,7 @@ class Engine:
         self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
 
     async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str) -> dict:
+        import clis
         import rounds
         import rules as rules_mod
         from pipeline import _LimitGuard, Limited
@@ -377,6 +378,12 @@ class Engine:
             res["summary"] = (out.get("summary") or out.get("gave_up") or r.error or "")[:600]
             res["merged"] = [int(x) for x in out.get("merged") or [] if str(x).isdigit()]
             res["left_out"] = out.get("left_out") or []
+            if not r.ok and clis.unreachable(r.error or "") and pool is not None and agent:
+                # the model itself can't be reached: not this round's fault. Take the agent out until its next
+                # sign-in check and run the round again on the next agent, without waiting out mergeRetryMinutes.
+                res["result"] = "unreachable"
+                pool.pause(agent, 360, f"model unreachable: {(r.error or '')[:160]}", shared=False)
+                pool.accounts.setdefault(agent, {})["ok"] = False
         except Limited as e:
             res["result"], res["summary"] = "limited", f"{agent} hit a limit: {e}"
             if pool is not None and agent:
@@ -387,6 +394,9 @@ class Engine:
             if pool is not None and agent:
                 pool.release(agent)
         rounds.finish_file(round_file, res["result"], (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
+        if res["result"] == "unreachable":
+            res["key"] = ""  # try the same PRs again at once on another agent
+            self.wake()
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
