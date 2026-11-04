@@ -72,6 +72,11 @@ class Task:
 
     @property
     def branch(self) -> str:
+        # Harness-created repair issues target the existing PR branch, not a replacement feature branch.
+        repair = re.search(r"^Repair branch:\s*([A-Za-z0-9_][A-Za-z0-9_./-]*)\s*$", self.body or "", re.MULTILINE)
+        existing = re.search(r"^Existing PR:\s*#(\d+)\s*$", self.body or "", re.MULTILINE)
+        if repair and existing and f"<!-- fletchery-repair-pr:{existing[1]} -->" in (self.body or "") and ".." not in repair[1] and not repair[1].endswith(("/", ".lock")):
+            return repair[1]
         return f"claude/{PREFIX}-{self.number}-{self.slug}"
 
 

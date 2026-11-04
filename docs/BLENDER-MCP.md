@@ -3,10 +3,10 @@
 Fletchery includes the Blender MCP requirement in every worker, fixer, reviewer,
 planner and merger prompt. It applies to Claude, Codex and OpenCode. Role prompts
 are read for each new session; existing sessions keep their original instructions.
-Fletchery watches installed role files and queues a graceful reload when they change:
-active merges and workers finish first, then the app reloads automatically. A missing
-connection or a role permission denial must be reported as a concrete blocker, with
-the attempted connection and error.
+Installed role prompts are read for each new session, so instruction-only updates do
+not restart the backend or pause worker dispatch. Backend Python changes reload after
+active work can finish safely. A missing connection or a role permission denial must
+be reported as a concrete blocker, with the attempted connection and error.
 
 # Blender: official Blender Lab MCP required
 

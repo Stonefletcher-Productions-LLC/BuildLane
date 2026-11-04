@@ -4,6 +4,7 @@ folder went missing is repaired, not pruned."""
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -40,6 +41,60 @@ class Repo:
         else:
             self.git("worktree", "add", "-b", branch, str(path), f"{self.remote}/{self.base}")
         return path
+
+    def _repair_remote_head(self, branch: str) -> str:
+        if not branch or branch.startswith("-") or branch in (self.base, "main", "master"):
+            raise RuntimeError("A fixer cannot update the base/default branch")
+        self.git("check-ref-format", "--branch", branch)
+        ref = f"refs/heads/{branch}"
+        rows = [line.split() for line in self.git("ls-remote", "--heads", self.remote, ref).splitlines()]
+        heads = [row[0] for row in rows if len(row) == 2 and row[1] == ref]
+        if len(heads) != 1:
+            raise RuntimeError("The PR branch is not on the configured remote; repair cannot safely push it")
+        return heads[0]
+
+    def repair_worktree(self, number: int, slug: str, branch: str, head_sha: str) -> Path:
+        """An owned repair checkout rooted at the exact PR head, never at the base.
+        Prior repair attempts remain available; a changed PR head gets a different path.
+        No original PR checkout, branch or uncommitted work is reset or moved."""
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", head_sha):
+            raise RuntimeError("Repair needs a full PR head commit")
+        if self._repair_remote_head(branch) != head_sha:
+            raise RuntimeError("The PR head changed before repair; refresh it before starting another attempt")
+        input_ref = f"refs/fletchery/repair-input/{number}-{head_sha}"
+        self.git("fetch", "--no-tags", self.remote, f"refs/heads/{branch}:{input_ref}")
+        if self.git("rev-parse", input_ref) != head_sha:
+            raise RuntimeError("The PR head changed while fetching repair inputs")
+        path = self.worktree_root / f"{number}-{slug}-repair-{head_sha[:12]}"
+        if path.resolve().parent != self.worktree_root.resolve():
+            raise RuntimeError("Repair checkout path must stay inside its configured worktree root")
+        from rounds import checkout_guard
+        checkout_guard(path)
+        if path.exists():
+            registered = self.git("worktree", "list", "--porcelain", "-z")
+            roots = {Path(field[len("worktree "):]).resolve() for field in registered.split("\0")
+                     if field.startswith("worktree ")}
+            if not (path / ".git").exists() or path.resolve() not in roots:
+                raise RuntimeError("Existing repair directory is not this repository's registered checkout; preserved")
+            self.git("merge-base", "--is-ancestor", head_sha, "HEAD", cwd=path)
+        else:
+            self.worktree_root.mkdir(parents=True, exist_ok=True)
+            local = f"fletchery/repair-{number}-{head_sha[:12]}"
+            self.git("worktree", "add", "-b", local, str(path), head_sha)
+        return path
+
+    def push_repair(self, wt: Path, branch: str, expected_head: str) -> None:
+        """Only fast-forward the unchanged existing PR, preserving its original commits."""
+        if self._repair_remote_head(branch) != expected_head:
+            raise RuntimeError("The remote PR head changed during repair; local fix is preserved and was not pushed")
+        self.git("merge-base", "--is-ancestor", expected_head, "HEAD", cwd=wt)
+        changed = [line for line in self.git("diff", "--name-only", expected_head, "HEAD", cwd=wt).splitlines() if line]
+        tracked = self.lfs_tracked(wt, changed)
+        if tracked:
+            raise RuntimeError("Repair changes LFS-tracked files; use the project's asset delivery lane: " + ", ".join(tracked[:5]))
+        # No force or force-with-lease: another writer advancing after the check is
+        # still protected by Git's normal fast-forward receive rule.
+        self.git("push", "--no-verify", "-u", self.remote, f"HEAD:refs/heads/{branch}", cwd=wt)
 
     def changed_files(self, wt: Path) -> list[str]:
         out = self.git("diff", "--name-only", f"{self.remote}/{self.base}...HEAD", cwd=wt, check=False)
@@ -96,6 +151,12 @@ class FakeRepo:
         p = self.worktree_root / f"{number}-{slug}"
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    def repair_worktree(self, number, slug, branch, head_sha):
+        return self.worktree(number, slug, branch)
+
+    def push_repair(self, wt, branch, expected_head):
+        return self.push(wt, branch)
 
     def changed_files(self, wt):
         n = int(wt.name.split("-")[0])

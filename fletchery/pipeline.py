@@ -2,6 +2,8 @@
 several calls concurrently. Every outcome is a plain record the loop writes to the ledger and the status issue."""
 from __future__ import annotations
 
+import asyncio
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -294,8 +296,8 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
                                 + "\n".join(f"> {f.text[:300]}" for f in feedback))
         out.detail = "fixer attempts exhausted"
         return out
-    wt = repo.worktree(task.number, task.slug, task.branch)
-    repo.fetch_base()
+    await asyncio.to_thread(repo.fetch_base)
+    wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
     task.rules = rules_mod.load(wt, cfg.project_root)
     fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
     rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")
@@ -318,10 +320,16 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
     pool = ctx.agents
     if pool is None:
         return None
+    from agents import classify
+    import scores
+    level, _ = classify(task.title, task.body, task.labels, pool.routing.get("hardPatterns"),
+                        pool.routing.get("easyPatterns"), len(task.depends_on), pool.routing.get("hardScore"))
+    skill, _ = scores.classify_skill(task.title, task.body, task.labels, pool.routing.get("defaultSkill", "cpp"))
     agent = ctx.task_agents.get(str(task.number))
     if agent and attempt >= 2:
-        agent = pool.escalate(agent, "fixer") or agent
-    if agent and pool.available(agent, "fixer"):
+        agent = pool.escalate(agent, "fixer", skill, level) or agent
+    if (agent and pool.available(agent, "fixer")
+            and (pool.specs[agent].levels is None or level in pool.specs[agent].levels)):
         return agent
     c = pool.choose(task.title, task.body, task.labels, len(task.depends_on), _stats(ctx), role="fixer")
     return c.agent if c else None
@@ -329,7 +337,9 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
 
 async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcome:
     cfg, gh, repo = ctx.cfg, ctx.gh, ctx.repo
-    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=task.branch, base=cfg.base_branch, pr=str(pr.number),
+    local_branch = repo.git("branch", "--show-current", cwd=wt) if hasattr(repo, "git") else task.branch
+    fb += f"\n\nThe local repair branch is `{local_branch}`. The controller alone pushes the checked fix to existing PR branch `{pr.head}`; do not push or recreate its branch."
+    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
                          feedback=fb, freeze=_freeze_text(cfg))
     r = await rt.run("fixer", prompt, wt, cfg.fixer_budget_usd, cfg.fixer_max_turns)
     _account(out, r)
@@ -345,7 +355,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
         return out
-    repo.push(wt, task.branch)
+    await asyncio.to_thread(repo.push_repair, wt, pr.head, pr.head_sha)
     gh.comment(pr.number, f"Fletchery fixer (attempt {attempt}): {r.output.get('summary', '')}\n\n{gates_mod.summary(results)}\n\n"
                           "Pushed; the lane will take it again when it is labelled `ready`.")
     out.result, out.detail = "fixed", r.output.get("summary", "")
@@ -365,7 +375,7 @@ def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, w
     if agent:
         out.attempts.append({"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
                              "why": first_line[:200]})
-    nxt = pool.escalate(agent, "worker", out.skill) if pool is not None and pool.multi and ctx.escalate and agent else None
+    nxt = pool.escalate(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
     if not nxt:
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:

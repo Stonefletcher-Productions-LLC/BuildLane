@@ -46,6 +46,7 @@ class AgentSpec:
     max_parallel: int = 0           # 0 = no limit of its own (the project's maxParallel still applies)
     command: str = ""               # path to the CLI; "" = found automatically
     roles: list = None              # roles it may take; None = all
+    levels: list = None             # optional task difficulties this agent may write (easy/medium/hard)
     timeout_minutes: dict = None    # role -> minutes, for CLIs without a turn limit
     key_env: list = None            # stored keys (keys.py) this agent's sessions get, e.g. ["DEEPSEEK_API_KEY"]
     auth: str = "plan"              # plan: the CLI's own sign-in (Claude plan, ChatGPT, OpenCode Go); key: an API key
@@ -65,7 +66,7 @@ class AgentSpec:
 
 
 _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", "vendor": "vendor", "enabled": "enabled",
-              "maxParallel": "max_parallel", "command": "command", "roles": "roles", "timeoutMinutes": "timeout_minutes",
+              "maxParallel": "max_parallel", "command": "command", "roles": "roles", "levels": "levels", "timeoutMinutes": "timeout_minutes",
               "keyEnv": "key_env", "auth": "auth", "scores": "scores"}
 DEFAULT_VENDOR = {"claude": "anthropic", "codex": "openai"}
 
@@ -314,7 +315,11 @@ class AgentPool:
         import scores
         sc = self.scored(stats)
         bar = self.bar(level)
-        free = [n for n in self.specs if self.available(n, role)]
+        free = [n for n in self.specs if self.available(n, role) and (self.specs[n].levels is None or level in self.specs[n].levels)]
+        preferred = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+        preferred_free = [n for n in free if self.specs[n].kind in preferred]
+        if preferred_free:
+            free = preferred_free
         if not free:
             return None
         able = [n for n in free if sc[n]["skills"][skill]["score"] >= bar]
@@ -331,6 +336,8 @@ class AgentPool:
             pick = max(free, key=lambda n: sc[n]["skills"][skill]["score"])
             note = (f"{level}, {kind} ({why}; {skill_why}): nobody free clears the bar of {bar}, so the strongest free: "
                     f"{pick} {sc[pick]['skills'][skill]['score']}")
+        if preferred_free:
+            note += "; preferred provider policy"
         return Choice(pick, level, note, skill)
 
     # ---- basics ----
@@ -461,7 +468,7 @@ class AgentPool:
         skill, skill_why = scores.classify_skill(title, body, labels, self.routing.get("defaultSkill", "cpp"))
         forced = override(body, labels)
         if forced and forced in self.specs:
-            if self.available(forced, role):
+            if self.available(forced, role) and (self.specs[forced].levels is None or level in self.specs[forced].levels):
                 return Choice(forced, level, f"asked for on the issue ({why})", skill)
             # asked for but paused or busy: wait for it rather than quietly using another
             return None
@@ -469,28 +476,35 @@ class AgentPool:
             return self._choose_scored(level, why, skill, skill_why, stats, role)
         order, learned = self.learned(self.preferences(level), level, stats)
         for n in order:
-            if self.available(n, role):
+            if self.available(n, role) and (self.specs[n].levels is None or level in self.specs[n].levels):
                 bits = [f"{level}: {why}"] + ([learned] if learned else [])
                 if n != order[0]:
                     bits.append(f"{order[0]} is paused or busy")
                 return Choice(n, level, "; ".join(bits), skill)
         return None
 
-    def escalate(self, name: str, role: str = "worker", skill: str = "") -> str | None:
-        """The next stronger available agent, or None when `name` is already the strongest there is. With scores: the
-        smallest step up in the task's kind of work."""
+    def escalate(self, name: str, role: str = "worker", skill: str = "", level: str = "") -> str | None:
+        """Choose a stronger agent without bypassing task-level, role or provider policy.
+        With no known difficulty, agents restricted to explicit levels are ineligible."""
+        def eligible(n: str) -> bool:
+            return (n != name and self.available(n, role)
+                    and (self.specs[n].levels is None or level in self.specs[n].levels))
+
+        def preferred(names: list[str]) -> list[str]:
+            kinds = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+            native = [n for n in names if self.specs[n].kind in kinds]
+            return native or names
+
         if self.mode == "scores":
             sc = self.scored()
             val = (lambda n: sc[n]["skills"][skill]["score"]) if skill in ("cpp", "scripts", "ui", "docs") else \
                   (lambda n: sc[n]["overall"])
             cur = val(name) if name in self.specs else -1
-            up = [n for n in self.specs if n != name and val(n) > cur and self.available(n, role)]
+            up = preferred([n for n in self.specs if val(n) > cur and eligible(n)])
             return min(up, key=val) if up else None
         cur = self.specs[name].tier if name in self.specs else 0
-        for s in self.ordered():
-            if s.tier > cur and self.available(s.name, role):
-                return s.name
-        return None
+        up = preferred([s.name for s in self.ordered() if s.tier > cur and eligible(s.name)])
+        return up[0] if up else None
 
     def reviewer_for(self, worker: str, besides: set[str] | frozenset = frozenset()) -> str | None:
         """A reviewer from another vendor than the worker, so nobody marks their own homework. Preference: the
@@ -543,7 +557,7 @@ class AgentPool:
                    "paused_until": paused["until"] if paused else "", "paused_reason": paused["reason"] if paused else "",
                    "signed_in": acct.get("ok"), "account": acct.get("message", ""), "checked": acct.get("at", ""),
                    "key_env": list(s.key_env or []), "available": self.available(s.name),
-                   "auth": s.auth, "api_key": s.api_key_name, "scores": sc[s.name]}
+                   "auth": s.auth, "api_key": s.api_key_name, "scores": sc[s.name], "roles": s.roles, "levels": s.levels}
             if stats:
                 for lv in LEVELS:
                     r, k = stats.rate(s.name, lv)

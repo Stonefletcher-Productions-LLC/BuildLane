@@ -1047,12 +1047,16 @@ function render(d) {
   // banners
   const hb = $("holdBanner");
   if (d.signed_out) { hb.innerHTML = `Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`; hb.classList.add("show"); }
+  else if (d.update_pending) { hb.innerHTML = "Update ready. <span>Workers continue while the current merge round finishes, then Fletchery reloads.</span>"; hb.classList.add("show"); }
   else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
   else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
   else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
   else hb.classList.remove("show");
-  $("downBanner").classList.remove("show");
+  if (d.sync_error) {
+    $("downBanner").innerHTML = "GitHub refresh delayed. <span>Showing the last queue snapshot; retrying shortly. Workers already running continue.</span>";
+    $("downBanner").classList.add("show");
+  } else $("downBanner").classList.remove("show");
 
   // now
   const openWorkers = new Set([...$("slots").querySelectorAll("details[open]")].map(el => el.dataset.worker));
@@ -1138,6 +1142,7 @@ function render(d) {
       for (const f of r.flags) bits.push(`<b>${esc(f)}</b>`);
       if (r.conflict) bits.push("<b>conflicts</b>");
       if (!r.ready) bits.push("not labelled ready");
+      if (r.repair_wait) bits.push(`<b>Waiting for repair:</b> ${esc(r.repair_wait)}`);
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
       return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}</a>` +
         `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
@@ -1521,7 +1526,7 @@ function modelRow(a, A) {
     </summary>
     <div class="mx">
       ${S ? scoreRows(a) : ""}
-      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${spent} · vendor ${esc(a.vendor)} · runs on <a href="#" data-acct-link="1">${esc(runs)}</a></div>
+      <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${spent}${a.levels ? ` · tasks: ${a.levels.map(esc).join(", ")}` : ""}${a.roles ? ` · roles: ${a.roles.map(esc).join(", ")}` : ""} · vendor ${esc(a.vendor)} · runs on <a href="#" data-acct-link="1">${esc(runs)}</a></div>
       <div class="row2">
         ${S ? `<button type="button" data-ag-scores="${esc(a.name)}">Edit scores</button>` : ""}
         <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>

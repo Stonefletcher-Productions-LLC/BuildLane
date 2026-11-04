@@ -794,6 +794,9 @@ ctx.gh.prs += [PullRequest(71, "t1", "claude/foreman-1-a", "Test-Staging", "a" *
                PullRequest(74, "t4", "claude/foreman-4-d", "Test-Staging", "b" * 40, ["foreman"], "Closes #4", False)]
 ctx.gh.files = {71: ["Content/Town/Source/town.json"], 74: ["Source/x.cpp"]}
 fm, out = run_once(ctx, tmp)
+assert any("pending" in flag for flag in fm.snapshot["merge"][0]["flags"])
+fm.__dict__["_merge_files"] = {(p.number, p.head_sha): ctx.gh.files[p.number] for p in ctx.gh.prs}
+fm.publish([])
 rows = fm.snapshot["merge"]
 assert [r["pr"] for r in rows] == [71, 74] and rows[0]["unblocks"] == [2, 3] and rows[1]["unblocks"] == [5, 6]
 assert rows[0]["round"] == "7" and rows[0]["imports"] == "BuildTown" and rows[0]["flags"] == ["strict NavCheck on the PC"]
@@ -1235,7 +1238,7 @@ rf = _rounds.read_file(str(tmp / "state" / "merge-round.json"))
 assert rf["state"] == "done" and rf["prs"] == [11, 12] and "Landed as #77" in rf["note"], rf
 assert not any(c[0] == "worker" for c in ctx.runtime.calls)
 # a round that landed nothing waits before trying the same PRs again; a changed PR or Merge now retries at once
-ctx.runtime.script[("merger", 0)] = {"state": "failed", "landed_pr": 0, "merged": [], "left_out": [{"pr": 11, "why": "compile"}],
+ctx.runtime.script[("merger", 0)] = {"state": "failed", "landed_pr": 0, "merged": [], "left_out": [],
                                      "summary": "Build failed."}
 ctx.runtime.calls.clear()
 asyncio.run(fm.once())
@@ -1332,7 +1335,159 @@ _w = _rounds.prepare_worktree(_r, "fletchery/merge-round-1")
 assert (_w / "a.txt").exists() and _g("branch", "--show-current", cwd=_w).strip() == "fletchery/merge-round-1"
 (_w / "a.txt").write_text("half-merged", encoding="utf-8"); (_w / "stray.txt").write_text("x", encoding="utf-8")
 _w2 = _rounds.prepare_worktree(_r, "fletchery/merge-round-2")
-assert _w2 == _w and (_w / "a.txt").read_text(encoding="utf-8") == "1" and not (_w / "stray.txt").exists()
-assert _g("branch", "--show-current", cwd=_w).strip() == "fletchery/merge-round-2"
+assert _w2 != _w and (_w / "a.txt").read_text(encoding="utf-8") == "half-merged" and (_w / "stray.txt").exists()
+assert (_w2 / "a.txt").read_text(encoding="utf-8") == "1"
+assert _g("branch", "--show-current", cwd=_w2).strip() == "fletchery/merge-round-2"
+
+# Simulated Windows unlink: preserve checkout/assets/diagnostics and recover in a different path.
+_orig_git = _r.git
+_failed_path = _w2
+(_failed_path / "Ignored").mkdir()
+(_failed_path / "Ignored/generated.uasset").write_bytes(b"artist content")
+(_failed_path / ".gitignore").write_text("Ignored/\n", encoding="utf-8")
+_g("add", ".gitignore", cwd=_failed_path); _g("commit", "-qm", "ignore generated assets", cwd=_failed_path)
+def _unlink(*args, **kwargs):
+    if args and args[0] == "checkout":
+        raise RuntimeError("git checkout: unable to unlink old 'Content/locked.uasset': Invalid argument")
+    return _orig_git(*args, **kwargs)
+_r.git = _unlink
+try:
+    _rounds.prepare_worktree(_r, "fletchery/merge-round-3")
+    raise AssertionError("unlink failure was swallowed")
+except _rounds.CheckoutRecovery as error:
+    assert error.path == _failed_path.resolve() and error.next_path != error.path
+    assert "unable to unlink" in str(error)
+assert (_failed_path / "Ignored/generated.uasset").read_bytes() == b"artist content"
+assert _rounds.read_file(str(_failed_path.parent / (_failed_path.name + ".recovery.json")))["reason"]
+_r.git = _orig_git
+_recovered = _rounds.prepare_worktree(_r, "fletchery/merge-round-4")
+assert _recovered != _failed_path and (_recovered / "a.txt").exists()
+# Busy or leased checkouts never reach Git mutation/fetch.
+from unittest.mock import patch as _patch
+with _patch.object(_rounds, "worktree_busy", return_value=["42 UnrealEditor.exe"]):
+    try:
+        _rounds.prepare_worktree(_r, "fletchery/busy")
+        raise AssertionError("busy checkout accepted")
+    except RuntimeError as error:
+        assert "owned" in str(error)
+_lease = _d / "heavy.json"
+_rounds.write_file(str(_lease), {"token": "owned", "purpose": "test", "pid": 42})
+try:
+    _rounds.prepare_worktree(_r, "fletchery/leased", str(_lease))
+    raise AssertionError("heavy lease ignored")
+except RuntimeError as error:
+    assert "lease" in str(error)
+
+# Leaving one PR out doesn't hold healthy heads or re-admit the same failed head.
+ctx, tmp = ctx_with({}, cfg=Config(max_parallel=0, base_branch="Test-Staging", merge_rounds=True))
+ctx.gh.prs = [_PR(11, "Broken", "b11", "Test-Staging", "a" * 40, ["ready"]), _PR(12, "Healthy", "b12", "Test-Staging", "b" * 40, ["ready"])]
+ctx.runtime.script[("merger", 0)] = {"state": "failed", "landed_pr": 0, "merged": [], "left_out": [{"pr": 11, "why": "compile failed after one repair"}], "summary": "excluded 11"}
+fm, _ = run_once(ctx, tmp)
+assert fm.state.merge_excluded["11"]["head"] == "a" * 40
+ctx.runtime.calls.clear()
+ctx.runtime.script[("merger", 0)] = {"state": "landed", "landed_pr": 77, "merged": [12], "left_out": [], "summary": "healthy remainder passed"}
+asyncio.run(fm.once())
+_prompts = [c[2] for c in ctx.runtime.calls if c[0] == "merger"]
+assert _prompts and "#12 Healthy" in _prompts[0] and "#11 Broken" not in _prompts[0]
+ctx.gh.prs[0].head_sha = "c" * 40
+ctx.runtime.calls.clear()
+asyncio.run(fm.once())
+assert any("#11 Broken" in c[2] for c in ctx.runtime.calls if c[0] == "merger")
+
+# Unowned PRs receive one durable repair issue tied to their actual branch.
+_records = [t for t in ctx.gh.tasks.values() if "fletchery-repair-pr:11" in t.body]
+assert len(_records) == 1 and _records[0].branch == "b11", _records
+assert fm.state.merge_excluded.get("11") is None, "new head releases exclusion"
+
+# Flash is a cheap easy-task writer; native providers handle medium/hard and review/merge.
+_policy = pool_with(agents=[
+    {"name": "native", "kind": "codex", "vendor": "openai", "scores": {"cpp": 70, "scripts": 70, "docs": 70, "review": 70, "cost": 20}},
+    {"name": "flash", "kind": "opencode", "vendor": "deepseek", "roles": ["worker"], "levels": ["easy"], "scores": {"cpp": 90, "scripts": 90, "docs": 90, "review": 90, "cost": 100}},
+], routing={"preferredKindsByLevel": {"medium": ["codex", "claude"], "hard": ["codex", "claude"]}})
+assert _policy.choose("Docs typo", "Fix README.md", ["difficulty:easy"]).agent == "flash"
+assert _policy.choose("Clock", "LSClock.cpp", ["difficulty:medium"]).agent == "native"
+assert _policy.choose("Save migration", "LSClock.cpp", ["difficulty:hard"]).agent == "native"
+assert _policy.choose("Hard", "", ["difficulty:hard", "agent:flash"]) is None
+assert _policy.reviewer_for("native") == "native" and _policy.merger() == "native"
+_policy.set_enabled("native", False)
+assert _policy.choose("Hard", "", ["difficulty:hard"]) is None
+assert _policy.choose("Docs", "", ["difficulty:easy"]).agent == "flash"
+
+# Escalation must preserve the same level/provider policy as initial routing.
+_escalation_specs = [
+    {"name": "native-low", "kind": "codex", "vendor": "openai", "tier": 1, "scores": {"cpp": 50, "scripts": 50, "cost": 100}},
+    {"name": "native-high", "kind": "claude", "vendor": "anthropic", "tier": 3, "scores": {"cpp": 70, "scripts": 70, "cost": 20}},
+    {"name": "flash", "kind": "opencode", "vendor": "deepseek", "tier": 4, "levels": ["easy"], "roles": ["worker", "fixer"], "scores": {"cpp": 90, "scripts": 90, "cost": 100}},
+    {"name": "other", "kind": "opencode", "vendor": "other", "tier": 2, "scores": {"cpp": 60, "scripts": 60, "cost": 90}},
+]
+_escalation_routing = {"preferredKindsByLevel": {"medium": ["codex", "claude"], "hard": ["codex", "claude"]}}
+_escalation = pool_with(agents=_escalation_specs, routing=_escalation_routing)
+assert _escalation.escalate("native-low", "worker", "cpp", "medium") == "native-high"
+assert _escalation.escalate("native-high", "worker", "cpp", "medium") is None, "easy-only Flash cannot take a medium escalation"
+assert _escalation.escalate("native-high", "worker", "cpp", "hard") is None
+assert _escalation.escalate("native-high", "worker", "cpp", "easy") == "flash", "Flash remains available for easy work"
+assert _escalation.escalate("native-high", "worker", "cpp") is None, "unknown difficulty cannot bypass an easy-only limit"
+_escalation_lists = pool_with(agents=_escalation_specs, routing={**_escalation_routing, "mode": "lists"})
+assert _escalation_lists.escalate("native-low", "worker", level="medium") == "native-high"
+assert _escalation_lists.escalate("native-high", "worker", level="medium") is None
+assert _escalation_lists.escalate("native-high", "worker", level="easy") == "flash"
+
+# A real failed worker carries its classified difficulty into the escalation call.
+_escalation_fakes = {"native-low": FakeRuntime({("worker", 0): {"gave_up": "needs a stronger implementation", "summary": "", "files": [], "build_steps": [], "checks": [], "unverified": []}})}
+_escalation = pool_with(_escalation_fakes, agents=_escalation_specs, routing=_escalation_routing)
+_escalation_task = T(997, "Clock change", "LSClock.cpp")
+_escalation_task.labels += ["difficulty:medium", "agent:native-low"]
+ctx, tmp = ctx_with({997: _escalation_task})
+ctx.agents = _escalation
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "pr" and out[0].agent == "native-high", out
+assert "flash" not in _escalation_fakes, "no medium worker or reviewer session may be sent to easy-only Flash"
+
+# Fixers classify the task too; neither original assignment nor attempt-two escalation can bypass limits.
+from pipeline import fixer_agent as _fixer_agent
+ctx.task_agents[str(_escalation_task.number)] = "native-low"
+assert _fixer_agent(ctx, _escalation_task, 2) == "native-high"
+ctx.task_agents[str(_escalation_task.number)] = "flash"
+assert _fixer_agent(ctx, _escalation_task, 1) != "flash"
+
+# A large PR backlog cannot monopolize dispatch ahead of a ready writer; polling rotates.
+_backlog_tasks = {n: Task(n, f"Existing {n}", labels=["foreman", "foreman:pr"]) for n in range(1, 11)}
+_backlog_tasks[99] = Task(99, "Ready writer", labels=["foreman", "foreman:queued"])
+ctx, tmp = ctx_with(_backlog_tasks, cfg=Config(max_parallel=1))
+ctx.gh.prs = [_PR(100+n, f"Existing {n}", _backlog_tasks[n].branch, "Test-Staging", str(n) * 40, ["foreman"], f"Closes #{n}") for n in range(1, 11)]
+_polled = []
+ctx.gh.feedback_since = lambda pr, since: (_polled.append(pr.number) or [])
+fm, _ = run_once(ctx, tmp)
+assert len(_polled) <= 6 and any(c[0] == "worker" for c in ctx.runtime.calls), _polled
+_first = set(_polled);_polled.clear()
+asyncio.run(fm.once())
+assert any(n not in _first for n in _polled), "PR polling must rotate fairly"
+
+# Snapshot rendering does not call GitHub for queue/PR/file data.
+fm.cfg.merge_flags = [{"paths": "Source", "flag": "native checks"}]
+with _patch.object(ctx.gh, "open_tasks", side_effect=AssertionError("display refetched issues")), _patch.object(ctx.gh, "open_prs", side_effect=AssertionError("display refetched PRs")), _patch.object(ctx.gh, "pr_files", side_effect=AssertionError("display fetched file list")):
+    fm.publish([])
+
+# Completed outcomes update a detached cached queue without another network fetch.
+from pipeline import Outcome as _SnapshotOutcome
+ctx, tmp = ctx_with({42: T(42, "Detached remote task", status=RUNNING)})
+fm = Foreman(ctx, tmp / "state")
+fm._tasks = {42: T(42, "Cached task", status=RUNNING)}
+fm._prs, fm._waiting = {}, {}
+with _patch.object(ctx.gh, "open_tasks", side_effect=AssertionError("publish refetched tasks")), _patch.object(ctx.gh, "open_prs", side_effect=AssertionError("publish refetched PRs")):
+    fm.publish([_SnapshotOutcome(42, "pr", pr_number=142)])
+    assert fm._tasks[42].status == PR and fm.snapshot["tasks"][0]["status"] == PR
+    assert fm.snapshot["tasks"][0]["pr"] == 142
+    fm.publish([_SnapshotOutcome(42, "limited", pr_number=142)])
+    assert fm.snapshot["tasks"][0]["status"] == PR, "a paused fixer must remain eligible as an existing PR"
+    fm.publish([_SnapshotOutcome(42, "gave_up", pr_number=142)])
+    assert fm.snapshot["tasks"][0]["status"] == PR, "a failed bounded fixer is still an existing PR"
+    fm.publish([_SnapshotOutcome(42, "blocked")])
+    assert fm.snapshot["tasks"][0]["status"] == BLOCKED
+    fm.publish([_SnapshotOutcome(42, "retry_fix")])
+    assert fm.snapshot["tasks"][0]["status"] == QUEUED
+    ctx.gh.set_status(42, PR)
+    fm.publish([])
+    assert fm.snapshot["tasks"][0]["status"] == PR, "status tap must update cached Tasks as well as rows"
 
 print("RESULT: PASS (Fletchery engine checks)")
