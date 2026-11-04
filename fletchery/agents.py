@@ -363,7 +363,7 @@ class AgentPool:
             return False
         if self.accounts.get(name, {}).get("ok") is False:  # its last sign-in check failed
             return False
-        if role in ("worker", "fixer") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
+        if role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
             return False
         return True
 
@@ -520,15 +520,14 @@ class AgentPool:
         return worker if ok(worker) else None
 
     def merger(self, prefer: str = "") -> str | None:
-        """Who runs a merge round: `prefer` when it is on and free, else the available agent with the best C++ score
-        that can run commands and reach GitHub (Claude first, then OpenCode; Codex's sandbox has no network)."""
+        """Use the preferred eligible agent, otherwise the best available C++ agent, regardless of provider."""
         if prefer and prefer in self.specs and self.available(prefer, "merger"):
             return prefer
         sc = self.scored()
-        ok = [s for s in self.specs.values() if s.kind in ("claude", "opencode", "fake") and self.available(s.name, "merger")]
+        ok = [s for s in self.specs.values() if s.kind in ("claude", "codex", "opencode", "fake") and self.available(s.name, "merger")]
         if not ok:
             return None
-        return max(ok, key=lambda s: (s.kind == "claude", sc[s.name]["skills"]["cpp"]["score"])).name
+        return max(ok, key=lambda s: sc[s.name]["skills"]["cpp"]["score"]).name
 
     def view(self, stats: Stats | None = None) -> list[dict]:
         """For the dashboard and the status issue."""

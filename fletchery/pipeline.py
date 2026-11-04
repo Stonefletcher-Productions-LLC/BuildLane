@@ -116,7 +116,11 @@ async def run_task(task: Task, ctx: Context) -> Outcome:
     if ctx.live:
         ctx.live.stage(task.number, "Starting", task.title)
     try:
-        return await _run_task(task, ctx, out)
+        result = await _run_task(task, ctx, out)
+        if result.result == "blocked":
+            import blockers
+            return await blockers.resolve(task, ctx, result)
+        return result
     finally:
         if ctx.live:
             ctx.live.done(task.number)
@@ -259,7 +263,11 @@ async def fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt:
     if ctx.live:
         ctx.live.stage(task.number, f"Fixing PR #{pr.number}", task.title, kind="fix")
     try:
-        return await _fix_pr(task, pr, feedback, attempt, ctx, out)
+        result = await _fix_pr(task, pr, feedback, attempt, ctx, out)
+        if result.result == "gave_up":
+            import blockers
+            return await blockers.resolve(task, ctx, result)
+        return result
     except Limited as e:
         if _paused(ctx, out, e, f"PR #{pr.number} fix"):
             return out  # the loop un-counts the attempt like a limit, so another agent retries it

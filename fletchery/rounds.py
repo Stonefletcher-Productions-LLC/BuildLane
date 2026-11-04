@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -170,3 +171,29 @@ def prepare_worktree(repo, branch: str) -> Path:
             repo.git("worktree", "repair", str(path), check=False)
         repo.git("worktree", "add", "--force", "-B", branch, str(path), base)
     return path
+
+
+def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
+    """One durable task per recurring crash, with a deduplicated occurrence for each round."""
+    import graph
+    summary = str(result.get("summary", ""))
+    signature = re.sub(r"fletchery/merge-round-[\w-]+", "<round-branch>", summary.splitlines()[0] if summary else "unknown")
+    signature = re.sub(r"\b[0-9a-f]{40}\b", "<sha>", signature)
+    key = hashlib.sha256(signature.encode()).hexdigest()[:20]
+    marker = f"<!-- fletchery-merge-failure:{key} -->"
+    occurrence = f"<!-- fletchery-merge-occurrence:{result.get('round')} -->"
+    evidence = (f"Round {result.get('round')} ({result.get('agent') or 'unknown agent'}), {result.get('at', '')}.\n"
+                f"Worktree: `{worktree}`. Base: `{cfg.base_branch}`.\n\n"
+                f"```text\n{summary[:7000]}\n```\n\n{occurrence}")
+    found = gh.marked_issues(marker)
+    if found:
+        number = found[0]["number"]
+        thread = gh.issue_thread(number)
+        if occurrence not in thread.get("body", "") and not any(occurrence in c.get("body", "") for c in thread.get("comments", [])):
+            gh.comment(number, "Fletchery: merge failure repeated\n\n" + evidence)
+        return number
+    body = ("Fletchery's merge round crashed. Diagnose and fix the underlying harness or checkout failure; "
+            "add a regression proving the failure is handled and the next round can start. Preserve generated "
+            "content and other worktrees; never bypass leases, weaken checks or kill processes by name. "
+            "Do not run an extra build or reset the active merge worktree from a worker.\n\n" + evidence + "\n\n" + marker)
+    return gh.create_issue("Fix merge-round crash: " + signature[:150], body, [graph.PREFIX, graph.label_for(graph.QUEUED)])

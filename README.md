@@ -100,7 +100,7 @@ task lands under **Needs you**, its issue says what it needs; answer in a commen
 |---|---|
 | Add work | **Add task**, or label an issue on GitHub. `Depends on: #12` in the description makes it wait for #12 |
 | Stop new work for a while | **Pause** (top right). Workers already running finish; nothing new starts until **Resume** |
-| Run more or fewer workers at once | **−** / **+** next to *Workers* (0 to 6) |
+| Run more or fewer workers at once | **−** / **+** next to *Workers* (0 to 10) |
 | Stop new code but keep merging and building | Turn *Workers* down to **0**. Running sessions finish; the Build Lane carries on |
 | Spend less | **−** next to the daily cap. At the cap no new work starts that day |
 | See this week's usage | **This week** under the cap |
@@ -211,6 +211,22 @@ Releases, the integration mode, timing history and merge controls are still in t
 
 ## Merge rounds
 
+Merge rounds can use any enabled, signed-in Claude, Codex or OpenCode agent allowed to take the merger role.
+The preferred merge agent wins when available; otherwise the best available C++ score wins, regardless of provider.
+Only one round runs at a time. Merger sessions have the local and GitHub access needed to build and land the round;
+worker and reviewer restrictions stay the same. Pause/resume merging is shown immediately, even during a slow poll.
+
+**Blocked work:** by default, Fletchery asks a read-only planner whether a blocked task needs actionable prerequisites.
+It creates up to three independent issues (or reuses existing ones), adds `Depends on:` to the original, and returns it
+to the queue to wait for them. This also handles the existing Needs you backlog, one planning session per pass within
+worker slots and the daily cap. Plans and created issues survive restarts without duplication. Generated prerequisites
+are not expanded recursively. Genuine decisions, credentials, unavailable inputs or capabilities still need a person.
+Turn this off with **Settings > Workers > Create prerequisite tasks automatically**, or `workers.autoPrerequisites: false`.
+
+Merge-round crashes also create a repair issue, including a crash recorded before this update. The same failure reuses
+its issue and adds each new round's evidence once. The error remains visible in Merge until another round finishes;
+filing an issue does not certify a repair or bypass the build lease.
+
 Turn on **Settings > Merging > Merge rounds** and Fletchery keeps merging by itself. Whenever pull requests labelled
 `ready` wait on the base branch and no round is running, it starts one: an agent in its own worktree merges them
 together, builds and tests them the way `.fletchery/merger.md` says (or the file in **Round instructions file**), leaves
@@ -252,7 +268,7 @@ nothing waits **Retry a failed round after** minutes before trying the same PRs 
 | `shell/` | `Fletchery.exe` (C# + WebView2) and its build and install scripts |
 | `app/`, `runner/` | The classic BuildLane app and the local GitHub Actions runner |
 
-Tests: `python fletchery/test_fletchery.py` (no network). The classic app keeps its own Windows checks
+Tests: `python fletchery/test_fletchery.py` and `python fletchery/test_blockers.py` (no network). The classic app keeps its own Windows checks
 (`.github/workflows/validate.yml`). Design and roadmap: [docs/FLETCHERY.md](docs/FLETCHERY.md).
 [Contributing](CONTRIBUTING.md).
 

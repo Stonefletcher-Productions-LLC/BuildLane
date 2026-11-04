@@ -76,6 +76,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                               "depends_on": {"type": "array", "items": {"type": "integer"}}}}}}},
 }
 
+# Blocker planning uses the read-only planner, with an explicit human-decision escape hatch.
+SCHEMAS["planner"]["properties"].update({
+    "needs_human": {"type": "string"},
+    "reuse": {"type": "array", "items": {"type": "integer"}},
+})
+
 
 @dataclass
 class RunResult:

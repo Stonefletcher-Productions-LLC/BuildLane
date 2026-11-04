@@ -70,6 +70,16 @@ jobs:
         timeout-minutes: 6
         shell: pwsh
         run: node runner/test/TestRunner.cjs
+      - name: Fletchery engine checks
+        run: |
+          $env:PYTHONUTF8 = '1'
+          python fletchery/test_fletchery.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Automatic prerequisites and merge agent checks
+        run: |
+          $env:PYTHONUTF8 = '1'
+          python fletchery/test_blockers.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compile standalone launcher
         run: ./app/InstallLaneApp.ps1 -Destination "$env:RUNNER_TEMP\Buildlane-check" -NoShortcut
       - name: Upload illustrative UI screenshots

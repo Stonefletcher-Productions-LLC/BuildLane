@@ -235,6 +235,8 @@ class Engine:
         for pr_num, task in by_pr.items():
             if task.number in self.active:
                 continue
+            if any(d in tasks or not gh.issue_closed(d) for d in task.depends_on):
+                continue
             pr = prs[pr_num]
             fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
             if not fb or paused or self.free_slots() <= 0:
@@ -253,9 +255,29 @@ class Engine:
             self._start(fix_pr(task, pr, fb, attempt, self.ctx), task.number, pr_num, prior)
 
         # 2. ready tasks -> workers, within slots and budget
+        # Existing Needs you tasks get the same bounded prerequisite planning as new blocks.
+        # One planner per pass, counted against worker slots and the daily cap.
+        if cfg.auto_prerequisites and not paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
+            import blockers
+            import rules as rules_mod
+            for t in tasks.values():
+                if t.status != BLOCKED or t.number in self.active:
+                    continue
+                try:
+                    if not blockers.pending(gh.issue_thread(t.number)):
+                        continue
+                except Exception as e:
+                    self.ctx.log(f"#{t.number}: could not inspect blocker: {e}")
+                    continue
+                self.last_plan.append(f"plan prerequisites for #{t.number}")
+                if not self.dry_run:
+                    t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
+                    self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
+                break
         closed_deps = {d for t in tasks.values() for d in t.depends_on if d not in tasks and gh.issue_closed(d)}
         rd = readiness(tasks, closed_deps)
-        rd.ready = [t for t in rd.ready if t.number not in self.active]
+        fixing = {t.number for t in by_pr.values()}
+        rd.ready = [t for t in rd.ready if t.number not in self.active and t.number not in fixing]
         if pool is not None:  # a task whose agents are all off, paused or busy waits instead of starting and stopping
             stats = self.stats()
             free = []
@@ -303,6 +325,13 @@ class Engine:
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
+        if not self.dry_run and st.merge_last.get("result") == "crashed" and not st.merge_last.get("failure_issue"):
+            try:
+                st.merge_last["failure_issue"] = rounds.report_failure(
+                    self.ctx.gh, cfg, st.merge_last, str(Path(cfg.worktree_root or self.state_dir / "worktrees") / "merge-round"))
+                st.save(self.state_dir / "state.json")
+            except Exception as e:
+                self.ctx.log(f"merge rounds: could not file prior crash: {type(e).__name__}: {e}")
         if self.round_job is not None:
             self.merge_why = "a round is running"
             return
@@ -319,7 +348,7 @@ class Engine:
         pool = self.ctx.agents
         agent = pool.merger(cfg.merge_agent) if pool is not None else ""
         if pool is not None and not agent:
-            self.merge_why = "no agent can run a round now (a Claude or OpenCode agent that is on, signed in and not at a limit)"
+            self.merge_why = "no agent can run a round now (enable a signed-in agent with the merger role that is not at a limit)"
             return
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
         busy = rounds.worktree_busy(Path(wt_root) / "merge-round") if wt_root and not self.dry_run else []
@@ -415,6 +444,12 @@ class Engine:
             self.wake()
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
+        if res["result"] == "crashed":
+            try:
+                res["failure_issue"] = rounds.report_failure(gh, cfg, res, str(Path(cfg.worktree_root or self.state_dir / "worktrees") / "merge-round"))
+                self.state.save(self.state_dir / "state.json")
+            except Exception as e:
+                self.ctx.log(f"merge round {n}: could not file crash issue: {type(e).__name__}: {e}")
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
                      + (f" ({res['summary'][:200]})" if res["summary"] else ""))
         return res
@@ -435,6 +470,7 @@ class Engine:
 
     def hold_merging(self, on: bool) -> None:
         self.state.merge_held = bool(on)
+        self.merge_why = "merging is paused" if on else ""
         self.state.save(self.state_dir / "state.json")
         self.ctx.log("merging paused from the app" if on else "merging resumed from the app")
         self.wake()
@@ -495,7 +531,7 @@ class Engine:
             self._ledger(o)
             if o.result == "fixed" and o.pr_number is not None:
                 st.seen[str(o.pr_number)] = now()
-            if o.result in ("signed_out", "limited", "agent_paused") and pr_n is not None:  # retry this fix later, uncounted
+            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies") and pr_n is not None:
                 st.fix_attempts[str(pr_n)] = max(0, st.fix_attempts.get(str(pr_n), 1) - 1)
                 if prior is None:
                     st.seen.pop(str(pr_n), None)

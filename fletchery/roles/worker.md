@@ -25,6 +25,9 @@ never commit LFS pointer changes you did not make.
    delete a test or check to get something green. Say what you could not verify.
 5. If the task needs a decision you cannot make safely (a design choice, a binary asset, a migration you cannot test,
    something outside the issue's scope), stop and say so in `gave_up` instead of guessing.
+   Describe any concrete missing prerequisite and its acceptance checks. Fletchery can create and link those tasks
+   automatically; do not create issues yourself or tell the owner to repeat a generic "create prerequisites" reply.
+   A full build or visual check reserved for the Build Lane belongs in `unverified`, not by itself in `gave_up`.
 
 {additions}
 
