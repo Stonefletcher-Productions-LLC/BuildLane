@@ -92,6 +92,10 @@
       "mode": "scores",
       "defaultSkill": "cpp",
       "reviewMin": 50
-    }
+    },
+    "mergeRounds": true,
+    "mergeLabel": "ready",
+    "mergeRoundMax": 12,
+    "mergeNotes": "E:\\lifeshare-scratch\\foreman\\merger-notes.md"
   }
 }

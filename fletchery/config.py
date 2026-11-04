@@ -42,7 +42,9 @@ WORKER_KEYS = {
     "gateTimeoutSeconds": "gate_timeout_s", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
     "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
-    "heavyLeaseFile": "heavy_lease_file", "agents": "agents", "routing": "routing", "escalate": "escalate",
+    "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
+    "mergeRoundMax": "merge_round_max", "mergeAgent": "merge_agent", "mergeNotes": "merge_notes",
+    "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "agents": "agents", "routing": "routing", "escalate": "escalate",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -91,6 +93,15 @@ class Config:
     merge_flags: list = None
     merge_round_file: str = ""               # what the merge round is doing (merge.py); "" = <state_dir>/merge-round.json
     heavy_lease_file: str = ""               # who holds the PC for heavy work (HeavyLease.ps1's heavy.json); "" = not shown
+    # merge rounds (rounds.py): Fletchery merges, builds, tests and lands `ready` PRs by itself, one round at a time
+    merge_rounds: bool = False
+    merge_label: str = "ready"               # PRs with this label into the base branch go in the next round
+    merge_round_max: int = 12                # at most this many PRs per round, oldest first
+    merge_agent: str = ""                    # the agent that runs rounds; "" = the strongest available Claude/OpenCode one
+    merge_notes: str = ""                    # a file with the project's round instructions when the repo has no .fletchery/merger.md
+    merge_budget_usd: float = 60.0
+    merge_max_turns: int = 600
+    merge_retry_minutes: float = 45          # after a round that landed nothing, wait this long before trying the same PRs
     # the coding agents (agents.py): [{"name", "kind": claude|codex|opencode, "model", "tier", "vendor", "enabled",
     # "maxParallel", "keyEnv"}]; None = Claude only. `routing` says which agent takes which difficulty.
     agents: list = None

@@ -16,6 +16,8 @@
     POST /api/agents/escalate {on}: hand a failed task to a stronger agent before blocking it
     POST /api/agents/scores   {name, scores: {cpp|scripts|ui|docs|review|cost: 0-100 or null}}: your own scores
     POST /api/agents/refresh-scores  fetch the newest benchmark catalog (model_scores.json) from Fletchery's main branch
+    POST /api/merge/hold      {on}: pause or resume merge rounds (a running round finishes)
+    POST /api/merge/now       look for ready PRs now, retrying a round that didn't land
     POST /api/agents/refresh  lift usage-limit pauses, re-read OpenCode's models, check every sign-in again
     POST /api/settings/get    the Settings page: this project's settings, and every project
     POST /api/settings/save   {changes: {field: value}}: validate and save into the profile
@@ -318,6 +320,18 @@ class Dashboard:
         self.fm.wake()
         return {"unpaused": gone, "message": msg}
 
+    def merge_hold(self, data: dict) -> dict:
+        on = bool(data.get("on"))
+        self.fm.hold_merging(on)
+        return {"held": on, "message": "Merging paused: no new round starts; a running round finishes." if on
+                else "Merging resumed: a round starts when PRs are ready."}
+
+    def merge_now(self, data: dict) -> dict:
+        if not self.fm.cfg.merge_rounds:
+            raise ValueError("Merge rounds are off. Turn them on in Settings > This project > Merging.")
+        self.fm.merge_now()
+        return {"message": "Looking for ready PRs now."}
+
     def login_agent(self, data: dict) -> dict:
         import clis
         pool = self._pool()
@@ -554,7 +568,7 @@ class Dashboard:
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
                               "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores,
-                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents,
+                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents, "/api/merge/hold": dash.merge_hold, "/api/merge/now": dash.merge_now,
                               "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,

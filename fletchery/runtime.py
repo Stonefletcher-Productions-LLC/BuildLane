@@ -32,6 +32,11 @@ TOOLS: dict[str, dict[str, list[str]]] = {
                     "Bash(rg:*)", "Read", "Glob", "Grep"],
         "disallowed": ["Edit", "Write", "WebSearch", "WebFetch", "Agent", "Bash(git push:*)", "Bash(git commit:*)"],
     },
+    # the merge round (rounds.py): merges, builds, runs the project's tools and lands the result on the base branch
+    "merger": {
+        "allowed": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
+        "disallowed": ["WebSearch", "WebFetch", "Agent"],
+    },
     "planner": {
         "allowed": ["Bash(gh:*)", "Bash(cat:*)", "Bash(grep:*)", "Bash(rg:*)", "Read", "Glob", "Grep"],
         "disallowed": ["Edit", "Write", "WebSearch", "WebFetch", "Agent"],
@@ -57,6 +62,13 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                              "properties": {"file": {"type": "string"}, "line": {"type": "integer"},
                                                             "rule": {"type": "string"}, "note": {"type": "string"}}}},
                                 "praise": {"type": "string"}}},
+    "merger": {"type": "object", "required": ["state", "landed_pr", "merged", "left_out", "summary"],
+               "properties": {"state": {"type": "string", "enum": ["landed", "nothing", "failed"]},
+                              "landed_pr": {"type": "integer"},
+                              "merged": {"type": "array", "items": {"type": "integer"}},
+                              "left_out": {"type": "array", "items": {"type": "object", "required": ["pr", "why"],
+                                           "properties": {"pr": {"type": "integer"}, "why": {"type": "string"}}}},
+                              "summary": {"type": "string"}, "gave_up": {"type": "string"}}},
     "planner": {"type": "object", "required": ["issues"],
                 "properties": {"issues": {"type": "array", "items": {"type": "object",
                                "required": ["title", "body", "depends_on"],
@@ -258,4 +270,5 @@ DEFAULT_ANSWERS: dict[str, dict] = {
     "fixer": {"summary": "Fixed it.", "pushed": True},
     "reviewer": {"verdict": "approve", "findings": []},
     "planner": {"issues": []},
+    "merger": {"state": "nothing", "landed_pr": 0, "merged": [], "left_out": [], "summary": "Nothing to merge."},
 }

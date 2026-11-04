@@ -32,6 +32,9 @@ class State:
     task_agent: dict = field(default_factory=dict)            # task number -> the agent that wrote its branch
     accounts_checked: str = ""                                # ISO: when every agent's sign-in was last checked
     spent_by_agent: dict = field(default_factory=dict)        # YYYY-MM-DD -> {agent: USD}
+    merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
+    merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
+    merge_held: bool = False                                  # Pause merging in the Merge section
 
     @staticmethod
     def load(path: Path) -> "State":
@@ -96,6 +99,9 @@ class Engine:
         self._waiting: dict = {}
         self._aloop: asyncio.AbstractEventLoop | None = None
         self.watcher = None
+        self.round_job = None           # the merge round running now (rounds.py), an asyncio task
+        self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
+        self.merge_why = ""             # why no round is starting, for the Merge section
         self._stats_cache: tuple[float, object] | None = None
         if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
             ctx.agents.paused = self.state.agent_paused
@@ -160,6 +166,9 @@ class Engine:
         outcomes: list[Outcome] = []
         while self.jobs:
             outcomes += await self._wait_for_jobs(None)
+        if self.round_job is not None:
+            await self.round_job
+            self.round_job, self.round_info = None, {}
         self.publish(outcomes)
         return outcomes
 
@@ -283,8 +292,126 @@ class Engine:
                 t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
                 self._start(run_task(t, self.ctx), t.number, None, None)
             st.save(self.state_dir / "state.json")
+        self._merge_round(draining)
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
+
+    # ---- merge rounds: keep ready PRs merging without anyone (rounds.py) ----
+    def _merge_round(self, draining: bool) -> None:
+        import rounds
+        cfg, st = self.cfg, self.state
+        if not cfg.merge_rounds:
+            self.merge_why = ""
+            return
+        if self.round_job is not None:
+            self.merge_why = "a round is running"
+            return
+        try:
+            ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
+        except Exception as e:  # GitHub down: try again next pass
+            self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
+            self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")
+            return
+        ok, why = rounds.should_start(cfg, st.merge_last, st.merge_held, draining, False, ready)
+        self.merge_why = why
+        if not ok:
+            return
+        pool = self.ctx.agents
+        agent = pool.merger(cfg.merge_agent) if pool is not None else ""
+        if pool is not None and not agent:
+            self.merge_why = "no agent can run a round now (a Claude or OpenCode agent that is on, signed in and not at a limit)"
+            return
+        batch = ready[:max(1, int(cfg.merge_round_max or 12))]
+        round_file = cfg.merge_round_file or str(self.state_dir / "merge-round.json")
+        try:
+            last_no = int(str(rounds.read_file(round_file).get("round", "0")).strip() or 0)
+        except ValueError:
+            last_no = 0
+        n = max(st.merge_round_no, last_no) + 1
+        self.last_plan.append(f"merge round {n}: " + ", ".join(f"#{p.number}" for p in batch) + (f" on {agent}" if agent else ""))
+        if self.dry_run:
+            return
+        st.merge_round_no = n
+        st.save(self.state_dir / "state.json")
+        self.round_info = {"round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
+        self.merge_why = "a round is running"
+        self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file))
+        self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
+
+    async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str) -> dict:
+        import rounds
+        import rules as rules_mod
+        from pipeline import _LimitGuard, Limited
+        from runtime import role_prompt
+        cfg, gh, pool = self.cfg, self.ctx.gh, self.ctx.agents
+        branch = f"fletchery/merge-round-{n}-{datetime.now(timezone.utc).strftime('%m%d%H%M')}"
+        res = {"round": n, "result": "failed", "at": now(), "key": key, "summary": "", "pr": 0, "agent": agent}
+        if pool is not None and agent:
+            pool.acquire(agent)
+        try:
+            wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch)
+            rounds.start_file(round_file, n, branch, str(wt), agent or "claude", batch, cfg.base_branch)
+            rules = rules_mod.load(wt, cfg.project_root)
+            flags_cfg = [f for f in (cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
+
+            def flags_for(p):
+                if not flags_cfg:
+                    return []
+                try:
+                    files = gh.pr_files(p.number)
+                except Exception:
+                    return []
+                return [f["flag"] for f in flags_cfg if any(re.search(f["paths"], x) for x in files)]
+            prompt = role_prompt("merger", rules, project=cfg.name, base=cfg.base_branch, branch=branch, round=str(n),
+                                 label=cfg.merge_label or "ready", prs=rounds.pr_list_text(batch, flags_for),
+                                 round_file=round_file, additions=rounds.notes_text(rules, cfg) or "(none: use the "
+                                 "repository's own docs to find how it builds and tests)",
+                                 freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
+            rt = pool.runtime(agent) if pool is not None and agent else self.ctx.runtime
+            r = await _LimitGuard(rt, self.ctx, 0, agent or "").run("merger", prompt, wt, cfg.merge_budget_usd,
+                                                                    cfg.merge_max_turns)
+            self._spend(agent or "claude", r.cost_usd)
+            out = r.output or {}
+            res["result"] = rounds.result_of(out) if r.ok else "failed"
+            res["pr"] = int(out.get("landed_pr") or 0)
+            res["summary"] = (out.get("summary") or out.get("gave_up") or r.error or "")[:600]
+            res["merged"] = [int(x) for x in out.get("merged") or [] if str(x).isdigit()]
+            res["left_out"] = out.get("left_out") or []
+        except Limited as e:
+            res["result"], res["summary"] = "limited", f"{agent} hit a limit: {e}"
+            if pool is not None and agent:
+                pool.pause(agent, self.cfg.limit_backoff_minutes, str(e))
+        except Exception as e:  # a crash in a round must never stop the loop
+            res["result"], res["summary"] = "crashed", f"{type(e).__name__}: {e}"
+        finally:
+            if pool is not None and agent:
+                pool.release(agent)
+        rounds.finish_file(round_file, res["result"], (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
+        self.state.merge_last = res
+        self.state.save(self.state_dir / "state.json")
+        self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
+                     + (f" ({res['summary'][:200]})" if res["summary"] else ""))
+        return res
+
+    def _spend(self, agent: str, usd: float) -> None:
+        if not usd:
+            return
+        st = self.state
+        st.spent[today()] = round(st.spent.get(today(), 0.0) + usd, 4)
+        day = st.spent_by_agent.setdefault(today(), {})
+        day[agent] = round(day.get(agent, 0.0) + usd, 4)
+
+    def merge_now(self) -> None:
+        """Try the same PRs again now, without waiting out mergeRetryMinutes."""
+        if self.state.merge_last:
+            self.state.merge_last["key"] = ""
+        self.wake()
+
+    def hold_merging(self, on: bool) -> None:
+        self.state.merge_held = bool(on)
+        self.state.save(self.state_dir / "state.json")
+        self.ctx.log("merging paused from the app" if on else "merging resumed from the app")
+        self.wake()
 
     def _watch(self) -> None:
         """Every `watch_minutes`: failed builds outside workers' PRs become tasks (see watcher.py)."""
@@ -400,7 +527,7 @@ class Engine:
             except Exception as e:  # one bad sync (GitHub down, say) must not end the loop
                 self.passing = False
                 self.ctx.log(f"check failed: {type(e).__name__}: {e}")
-            if draining and not self.jobs:
+            if draining and not self.jobs and self.round_job is None:
                 return
             wait = self.cfg.poll_minutes * 60
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
@@ -410,10 +537,14 @@ class Engine:
                 left = deadline - loop.time()
                 if left <= 0:
                     break
-                waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs)
+                waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs) + \
+                    ([self.round_job] if self.round_job is not None else [])
                 done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
                 if waits[0] not in done:
                     waits[0].cancel()
+                if self.round_job is not None and self.round_job in done:
+                    self.round_job, self.round_info = None, {}
+                    break  # the round ended: look again (the next round can start)
                 ended = [j for j in done if j in self.jobs]
                 if ended:
                     outcomes = self._settle(ended)
@@ -539,6 +670,8 @@ class Engine:
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
+                "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "running": dict(self.round_info),
+                               "why": self.merge_why, "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
                 "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),

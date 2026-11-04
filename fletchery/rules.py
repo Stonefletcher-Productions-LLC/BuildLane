@@ -3,6 +3,7 @@
     .fletchery/conventions.md   what every worker, reviewer and fixer must follow (naming, UI rules, saves, ...)
     .fletchery/gates.json       which checks Fletchery runs on a worker's change, by changed path
     .fletchery/worker.md        optional: added to the worker prompt (also reviewer.md, fixer.md, planner.md)
+    .fletchery/merger.md        optional: how a merge round builds and tests (rounds.py)
 
 gates.json:
 
@@ -69,7 +70,7 @@ def load(*roots: Path | str | None) -> Rules:
             for rule in data.get("rules", []):
                 runs = rule.get("run", [])
                 r.by_path.append((str(rule["paths"]), [runs] if isinstance(runs, str) else [str(x) for x in runs]))
-        for role in ("worker", "reviewer", "fixer", "planner"):
+        for role in ("worker", "reviewer", "fixer", "planner", "merger"):
             f = d / f"{role}.md"
             if f.exists():
                 r.additions[role] = f.read_text(encoding="utf-8-sig")
