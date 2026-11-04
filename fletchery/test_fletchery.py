@@ -1287,6 +1287,33 @@ assert fm.state.merge_last["result"] == "landed" and fm.state.merge_last["agent"
 assert [r for r, _, _ in _fk["claude"].calls] == ["merger"], "the dead agent isn't tried again"
 assert _clis.unreachable("Model unavailable: x") and not _clis.unreachable("You've hit your usage limit")
 
+# an agent that stops part way with a progress note is asked to carry on in the same session, not failed
+from runtime import RunResult as _RR  # noqa: E402
+
+
+class _Stopper(FakeRuntime):
+    resume_session = ""
+
+    def command(self, *a):  # looks like a CLI runtime that can resume
+        return [], None, {}
+
+    async def run(self, role, prompt, cwd, budget_usd, max_turns, on_action=None):
+        self.calls.append((role, self.resume_session, prompt))
+        if not self.resume_session:
+            return _RR(role, False, text="Build OK, now running the Game specs.", session_id="ses_1",
+                       error="no JSON answer from opencode: 'Build OK, now running the Game specs.'")
+        return _RR(role, True, output=dict(_ans), session_id="ses_1")
+
+
+_st = _Stopper()
+ctx, tmp = ctx_with({}, cfg=Config(max_parallel=0, daily_budget_usd=60, base_branch="Test-Staging", merge_rounds=True))
+ctx.agents = pool_with({"claude": _st, "deepseek-pro": FakeRuntime(), "deepseek": FakeRuntime()})
+ctx.gh.prs = [_PR(11, "Town", "b11", "Test-Staging", "b" * 40, ["ready"])]
+fm, _ = run_once(ctx, tmp)
+assert [c[1] for c in _st.calls] == ["", "ses_1"] and fm.state.merge_last["result"] == "landed", (_st.calls, fm.state.merge_last)
+assert _st.resume_session == ""
+assert _rounds.worktree_busy(tmp / "nowhere") == []
+
 
 # the round's worktree is made once and reset to origin/<base> for every round (build output stays)
 import subprocess as _sp  # noqa: E402

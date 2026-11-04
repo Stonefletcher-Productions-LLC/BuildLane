@@ -133,6 +133,24 @@ def result_of(output: dict) -> str:
     return "landed" if output.get("landed_pr") else "failed"
 
 
+def worktree_busy(path) -> list[str]:
+    """Processes whose command line names the round's worktree (an editor, a test run, a build): a new round must not
+    reset the worktree under them. [] when none, or when this can't be asked (not Windows)."""
+    import os
+    import subprocess
+    if os.name != "nt" or not Path(path).exists():
+        return []
+    p = str(Path(path)).replace("'", "''")
+    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('"
+          + p.lower() + "') -and $_.ProcessId -ne $PID } | ForEach-Object { \"$($_.ProcessId) $($_.Name)\" }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True,
+                             text=True, timeout=60, encoding="utf-8", errors="replace").stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [l.strip() for l in out.splitlines() if l.strip()]
+
+
 def prepare_worktree(repo, branch: str) -> Path:
     """One worktree for every round (`<worktrees>/merge-round`), reset to origin/<base> on a new branch. Build output
     the project ignores (Binaries, Intermediate) stays, so the next round's build is incremental."""
