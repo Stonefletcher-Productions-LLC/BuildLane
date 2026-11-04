@@ -4,9 +4,14 @@ folder went missing is repaired, not pruned."""
 from __future__ import annotations
 
 import os
+import json
+import threading
+import uuid
 import re
 import subprocess
 from pathlib import Path
+
+_TASK_CHECKOUT_LOCK = threading.RLock()
 
 
 class Repo:
@@ -26,21 +31,124 @@ class Repo:
     def fetch_base(self) -> None:
         self.git("fetch", "--no-tags", self.remote, self.base)
 
-    def worktree(self, number: int, slug: str, branch: str) -> Path:
-        """The task's worktree, created on first call from origin/<base>; on later calls just the path."""
-        path = self.worktree_root / f"{number}-{slug}"
-        if path.exists() and (path / ".git").exists():
+    def _registered_worktrees(self) -> set[Path]:
+        listed = self.git("worktree", "list", "--porcelain", "-z")
+        return {Path(field[len("worktree "):]).resolve() for field in listed.split("\0")
+                if field.startswith("worktree ")}
+
+    def _assert_owned_checkout(self, path: Path, local_branch: str, lease_file: str = "") -> None:
+        if path.resolve().parent != self.worktree_root.resolve():
+            raise RuntimeError("Task checkout must stay inside its configured worktree root")
+        from rounds import checkout_guard
+        checkout_guard(path)
+        if lease_file:
+            try:
+                lease = json.loads(Path(lease_file).read_text(encoding="utf-8-sig"))
+            except FileNotFoundError:
+                lease = {}
+            except (OSError, ValueError) as e:
+                raise RuntimeError(f"Cannot verify task checkout lease: {e}") from e
+            if not isinstance(lease, dict):
+                raise RuntimeError("Cannot verify task checkout lease: invalid lease data")
+            if lease.get("token"):
+                spaces = lease.get("workspaces")
+                spaces = spaces.split(";") if isinstance(spaces, str) else spaces
+                if not isinstance(spaces, list) or not spaces or any(not isinstance(x, str) or not x for x in spaces):
+                    raise RuntimeError("PC lease ownership is unknown; task checkout is preserved")
+                resolved = path.resolve()
+                for space in spaces:
+                    if not Path(space).is_absolute():
+                        raise RuntimeError("PC lease workspace is not absolute; task checkout is preserved")
+                    holder = Path(space).resolve()
+                    if resolved == holder or holder in resolved.parents or resolved in holder.parents:
+                        raise RuntimeError("Task checkout is held by the PC heavy lease")
+        if not (path / ".git").exists() or path.resolve() not in self._registered_worktrees():
+            raise RuntimeError("Task directory is not this repository's registered checkout; preserved")
+        if self.git("branch", "--show-current", cwd=path) != local_branch:
+            raise RuntimeError("Task checkout is on another local branch; preserved")
+
+    def _task_checkout_state(self) -> dict:
+        state_file = self.worktree_root / ".task-checkouts.json"
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            return {"active": {}, "preserved": []}
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"Cannot read task checkout state: {e}") from e
+        if not isinstance(state, dict) or not isinstance(state.get("active"), dict) or not isinstance(state.get("preserved"), list):
+            raise RuntimeError("Invalid task checkout state")
+        if any(not isinstance(key, str) or not isinstance(entry, dict)
+               or not isinstance(entry.get("path"), str) or not entry["path"]
+               or not isinstance(entry.get("local_branch"), str) or not entry["local_branch"]
+               for key, entry in state["active"].items()):
+            raise RuntimeError("Invalid active task checkout record")
+        if any(not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not entry["path"]
+               for entry in state["preserved"]):
+            raise RuntimeError("Invalid preserved task checkout record")
+        return state
+
+    def _task_location(self, number: int, slug: str, branch: str, state: dict) -> tuple[Path, str]:
+        default = self.worktree_root / f"{number}-{slug}"
+        entry = state["active"].get(branch)
+        path = Path(entry["path"]) if entry else default
+        if (path.resolve().parent != self.worktree_root.resolve()
+                or not re.fullmatch(re.escape(default.name) + r"(?:-attempt-[0-9a-f]{12})?", path.name)):
+            raise RuntimeError("Invalid active task checkout path")
+        if any(Path(entry["path"]).resolve() == path.resolve() for entry in state["preserved"]):
+            raise RuntimeError("Active task checkout was already preserved")
+        return path, entry["local_branch"] if entry else branch
+
+    def worktree(self, number: int, slug: str, branch: str, lease_file: str = "") -> Path:
+        """Return this task's owned active checkout. Escalated attempts use fresh paths;
+        the original checkout and all generated/staged content remain untouched."""
+        with _TASK_CHECKOUT_LOCK:
+            state = self._task_checkout_state()
+            path, local_branch = self._task_location(number, slug, branch, state)
+            if path.exists():
+                self._assert_owned_checkout(path, local_branch, lease_file)
+                return path
+            if branch in state["active"] or path.resolve() in self._registered_worktrees():
+                raise RuntimeError("Registered task checkout is missing; prior work and registration are preserved")
+            self.worktree_root.mkdir(parents=True, exist_ok=True)
+            branches = self.git("branch", "--list", local_branch)
+            if branches:
+                self.git("worktree", "add", str(path), local_branch)
+            else:
+                self.git("worktree", "add", "-b", local_branch, str(path), f"{self.remote}/{self.base}")
             return path
-        self.worktree_root.mkdir(parents=True, exist_ok=True)
-        existing = self.git("worktree", "list", "--porcelain")
-        if f"worktree {path}" in existing:  # registered but folder gone: PC rule says repair, never prune
-            self.git("worktree", "repair", str(path), check=False)
-        branches = self.git("branch", "--list", branch)
-        if branches:
-            self.git("worktree", "add", str(path), branch)
-        else:
-            self.git("worktree", "add", "-b", branch, str(path), f"{self.remote}/{self.base}")
-        return path
+
+    def ensure_task_checkout(self, number: int, slug: str, branch: str, path: Path,
+                             lease_file: str = "", require_clean: bool = False) -> None:
+        with _TASK_CHECKOUT_LOCK:
+            current, local_branch = self._task_location(number, slug, branch, self._task_checkout_state())
+            if current.resolve() != Path(path).resolve():
+                raise RuntimeError("Task checkout is no longer its active attempt; preserved")
+            self._assert_owned_checkout(current, local_branch, lease_file)
+            if require_clean and self.dirty(current):
+                raise RuntimeError("Task checkout has uncommitted changes; it was not pushed")
+
+    def restart_task_worktree(self, number: int, slug: str, branch: str, previous: Path,
+                              reason: str, lease_file: str = "") -> Path:
+        """Preserve the failed attempt in place and start a separate candidate at base.
+        The logical remote branch stays stable; no reset, clean, move or force operation."""
+        from rounds import now_iso, write_file
+        with _TASK_CHECKOUT_LOCK:
+            state = self._task_checkout_state()
+            path, local_branch = self._task_location(number, slug, branch, state)
+            if path.resolve() != Path(previous).resolve():
+                raise RuntimeError("Only this task's active checkout can be escalated")
+            self._assert_owned_checkout(path, local_branch, lease_file)
+            self.fetch_base()
+            self._assert_owned_checkout(path, local_branch, lease_file)
+            attempt = uuid.uuid4().hex[:12]
+            replacement = self.worktree_root / f"{number}-{slug}-attempt-{attempt}"
+            candidate_branch = f"fletchery/task-{number}-attempt-{attempt}"
+            self.git("worktree", "add", "-b", candidate_branch, str(replacement), f"{self.remote}/{self.base}")
+            state["preserved"].append({"path": str(path.resolve()), "local_branch": local_branch,
+                                       "head": self.head(path), "reason": reason[:4000], "at": now_iso()})
+            state["active"][branch] = {"path": str(replacement.resolve()), "local_branch": candidate_branch}
+            write_file(str(self.worktree_root / ".task-checkouts.json"), state)
+            return replacement
 
     def _repair_remote_head(self, branch: str) -> str:
         if not branch or branch.startswith("-") or branch in (self.base, "main", "master"):
@@ -68,23 +176,27 @@ class Repo:
         path = self.worktree_root / f"{number}-{slug}-repair-{head_sha[:12]}"
         if path.resolve().parent != self.worktree_root.resolve():
             raise RuntimeError("Repair checkout path must stay inside its configured worktree root")
-        from rounds import checkout_guard
-        checkout_guard(path)
         if path.exists():
-            registered = self.git("worktree", "list", "--porcelain", "-z")
-            roots = {Path(field[len("worktree "):]).resolve() for field in registered.split("\0")
-                     if field.startswith("worktree ")}
-            if not (path / ".git").exists() or path.resolve() not in roots:
-                raise RuntimeError("Existing repair directory is not this repository's registered checkout; preserved")
-            self.git("merge-base", "--is-ancestor", head_sha, "HEAD", cwd=path)
+            self.ensure_repair_checkout(path, branch, head_sha)
         else:
             self.worktree_root.mkdir(parents=True, exist_ok=True)
             local = f"fletchery/repair-{number}-{head_sha[:12]}"
             self.git("worktree", "add", "-b", local, str(path), head_sha)
         return path
 
-    def push_repair(self, wt: Path, branch: str, expected_head: str) -> None:
+    def ensure_repair_checkout(self, path: Path, branch: str, head_sha: str,
+                               lease_file: str = "", require_clean: bool = False) -> None:
+        match = re.fullmatch(r"([0-9]+)-.+-repair-" + re.escape(head_sha[:12]), Path(path).name)
+        if not match:
+            raise RuntimeError("Unexpected repair checkout path; preserved")
+        self._assert_owned_checkout(Path(path), f"fletchery/repair-{match[1]}-{head_sha[:12]}", lease_file)
+        self.git("merge-base", "--is-ancestor", head_sha, "HEAD", cwd=path)
+        if require_clean and self.dirty(path):
+            raise RuntimeError("Repair checkout has uncommitted changes; it was not pushed")
+
+    def push_repair(self, wt: Path, branch: str, expected_head: str, lease_file: str = "") -> None:
         """Only fast-forward the unchanged existing PR, preserving its original commits."""
+        self.ensure_repair_checkout(wt, branch, expected_head, lease_file, require_clean=True)
         if self._repair_remote_head(branch) != expected_head:
             raise RuntimeError("The remote PR head changed during repair; local fix is preserved and was not pushed")
         self.git("merge-base", "--is-ancestor", expected_head, "HEAD", cwd=wt)
@@ -92,6 +204,8 @@ class Repo:
         tracked = self.lfs_tracked(wt, changed)
         if tracked:
             raise RuntimeError("Repair changes LFS-tracked files; use the project's asset delivery lane: " + ", ".join(tracked[:5]))
+        # Recheck after remote inspection in case another process took ownership.
+        self.ensure_repair_checkout(wt, branch, expected_head, lease_file, require_clean=True)
         # No force or force-with-lease: another writer advancing after the check is
         # still protected by Git's normal fast-forward receive rule.
         self.git("push", "--no-verify", "-u", self.remote, f"HEAD:refs/heads/{branch}", cwd=wt)
@@ -111,10 +225,7 @@ class Repo:
         self.git("-c", "user.name=Fletchery", "-c", "user.email=fletchery@localhost", "commit", "-q", "-m", message, cwd=wt)
 
     def reset_to_base(self, wt: Path) -> None:
-        """Throw away a failed attempt's work (commits and files) before a stronger agent starts on the same branch.
-        Only ever inside the task's own worktree."""
-        self.git("reset", "--hard", f"{self.remote}/{self.base}", cwd=wt)
-        self.git("clean", "-fdq", cwd=wt)
+        raise RuntimeError("Destructive worker resets are disabled; preserve and restart the task checkout")
 
     def lfs_tracked(self, wt: Path, files: list[str]) -> list[str]:
         if not files:
@@ -143,20 +254,32 @@ class FakeRepo:
         self.pushed: list[str] = []
         self.fetched = 0
         self.resets: list[str] = []
+        self.active_checkouts: dict[str, Path] = {}
 
     def fetch_base(self):
         self.fetched += 1
 
-    def worktree(self, number, slug, branch):
-        p = self.worktree_root / f"{number}-{slug}"
+    def worktree(self, number, slug, branch, lease_file=""):
+        p = self.active_checkouts.get(branch, self.worktree_root / f"{number}-{slug}")
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     def repair_worktree(self, number, slug, branch, head_sha):
         return self.worktree(number, slug, branch)
 
-    def push_repair(self, wt, branch, expected_head):
+    def ensure_repair_checkout(self, wt, branch, expected_head, lease_file="", require_clean=False):
+        pass
+
+    def push_repair(self, wt, branch, expected_head, lease_file=""):
         return self.push(wt, branch)
+
+    def ensure_task_checkout(self, number, slug, branch, path, lease_file="", require_clean=False):
+        pass
+
+    def restart_task_worktree(self, number, slug, branch, previous, reason, lease_file=""):
+        self.resets.append(previous.name)
+        self.active_checkouts[branch] = self.worktree_root / f"{number}-{slug}-attempt-{len(self.resets)}"
+        return self.worktree(number, slug, branch)
 
     def changed_files(self, wt):
         n = int(wt.name.split("-")[0])

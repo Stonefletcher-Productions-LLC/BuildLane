@@ -187,6 +187,7 @@ class Engine:
         gh, cfg, st = self.ctx.gh, self.cfg, self.state
         self.last_plan = []
         self.passing = True
+        self.dispatch_warning = ""
         try:
             self._watch()
             tasks = gh.open_tasks()
@@ -241,16 +242,33 @@ class Engine:
                 st.signed_out = ""  # Claude's sign-in is one agent's problem now: the others carry on (agents panel)
         paused = limit_paused or st.held or bool(st.signed_out) or draining
 
+        # A shared prerequisite is queried only once per pass. A lookup failure
+        # keeps dependents waiting, without blocking unrelated work.
+        dependency_closed: dict[int, bool] = {}
+        dependency_errors: set[int] = set()
+
+        def is_closed(number: int) -> bool:
+            if number not in dependency_closed:
+                try:
+                    dependency_closed[number] = gh.issue_closed(number)
+                except Exception as e:
+                    dependency_closed[number] = False
+                    dependency_errors.add(number)
+                    self.dispatch_warning = "GitHub could not verify prerequisites: " + ", ".join(f"#{d}" for d in sorted(dependency_errors))
+                    self.ctx.log(f"#{number}: prerequisite lookup deferred: {e}")
+            return dependency_closed[number]
+
+        budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         # 1. feedback on open PRs -> fixers (one per task at a time)
         ordered_feedback = sorted(by_pr.items())
         ordered_feedback = [x for x in ordered_feedback if x[0] > st.feedback_cursor] + [x for x in ordered_feedback if x[0] <= st.feedback_cursor]
         inspected_feedback = 0
         for pr_num, task in ordered_feedback:
-            if paused or self.free_slots() <= 0 or inspected_feedback >= 6:
+            if paused or not budget_left or self.free_slots() <= 0 or inspected_feedback >= 6:
                 break
             if task.number in self.active:
                 continue
-            if any(d in tasks or not gh.issue_closed(d) for d in task.depends_on):
+            if any(d in tasks or not is_closed(d) for d in task.depends_on):
                 continue
             pr = prs[pr_num]
             inspected_feedback += 1
@@ -302,8 +320,13 @@ class Engine:
                     t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
                     self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
                 break
-        closed_deps = {d for t in tasks.values() for d in t.depends_on if d not in tasks and gh.issue_closed(d)}
+        external_dependencies = {d for t in tasks.values() for d in t.depends_on if d not in tasks}
+        closed_deps = {d for d in sorted(external_dependencies) if is_closed(d)}
         rd = readiness(tasks, closed_deps)
+        for number in rd.waiting:
+            unknown = dependency_errors.intersection(tasks[number].depends_on)
+            if unknown:
+                rd.waiting[number] = "prerequisite status unavailable; retrying GitHub for " + ", ".join(f"#{d}" for d in sorted(unknown))
         fixing = {t.number for t in by_pr.values()}
         rd.ready = [t for t in rd.ready if t.number not in self.active and t.number not in fixing]
         if pool is not None:  # a task whose agents are all off, paused or busy waits instead of starting and stopping
@@ -342,8 +365,10 @@ class Engine:
                 t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
                 self._start(run_task(t, self.ctx), t.number, None, None)
             st.save(self.state_dir / "state.json")
-        self._merge_round(draining)
+        # Merge eligibility must see this pass's issue dependencies, including on
+        # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
+        self._merge_round(draining)
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
     # ---- merge rounds: keep ready PRs merging without anyone (rounds.py) ----
@@ -362,6 +387,9 @@ class Engine:
                 self.ctx.log(f"merge rounds: could not file prior crash: {type(e).__name__}: {e}")
         if self.round_job is not None:
             self.merge_why = "a round is running"
+            return
+        if st.spent.get(today(), 0.0) >= cfg.daily_budget_usd:
+            self.merge_why = "daily budget spent"
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
@@ -450,16 +478,17 @@ class Engine:
             rules = rules_mod.load(wt, cfg.project_root)
             flags_cfg = [f for f in (cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
 
+            # One file read per PR, outside the event loop: slow GitHub metadata
+            # must not freeze worker output, completion handling or dashboard controls.
+            files_by_pr = {}
+            for p in batch:
+                files_by_pr[p.number] = await asyncio.to_thread(gh.pr_files, p.number)
+                self.__dict__.setdefault("_merge_files", {})[(p.number, p.head_sha)] = files_by_pr[p.number]
+
             def flags_for(p):
-                if not flags_cfg:
-                    return []
-                try:
-                    files = gh.pr_files(p.number)
-                    self.__dict__.setdefault("_merge_files", {})[(p.number, p.head_sha)] = files
-                except Exception:
-                    return []
+                files = files_by_pr[p.number]
                 return [f["flag"] for f in flags_cfg if any(re.search(f["paths"], x) for x in files)]
-            changed = sorted({f for p in batch for f in gh.pr_files(p.number)})
+            changed = sorted({f for files in files_by_pr.values() for f in files})
             validation = rounds.validation_plan(changed, cfg.base_branch)
             prompt = role_prompt("merger", rules, project=cfg.name, base=cfg.base_branch, branch=branch, round=str(n),
                                  label=cfg.merge_label or "ready", prs=rounds.pr_list_text(batch, flags_for),
@@ -698,7 +727,7 @@ class Engine:
                 self.dispatch(draining=self._reload_draining)
                 await asyncio.sleep(0)  # let new worker coroutines start before optional status publishing
                 self.publish([])
-                self.sync_error = ""
+                self.sync_error = self.dispatch_warning
             except Exception as e:
                 self.passing = False
                 self.sync_error = f"{type(e).__name__}: {e}"
@@ -750,6 +779,7 @@ class Engine:
 
     # ---- controls (called from the dashboard's thread) ----
     sync_error: str = ""
+    dispatch_warning: str = ""  # partial network failures still get a short retry
     restart_reason: str = ""  # set by request_restart: drain like a code update, then the launcher starts us again
 
     def request_restart(self, reason: str) -> None:

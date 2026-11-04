@@ -37,6 +37,8 @@ A profile without `agents` runs Claude only, the way Fletchery always has.
 | `vendor` | The company behind the model. A reviewer always comes from a different vendor than the writer when one is on |
 | `enabled` | Off means nothing new goes to it. The **On/Off** switch on the dashboard changes this |
 | `maxParallel` | Optional: how many tasks this agent may run at once |
+| `roles` | Optional role list: worker, fixer, reviewer, planner, merger. `null` allows all; `[]` allows none |
+| `levels` | Optional difficulty list: easy, medium, hard. Applies to assignment and escalation. `null` allows all; `[]` allows none |
 | `keyEnv` | Optional: stored API keys this agent's sessions receive, such as `["DEEPSEEK_API_KEY"]` |
 | `auth` | `plan` (default): the CLI's own sign-in (Claude plan, ChatGPT for Codex, OpenCode's sign-in). `key`: the agent's API key from the key store instead, billed per token. Switch it in Settings > Accounts ("Runs on"). |
 | `timeoutMinutes` | Optional, for Codex and OpenCode, which have no turn limit: `{"worker": 60, "reviewer": 20}` |
@@ -84,8 +86,9 @@ Where a score comes from, strongest first:
   the strongest agents, at `reviewMinTier` (2) or above. If no other vendor is on, another agent reviews. If there is
   no other agent at all, a fresh session of the same agent reviews, as with Claude alone.
 - **Escalation.** When a worker gives up, makes no commits, can't get the checks to pass, or the reviewer still wants
-  changes after one more pass, Fletchery throws that attempt away (`git reset --hard` to the base, in the task's own
-  worktree only). The next stronger agent then starts again and is told what went wrong. The task is blocked only after
+  changes after one more pass, Fletchery preserves that attempt's checkout, including generated and uncommitted files.
+  The next stronger eligible agent starts in a separate checkout at the base and is told what went wrong. The logical
+  PR branch remains stable, and the saved active-checkout registry survives restarts. The task is blocked only after
   the strongest agent has failed too. A reviewer's `escalate` verdict (a person must decide) still blocks straight
   away. **Escalate on failure** on the dashboard turns this off.
 - **Fixers.** When the Build Lane sends a PR back, the agent that wrote it fixes it. The second attempt goes one tier

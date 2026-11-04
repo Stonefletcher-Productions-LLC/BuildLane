@@ -113,7 +113,7 @@ class RepairCheckoutTests(unittest.TestCase):
     def test_fix_must_retain_original_pr_ancestry(self):
         wt = self.prepared()
         self.repo.git("checkout", "--detach", "origin/main", cwd=wt)
-        with self.assertRaisesRegex(RuntimeError, "merge-base"):
+        with self.assertRaisesRegex(RuntimeError, "another local branch"):
             self.repo.push_repair(wt, "external-feature", self.head)
         self.assertEqual(self.git("rev-parse", "refs/heads/external-feature", cwd=self.origin).strip(), self.head)
 

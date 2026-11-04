@@ -33,6 +33,19 @@ from typing import Callable
 
 EASY, MEDIUM, HARD = "easy", "medium", "hard"
 LEVELS = (EASY, MEDIUM, HARD)
+ROLES = ("worker", "fixer", "reviewer", "planner", "merger")
+
+
+def restrictions(data: dict) -> dict:
+    """Validate and copy optional role/difficulty limits; None means unrestricted, [] means none."""
+    out = {}
+    for key, allowed in (("levels", LEVELS), ("roles", ROLES)):
+        if key in data:
+            value = data[key]
+            if value is not None and (not isinstance(value, list) or any(x not in allowed for x in value)):
+                raise ValueError("Invalid " + key)
+            out[key] = list(value) if value is not None else None
+    return out
 
 
 @dataclass
@@ -124,10 +137,15 @@ def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
         return [AgentSpec("claude", "claude", default_model, 4, "anthropic")]
     out = []
     for item in raw:
+        limits = restrictions(item)
         s = AgentSpec(name=str(item.get("name") or item.get("kind") or "agent"))
         for k, v in item.items():
             if k in _SPEC_KEYS:
                 setattr(s, _SPEC_KEYS[k], v)
+        for key, value in limits.items():
+            setattr(s, key, value)
+        if any(previous.name == s.name for previous in out):
+            raise ValueError(f"Duplicate agent name: {s.name}")
         if not s.vendor:
             s.vendor = DEFAULT_VENDOR.get(s.kind) or (s.model.split("/")[-1].split("-")[0] if s.model else s.kind)
         if s.kind == "claude" and not s.model:
@@ -475,12 +493,17 @@ class AgentPool:
         if self.mode == "scores":
             return self._choose_scored(level, why, skill, skill_why, stats, role)
         order, learned = self.learned(self.preferences(level), level, stats)
-        for n in order:
-            if self.available(n, role) and (self.specs[n].levels is None or level in self.specs[n].levels):
-                bits = [f"{level}: {why}"] + ([learned] if learned else [])
-                if n != order[0]:
-                    bits.append(f"{order[0]} is paused or busy")
-                return Choice(n, level, "; ".join(bits), skill)
+        eligible = [n for n in order if self.available(n, role)
+                    and (self.specs[n].levels is None or level in self.specs[n].levels)]
+        kinds = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+        preferred = [n for n in eligible if self.specs[n].kind in kinds]
+        for n in preferred or eligible:
+            bits = [f"{level}: {why}"] + ([learned] if learned else [])
+            if preferred:
+                bits.append("preferred provider policy")
+            elif n != order[0]:
+                bits.append(f"{order[0]} is paused or busy")
+            return Choice(n, level, "; ".join(bits), skill)
         return None
 
     def escalate(self, name: str, role: str = "worker", skill: str = "", level: str = "") -> str | None:

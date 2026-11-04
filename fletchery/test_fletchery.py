@@ -912,11 +912,12 @@ fm, out = run_once(ctx, tmp)
 o = out[0]
 assert o.result == "pr" and o.agent == "deepseek-pro" and o.reviewer == "claude", o
 assert [(a["agent"], a["ok"]) for a in o.attempts] == [("deepseek", False), ("deepseek-pro", True)], o.attempts
-assert ctx.repo.resets == ["30-fix-typo-in-readme"], "the failed attempt's work is thrown away"
+assert ctx.repo.resets == ["30-fix-typo-in-readme"], "the failed attempt is preserved before preparing its replacement"
 assert [r for r, _, _ in fakes["claude"].calls] == ["reviewer"], "claude only reviewed"
 assert "Earlier attempts" in fakes["deepseek-pro"].calls[0][2], "the next agent is told what went wrong"
 assert "**Written by:** deepseek-pro (after deepseek) · **Reviewed by:** claude" in ctx.gh.prs[-1].body
-assert any("handing" in c or "starts again" in c for c in ctx.gh.comments[30])
+assert any("work is preserved at" in c for c in ctx.gh.comments[30])
+assert any(p.name.endswith("-attempt-1") for p in ctx.repo.active_checkouts.values()), "escalation gets a distinct checkout"
 led = [_json_mod.loads(l) for l in (tmp / "state" / "ledger.jsonl").read_text().splitlines()]
 assert led[-1]["agent"] == "deepseek-pro" and len(led[-1]["attempts"]) == 2
 assert fm.stats().rate("deepseek", "easy") == (0.0, 1) and fm.stats().rate("deepseek-pro", "easy") == (1.0, 1)
