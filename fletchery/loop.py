@@ -321,6 +321,12 @@ class Engine:
         if pool is not None and not agent:
             self.merge_why = "no agent can run a round now (a Claude or OpenCode agent that is on, signed in and not at a limit)"
             return
+        wt_root = getattr(self.ctx.repo, "worktree_root", None)
+        busy = rounds.worktree_busy(Path(wt_root) / "merge-round") if wt_root and not self.dry_run else []
+        if busy:
+            self.merge_why = ("processes from the last round still run in its worktree (" + ", ".join(busy[:3])
+                              + "): the next round waits for them")
+            return
         batch = ready[:max(1, int(cfg.merge_round_max or 12))]
         round_file = cfg.merge_round_file or str(self.state_dir / "merge-round.json")
         try:
@@ -369,9 +375,19 @@ class Engine:
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
             rt = pool.runtime(agent) if pool is not None and agent else self.ctx.runtime
-            r = await _LimitGuard(rt, self.ctx, 0, agent or "").run("merger", prompt, wt, cfg.merge_budget_usd,
-                                                                    cfg.merge_max_turns)
+            guard = _LimitGuard(rt, self.ctx, 0, agent or "")
+            r = await guard.run("merger", prompt, wt, cfg.merge_budget_usd, cfg.merge_max_turns)
             self._spend(agent or "claude", r.cost_usd)
+            for _ in range(2):  # stopped part way with a progress note: carry on in the same session
+                if r.ok or not r.session_id or "no JSON answer" not in (r.error or "") or not hasattr(rt, "command"):
+                    break
+                self.ctx.log(f"merge round {n}: {agent} stopped before the end; asking it to carry on")
+                rt.resume_session = r.session_id
+                try:
+                    r = await guard.run("merger", prompt, wt, cfg.merge_budget_usd, cfg.merge_max_turns)
+                finally:
+                    rt.resume_session = ""
+                self._spend(agent or "claude", r.cost_usd)
             out = r.output or {}
             res["result"] = rounds.result_of(out) if r.ok else "failed"
             res["pr"] = int(out.get("landed_pr") or 0)

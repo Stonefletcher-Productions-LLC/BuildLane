@@ -306,6 +306,10 @@ OPENCODE_PERMISSIONS = {
 }
 
 
+RESUME_MESSAGE = ("You stopped before the end. Carry on with the task from where you are, finish every step it asks "
+                  "for, and end with the JSON answer it asks for.")
+
+
 class OpenCodeRuntime(CliRuntime):
     """`opencode run --format json`: JSON lines with a `type` (text, tool_use, step_finish, error) and a `part`."""
 
@@ -315,11 +319,18 @@ class OpenCodeRuntime(CliRuntime):
         perms = OPENCODE_PERMISSIONS["read" if role in READ_ONLY else "write"]
         config = {"$schema": "https://opencode.ai/config.json", "permission": perms, "share": "disabled",
                   "autoupdate": False}
-        argv = [find_opencode(self.spec.command), "run", "--format", "json", "--title", f"Fletchery {role}",
-                "-f", str(prompt_file)]
+        # --standalone: a private server, never the OpenCode app's background service. On the service a session
+        # outlived Fletchery's CLI and kept working in a worktree Fletchery had moved on from (LifeShare, 2026-11-04).
+        resume = getattr(self, "resume_session", "")
+        argv = [find_opencode(self.spec.command), "run", "--standalone", "--format", "json"]
+        if resume:
+            argv += ["-s", resume]
+        else:
+            argv += ["--title", f"Fletchery {role}", "-f", str(prompt_file)]
         if self.spec.model:
             argv += ["-m", self.spec.model]
-        argv.append("Do the task in the attached prompt.md exactly as it says, and answer with the JSON it asks for.")
+        argv.append(RESUME_MESSAGE if resume else
+                    "Do the task in the attached prompt.md exactly as it says, and answer with the JSON it asks for.")
         return argv, None, {"OPENCODE_CONFIG_CONTENT": json.dumps(config)}
 
     def on_event(self, ev, state, cwd, on_action):
