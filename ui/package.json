@@ -1,0 +1,10 @@
+{
+  "name": "fletchery-ui-checks",
+  "private": true,
+  "scripts": {
+    "test": "node test-control-room.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

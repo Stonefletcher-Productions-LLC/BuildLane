@@ -11,7 +11,14 @@ OpenCode). You write what you want as GitHub issues. An agent writes each change
 it, an agent from a different company reviews it, and it becomes a pull request. Your build lane then builds, tests
 and merges it. One window shows all of it, and nothing merges without passing your checks.
 
-![Fletchery with a queue of tasks, two workers writing code, and their pull requests (illustrative data)](docs/images/fletchery/overview.png)
+The Control room keeps live workers and merge progress on **Overview**, with separate
+**Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
+open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
+available across views. Choose **System**, **Light** or **Dark** in the sidebar; your
+theme and last view are remembered on this machine.
+
+
+![Fletchery Control room with compact workers, merge progress and attention items (illustrative data)](docs/images/fletchery/overview.png)
 
 <sub>Every screenshot here is the real app showing a made-up project, "Harbor". See [where the pictures come from](#where-the-pictures-come-from).</sub>
 
@@ -292,3 +299,13 @@ not results from a real project.
 
 Made by Stonefletcher Productions LLC. Fletchery grew out of BuildLane: the GitHub address still works under the old
 name.
+
+## Checking the Control room UI
+
+With Node.js and Microsoft Edge installed, run `npm ci --prefix ui` followed by
+`npm test --prefix ui`. The browser checks use a local fixture server, never a live
+backend. They cover sidebar navigation, legacy section links, light/dark/system
+preferences, worker details surviving polling, task dialogs, pause controls, narrow
+windows and unavailable local storage. Preview screenshots go to the Windows temp
+folder; set `FLETCHERY_SCREENSHOTS` to choose another output folder. Set
+`FLETCHERY_BROWSER` to use a specific Chromium executable.

@@ -26,3 +26,4 @@ __pycache__/
 shell/bin/
 shell/obj/
 shell/packages/
+ui/node_modules/
