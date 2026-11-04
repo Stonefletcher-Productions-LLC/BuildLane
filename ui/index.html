@@ -8,6 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<script>
+// Apply before the first paint; storage may be unavailable in a private WebView.
+(function () {
+  let theme = "system";
+  try { theme = localStorage.getItem("fletchery.theme") || theme; } catch (_) {}
+  document.documentElement.dataset.theme = theme === "dark" || (theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+})();
+</script>
 <style>
   /* Fletchery's screens. Colours are the colour-blind-safe set (Okabe-Ito); every state also has a
      glyph and a word, like the Buildlane app. One loud thing: the Now strip. Everything else stays quiet. */
@@ -441,13 +449,193 @@
     .slots { grid-template-columns: 1fr; }
     .brand { flex-direction: column; gap: 4px; }
   }
+
+  /* Control room: navigation and compact, theme-aware surfaces. */
+  :root { --accent: #087F68; --soft: #F3F6F8; --accent-bg: #E0F2EC; --r-lg: 10px; --ink: #202B35; }
+  :root[data-theme="dark"] {
+    color-scheme: dark; --paper: #141B22; --panel: #1D2731; --soft: #24313C;
+    --ink: #EDF2F6; --muted: #A5B5C4; --rule: #374652; --accent: #70DCC1; --accent-bg: #183E36;
+    --running: #7DE2BC; --running-bg: #193C32; --queued: #9DCCF1; --queued-bg: #223C50;
+    --lane: #9DCCF1; --lane-bg: #223C50; --blocked: #FFB782; --blocked-bg: #452E23;
+    --hold: #EEC77E; --hold-bg: #403522;
+  }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .skip-link { position: fixed; top: -100px; left: 12px; z-index: 20; background: var(--panel); padding: 8px 12px; }
+  .skip-link:focus { top: 8px; }
+  .round-detail { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .round-detail summary { cursor: pointer; }
+  .round-detail p { margin: 5px 0; }
+  .round-status { font-size: 13px; }
+  .round-status small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+  body { font: 14px/1.5 "Atkinson Hyperlegible", system-ui, sans-serif; }
+  .sidebar { position: fixed; inset: 0 auto 0 0; width: 180px; padding: 24px 14px 18px; background: var(--panel);
+    border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 28px; z-index: 5; }
+  .sidebar-brand { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 700; padding: 0 8px; }
+  .brandmark { color: var(--accent); font-size: 27px; line-height: 1; font-weight: 700; }
+  .sidebar nav { display: grid; gap: 5px; }
+  .sidebar a { display: flex; gap: 10px; align-items: center; text-decoration: none; padding: 10px 12px;
+    border-radius: 7px; color: var(--muted); font-weight: 700; }
+  .sidebar a:hover { background: var(--soft); color: var(--ink); }
+  .sidebar a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); }
+  .nav-icon { width: 18px; text-align: center; font-size: 17px; }
+  .nav-count { margin-left: auto; border-radius: 5px; font-size: 11px; padding: 0 5px; background: var(--soft); color: var(--ink); }
+  .nav-count.attention { color: var(--hold); background: var(--hold-bg); }
+  .sidebar-bottom { margin-top: auto; display: grid; gap: 12px; }
+  #settingsBtn { text-align: left; border: 0; background: transparent; padding: 8px 12px; }
+  #settingsBtn:hover { background: var(--soft); color: var(--ink); }
+  .theme-control { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; padding: 0 8px; }
+  .theme-control select { width: auto; min-width: 0; margin: 0; padding: 5px 7px; font-size: 12px; border: 1px solid var(--rule); }
+  .wrap { max-width: 1600px; margin-left: 180px; padding: 20px 28px 28px; }
+  header.top { border-bottom: 1px solid var(--rule); padding-bottom: 16px; margin-bottom: 22px; gap: 10px 20px; }
+  .brand { flex: 1 1 240px; gap: 12px; flex-wrap: wrap; }
+  .brand h1 { font-size: 18px; letter-spacing: 0; }
+  .brand h1 .proj { display: inline; font-size: 16px; color: var(--ink); font-weight: 700; }
+  .brand .state { font-size: 12px; max-width: 58ch; }
+  button { min-height: 34px; padding: 6px 11px; font-size: 13px; border: 1px solid var(--rule); border-radius: 6px; }
+  button:hover { background: var(--soft); color: var(--ink); }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  :root[data-theme="dark"] button.primary { color: #12251F; }
+  button.primary:hover { filter: brightness(.94); background: var(--accent); }
+  .page-heading { display: flex; gap: 12px; align-items: baseline; margin: 0 0 14px; }
+  .page-heading h2 { font-size: 23px; letter-spacing: -.02em; margin: 0; }
+  .page-heading p { margin: 0; font-size: 12px; color: var(--muted); }
+  .summary-strip { display: flex; flex-wrap: wrap; gap: 10px 24px; padding: 11px 15px; margin-bottom: 18px;
+    background: var(--soft); border: 1px solid var(--rule); border-radius: 8px; font-size: 13px; }
+  .summary-strip a { text-decoration: none; }
+  .summary-strip a:hover { text-decoration: underline; }
+  .summary-strip .attention { color: var(--hold); }
+  .overview-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(290px, 1fr); gap: 16px; align-items: start; }
+  .overview-grid > * { min-width: 0; }
+  .card, section.now, section.tasks, section.agents, section.lane, .col { border: 1px solid var(--rule); background: var(--panel);
+    color: var(--ink); box-shadow: none; border-radius: 10px; padding: 15px 16px; margin-bottom: 0; }
+  .card h3, .now h2, .sec-head h2, .ag-head h2, .lane-head h2, .col h3 { font-size: 15px; color: var(--ink); }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .card-head h3 { margin: 0; }
+  .card-head a { font-size: 12px; color: var(--accent); text-decoration: none; }
+  .now-head { margin-bottom: 8px; align-items: center; }
+  .now-head p { display: none; }
+  .wcount, .wcount b { color: var(--muted); font-size: 13px; }
+  .step.dark { color: var(--ink); border-color: var(--rule); }
+  .step.dark:hover { background: var(--soft); color: var(--ink); }
+  .slots { display: block; }
+  .slots-scroll { max-height: var(--h, 380px); padding: 0; }
+  .slot { display: block; min-height: 0; background: transparent; border-radius: 0; border-top: 1px solid var(--rule); padding: 0; }
+  .slot summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center; gap: 5px 12px; padding: 12px 0; }
+  .slot summary::-webkit-details-marker { display: none; }
+  .worker-title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+  .worker-meta { grid-row: 2; color: var(--muted); font-size: 12px; }
+  .worker-stage { grid-column: 2; grid-row: 1 / 3; color: var(--accent); background: var(--accent-bg); padding: 3px 7px;
+    border-radius: 5px; font-size: 11px; max-width: 140px; overflow-wrap: anywhere; }
+  .worker-stage::after { content: " ⌄"; }
+  .slot[open] .worker-stage::after { content: " ⌃"; }
+  .worker-detail { padding: 0 0 13px; }
+  .worker-detail > a { color: var(--accent); font-size: 12px; }
+  .slot .what, .doing { font-size: 12px; color: var(--muted); margin: 8px 0; }
+  .slot .branch, .doing-label, .slot .count, .doing .ago { color: var(--muted); font-size: 11px; }
+  .slot.free { display: block; min-height: 0; padding: 10px 0 0; border: 0; font-size: 12px; color: var(--muted); }
+  .track li { color: var(--muted); border-color: var(--rule); }
+  .track li.done { color: var(--muted); border-color: var(--accent); }
+  .track li.on { color: var(--accent); border-color: var(--accent); }
+  .grip, .tq-grip { height: 9px; margin-top: 5px; }
+  .grip::before, .tq-grip::before { height: 3px; width: 36px; background: var(--rule); }
+  .merge-now, .merge-now.idle, .merge-now.running, .merge-now.waiting { background: transparent; color: var(--ink); padding: 0; font-size: 12px; }
+  .merge-now.failed { padding: 10px; }
+  .mauto { font-size: 13px; }
+  .mauto-last { font-size: 11px; color: var(--muted); }
+  .mauto-last summary { cursor: pointer; }
+  .mauto-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .merge-now .msteps { display: grid; gap: 7px; margin-top: 14px; }
+  .merge-now .msteps li { border: 0; border-radius: 0; padding: 3px 0; opacity: 1; color: var(--muted); }
+  .merge-now .msteps li.done { opacity: 1; color: var(--running); }
+  .merge-now .msteps li.running { color: var(--accent); }
+  .build-preview { border-top: 1px solid var(--rule); margin-top: 14px; padding-top: 12px; display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+  .preview-list { list-style: none; padding: 0; margin: 0; }
+  .preview-list li { padding: 10px 0; border-top: 1px solid var(--rule); overflow-wrap: anywhere; font-size: 13px; }
+  .preview-list li:first-child { border-top: 0; }
+  .preview-list small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .preview-list button { border: 0; background: transparent; padding: 0; min-height: 0; text-align: left; font-size: 13px; font-weight: 400; }
+  .preview-list button:hover { color: var(--accent); }
+  #lane { grid-column: 1 / -1; }
+  .lane-sub { font-size: 12px; }
+  .lane-what { font-size: 14px; }
+  .lane-step, .lane-head .disk { font-size: 12px; }
+  .tasks-view { display: grid; gap: 16px; }
+  .tq { height: var(--tq-h, 250px); gap: 16px; }
+  .tq li { font-size: 13px; }
+  .tq .why, .sec-sub { font-size: 12px; }
+  .board { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+  .col .scroll { max-height: var(--h, 420px); }
+  .col li { font-size: 13px; }
+  .col li .why { font-size: 12px; }
+  .usage { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; min-width: 0; }
+  .usage-line { font-size: 12px; }
+  .ag-head { gap: 8px; }
+  .ag-head button { font-size: 12px; }
+  .ag-sub, .ag-route { font-size: 12px; }
+  .routing-help { margin-bottom: 14px; color: var(--muted); font-size: 12px; }
+  .routing-help summary { cursor: pointer; padding: 5px 0; }
+  .ag-grid { gap: 10px; }
+  .prov { border-color: var(--rule); background: var(--panel); }
+  .mr { border-color: var(--rule); }
+  .prov > summary, .mx, .sc-detail, .log, .ag.off { background: var(--soft); }
+  .switch[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  dialog { background: var(--panel); border: 1px solid var(--rule); }
+  input, textarea, select { color: var(--ink); background: var(--panel); border-color: var(--rule); }
+  td, .tq .scroll, .tq li, .keys, .keys td, .acct-prov td, .proj, .ny-c { border-color: var(--rule); }
+  .ltrack li { border-color: var(--rule); color: var(--muted); }
+  .ltrack li.on { color: var(--accent); border-color: var(--accent); }
+  .board-wrap { margin: 0; }
+  .foot { font-size: 11px; margin-top: 18px; overflow-wrap: anywhere; }
+  .foot a { color: var(--muted); }
+  :root[data-theme="dark"] .mrow[open], :root[data-theme="dark"] .mrow:hover, :root[data-theme="dark"] .mx,
+  :root[data-theme="dark"] .ny-c.fl, :root[data-theme="dark"] .ny-task { background: var(--soft); }
+  :root[data-theme="dark"] .chip.idle, :root[data-theme="dark"] .chip.cancelled { background: var(--soft); }
+  .section-only .sidebar, .section-only header.top { display: none; }
+  .section-only .wrap { margin: 0; }
+  @media (min-width: 1700px) { .wrap { margin-right: auto; } }
+  @media (max-width: 1100px) { .overview-grid { grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr); } .wrap { padding: 18px; } }
+  @media (max-width: 900px) { .overview-grid, .board { grid-template-columns: 1fr; } #lane { grid-column: auto; } }
+  @media (max-width: 640px) {
+    .sidebar { position: static; width: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--rule); gap: 10px; }
+    .sidebar-brand { font-size: 17px; }
+    .sidebar nav { display: flex; gap: 4px; }
+    .sidebar a { padding: 8px; gap: 5px; font-size: 12px; }
+    .nav-icon { display: none; }
+    .sidebar-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .wrap { margin-left: 0; padding: 14px 12px; }
+    header.top { margin-bottom: 14px; }
+    .brand { flex-basis: 100%; flex-direction: row; }
+    .brand h1 { font-size: 16px; }
+    .page-heading { flex-wrap: wrap; gap: 3px; }
+    .page-heading h2 { font-size: 21px; }
+    .page-heading p { flex-basis: 100%; }
+    .summary-strip { gap: 7px 14px; font-size: 12px; }
+    .overview-grid { gap: 12px; }
+    .worker-stage { max-width: 100px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
+<a class="skip-link" href="#mainContent">Skip to content</a>
+<aside class="sidebar" aria-label="Main navigation">
+  <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery</div>
+  <nav aria-label="Workspace">
+    <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
+    <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
+    <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true">◇</span>Agents</a>
+    <a href="#activity" data-view="activity"><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebarBottom">
+    <label class="theme-control" for="themeChoice">Theme <select id="themeChoice"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+  </div>
+</aside>
+<main class="wrap" id="mainContent" tabindex="-1">
   <header class="top">
     <div class="brand">
-      <h1>Fletchery <span class="proj" id="projName"></span></h1>
+      <h1><span class="proj" id="projName">Project</span></h1>
       <div class="state" id="state" aria-live="polite">Connecting…</div>
     </div>
     <div class="usage">
@@ -480,9 +668,23 @@
   <div class="banner hold" id="holdBanner" role="status"></div>
   <div class="banner down" id="downBanner" role="alert"></div>
 
+  <section class="view" id="view-overview" aria-labelledby="overviewHeading">
+    <div class="page-heading"><h2 id="overviewHeading">Overview</h2><p>Work in progress, at a glance.</p></div>
+    <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
+    <div class="overview-grid" id="overviewGrid">
+      <div id="workersMount"></div>
+      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merge &amp; build</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div><div id="buildPreview"></div></section>
+      <section class="card"><div class="card-head"><h3>Recent activity</h3><a href="#activity">View all →</a></div><ul class="preview-list" id="recentPreview"></ul></section>
+      <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
+    </div>
+  </section>
+  <section class="view" id="view-tasks" aria-labelledby="tasksHeading" hidden><div class="page-heading"><h2 id="tasksHeading">Tasks</h2><p>Queued work, dependencies and PRs.</p></div><div class="tasks-view" id="tasksMount"></div></section>
+  <section class="view" id="view-agents" aria-labelledby="agentsHeading" hidden><div class="page-heading"><h2 id="agentsHeading">Agents</h2><p>Models, accounts and usage.</p></div><div id="agentsMount"></div></section>
+  <section class="view" id="view-activity" aria-labelledby="activityHeading" hidden><div class="page-heading"><h2 id="activityHeading">Activity</h2><p>Finished sessions and the full log.</p></div><div id="activityMount"></div></section>
+
   <section class="tasks" id="queue" aria-labelledby="tqh">
     <div class="sec-head"><h2 id="tqh">Task queue</h2><span class="counts" id="tqCounts"></span></div>
-    <p class="sec-sub">GitHub issues labelled <b class="lbl">fletchery</b>, oldest first. When a worker is free, it takes the first ready one. Add one with <b>Add task</b>, or label any issue <b class="lbl">fletchery</b> on GitHub.</p>
+    <p class="sec-sub">Oldest ready task first. Add a task here, or label a GitHub issue <b class="lbl">fletchery</b>.</p>
     <div class="tq" id="tq">
       <div><h3>Ready <span id="tqReadyNote"></span></h3>
         <div class="scroll" tabindex="0" aria-label="Ready tasks"><ol id="tqReady"></ol></div></div>
@@ -522,8 +724,8 @@
       <button type="button" id="agAdd">Add agent</button>
     </div>
     <div class="ag-body" id="agBody">
-    <p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes. Open a model for its scores. Sign-ins, plan or API key, and the keys themselves are in <a href="#" id="agAcctLink">Settings &gt; Accounts</a>.</p>
-    <p class="ag-route" id="agRoute"></p>
+    <details class="routing-help"><summary>How agents are selected</summary><p class="ag-sub">Which coding agents write and review the code. Fletchery picks one per task from those that are <b>on</b>, <b>signed in</b> and <b>not at a limit</b>: cheap agents for easy tasks, strong ones for hard ones, and a reviewer from a different company than the writer. Switch an agent off and nothing new goes to it; what it is running finishes. Open a model for its scores. Sign-ins, plan or API key, and the keys themselves are in <a href="#" id="agAcctLink">Settings &gt; Accounts</a>.</p>
+    <p class="ag-route" id="agRoute"></p></details>
     <div class="slots-scroll" id="agBox" tabindex="-1"><div class="ag-grid" id="agGrid"></div></div>
     <div class="grip" data-resize="agBox" data-key="agents" role="separator" aria-orientation="horizontal" tabindex="0"
          aria-label="Resize Agents: drag, or use the up and down arrow keys" title="Drag to resize; double-click to reset"></div>
@@ -563,7 +765,7 @@
        aria-label="Resize Finished sessions and Log: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </div>
   <p class="foot" id="foot"></p>
-</div>
+</main>
 
 <dialog id="weekDlg" aria-labelledby="weekh">
   <h2 id="weekh">Usage, last 7 days</h2>
@@ -739,6 +941,51 @@ function explain(a) {
 let last = null, lastActions = {};
 
 const $ = id => document.getElementById(id);
+
+// Move existing controls once: their IDs, handlers and API contracts stay intact.
+$("workersMount").append($("workers"));
+$("mergeMount").append($("mergeNow"));
+$("tasksMount").append($("lane"));
+$("tasksMount").prepend($("queue"), $("boardBox"));
+$("agentsMount").append(document.querySelector(".usage"), $("agents"));
+$("activityMount").append($("lowerBox"));
+$("sidebarBottom").prepend($("settingsBtn"));
+const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "tasks", log: "activity", lowerBox: "activity"};
+const viewNames = ["overview", "tasks", "agents", "activity"];
+function showView(name, remember = true) {
+  name = viewAliases[name] || name;
+  if (!viewNames.includes(name)) return;
+  document.querySelectorAll(".view").forEach(el => { el.hidden = el.id !== "view-" + name; });
+  document.querySelectorAll("[data-view]").forEach(a => {
+    if (a.dataset.view === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  if (remember) { try { localStorage.setItem("fletchery.view", name); } catch (_) {} }
+}
+function routeView() { showView(location.hash.slice(1)); }
+addEventListener("hashchange", routeView);
+document.addEventListener("click", e => {
+  const link = e.target.closest('a[href^="#"]');
+  if (link) showView(link.getAttribute("href").slice(1));
+});
+let savedView = "overview";
+try { savedView = localStorage.getItem("fletchery.view") || savedView; } catch (_) {}
+showView(viewAliases[location.hash.slice(1)] || location.hash.slice(1) || savedView, false);
+const systemTheme = matchMedia("(prefers-color-scheme: dark)");
+let themeChoice = "system";
+try { themeChoice = localStorage.getItem("fletchery.theme") || themeChoice; } catch (_) {}
+if (!["system", "light", "dark"].includes(themeChoice)) themeChoice = "system";
+$("themeChoice").value = themeChoice;
+function applyTheme() {
+  document.documentElement.dataset.theme = themeChoice === "dark" || (themeChoice === "system" && systemTheme.matches) ? "dark" : "light";
+}
+$("themeChoice").onchange = () => {
+  themeChoice = $("themeChoice").value;
+  try { localStorage.setItem("fletchery.theme", themeChoice); } catch (_) {}
+  applyTheme();
+};
+systemTheme.addEventListener("change", applyTheme);
+applyTheme();
+
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function ago(iso) {
@@ -808,6 +1055,7 @@ function render(d) {
   $("downBanner").classList.remove("show");
 
   // now
+  const openWorkers = new Set([...$("slots").querySelectorAll("details[open]")].map(el => el.dataset.worker));
   const slots = [];
   for (const a of d.live) {
     const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
@@ -818,19 +1066,17 @@ function render(d) {
     const fresh = lastActions[a.task] !== undefined && lastActions[a.task] !== a.actions;
     lastActions[a.task] = a.actions;
     const row = d.tasks.find(t => t.number === a.task);
-    slots.push(`<article class="slot">
-      <div class="who"><span>${a.agent && d.agents && d.agents.multi ? `<span class="agent" title="${esc(a.role || "")}">${esc(a.agent)}${a.role === "reviewer" ? " reviewing" : ""}</span>` : ""}<a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">#${a.task} ${esc(a.title)}</a></span>
-        <span class="clock" title="Started ${esc(a.since)}">${ago(a.since)}</span></div>
-      ${track}
-      <div class="what">${esc(explain(a))}</div>
-      <div><div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
-      <div class="doing${fresh ? " fresh" : ""}">${a.last ? esc(a.last) + `<span class="ago">${ago(a.last_at)} ago</span>` : "Reading the issue and the code…"}</div></div>
-      <div class="count">${a.actions} ${a.actions === 1 ? "step" : "steps"} in this session</div>
-    </article>`);
+    slots.push(`<details class="slot" data-worker="${a.task}"${openWorkers.has(String(a.task)) ? " open" : ""}>
+      <summary><span class="worker-title">#${a.task} ${esc(a.title)}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+      <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
+      ${track}<div class="what">${esc(explain(a))}</div>
+      <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
+      <div class="doing${fresh ? " fresh" : ""}">${a.last ? esc(a.last) + `<span class="ago">${ago(a.last_at)} ago</span>` : "Reading the issue and the code…"}</div>
+      <div class="count">${a.actions} ${a.actions === 1 ? "step" : "steps"} in this session</div></div>
+    </details>`);
   }
-  for (let i = d.live.length; i < d.max_parallel; i++) {
-    slots.push(`<div class="slot free">${d.held ? "Free worker. Paused, so nothing new starts." : "Free worker. Takes the next ready task at the next check."}</div>`);
-  }
+  const free = Math.max(0, d.max_parallel - d.live.length);
+  if (free || !d.live.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? "New writing is paused. Merging and builds continue." : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
   $("slots").innerHTML = slots.join("");
 
   // board
@@ -847,23 +1093,25 @@ function render(d) {
     cols.pr = [];
     const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
     const box = $("mergeNow");
+    const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
     box.className = "merge-now " + (mv.stale ? "failed" : (mv.state || "idle"));
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
-    box.innerHTML = (mv.state && mv.state !== "idle" ? "<b>Now:</b> " : "") + esc(mv.headline || "") +
-      (mv.steps && mv.steps.length ? `<ol class="msteps" aria-label="Round steps">${mv.steps.map(s =>
-        `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>` : "");
+    const currentStep = (mv.steps || []).find(s => ["running", "waiting", "failed"].includes(s.state));
+    box.innerHTML = currentStep ? `<div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div>` : esc(mv.headline || "No merge round running.");
+    if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
+    if (mv.steps && mv.steps.length) box.insertAdjacentHTML("beforeend", `<ol class="msteps" aria-label="Round steps">${mv.steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`);
     const ma = d.merge_auto;
     if (ma) {
       let line;
       const L = ma.last || {};
       if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
-      else if (ma.running && ma.running.round) line = `<b>Fletchery is running round ${esc(ma.running.round)}</b> on ${esc(ma.running.agent)} (started ${esc(clockTime(ma.running.started))}): ${ma.running.prs.map(n => "#" + n).join(", ")}.`;
+      else if (ma.running && ma.running.round) line = `<b>${esc(ma.running.agent)}</b> · ${ma.running.prs.length} PRs · started ${esc(clockTime(ma.running.started))}`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else line = ma.why ? `Next round waits: ${esc(ma.why)}.` : `A round starts whenever PRs labelled <b>${esc(ma.label)}</b> are waiting.`;
       const res = {landed: `landed as <a href="${esc(d.repo_url)}/pull/${L.pr}" target="_blank" rel="noopener">#${L.pr}</a>`, nothing: "merged nothing",
                    failed: "didn't land", crashed: "crashed", limited: "stopped at its agent's limit"}[L.result] || esc(L.result || "");
-      const lastLine = L.round ? `<div class="mauto-last">Last round ${esc(L.round)} ${res}${L.at ? " at " + esc(clockTime(L.at)) : ""}${L.summary ? ": " + esc(L.summary.slice(0, 240)) : ""}</div>` : "";
+      const lastLine = L.round ? `<details class="mauto-last" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Last round ${esc(L.round)} ${res}${L.at ? " at " + esc(clockTime(L.at)) : ""}</summary>${esc(L.summary || "No additional details.")}</details>` : "";
       const btns = ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
         (!ma.running.round && !ma.held ? `<button type="button" data-merge-now="1">Merge now</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto">${line}${btns}${lastLine}</div>`);
@@ -936,7 +1184,8 @@ function render(d) {
   renderUsage(d);
   renderWorkers(d);
   document.querySelectorAll(".lbl").forEach(e => e.textContent = d.label || "fletchery");
-  $("projName").textContent = d.project ? "/ " + d.project : "";
+  $("projName").textContent = d.project || "Project";
+  renderOverview(d);
   document.title = d.project ? `Fletchery: ${d.project}` : "Fletchery";
 
   $("foot").innerHTML = `${esc(d.repo)} · last check ${d.last_pass ? esc(stamp(d.last_pass)) : "not yet"} · ` +
@@ -945,6 +1194,25 @@ function render(d) {
 
 
 
+
+function renderOverview(d) {
+  const blocked = d.tasks.filter(t => t.status === "blocked");
+  const queued = d.tasks.filter(t => t.status === "queued");
+  const prs = d.merge ? d.merge.length : d.tasks.filter(t => t.status === "pr").length;
+  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${d.live.length}</b> active · writing paused` : `<b>${d.live.length}/${d.max_parallel}</b> workers`}</span><a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>`;
+  $("navTasks").textContent = blocked.length || queued.length || prs || "";
+  $("navTasks").hidden = !blocked.length && !queued.length && !prs;
+  $("navTasks").classList.toggle("attention", !!blocked.length);
+  $("navTasks").setAttribute("aria-label", blocked.length ? `${blocked.length} need attention` : `${queued.length} queued, ${prs} PRs waiting`);
+  $("attentionCount").textContent = blocked.length ? `(${blocked.length})` : "";
+  $("attentionPreview").innerHTML = blocked.length ? blocked.slice(0, 3).map(t => `<li><button type="button" data-ny="${t.number}">#${t.number} ${esc(t.title)}</button></li>`).join("") : '<li><small>Nothing needs your input.</small></li>';
+  const names = {pr: "PR opened", fixed: "Fix pushed", blocked: "Needs you", requeue: "Requeued", retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
+  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a> ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
+  const active = d.merge_auto && d.merge_auto.running;
+  $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merge & build";
+  const L = d.lane;
+  $("buildPreview").innerHTML = L ? `<div class="build-preview"><a href="#lane">Build machine →</a><span>${esc($("laneChip").textContent)}</span></div>` : "";
+}
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
 function renderWorkers(d) {
@@ -1597,6 +1865,7 @@ async function nyReply(requeueOnly) {
   } catch (e) { $("ny-msg").textContent = e.message; }
   finally { btns.forEach(b => b.disabled = false); }
 }
+$("attentionPreview").addEventListener("click", e => { const b = e.target.closest("[data-ny]"); if (b) openNeedsYou(+b.dataset.ny); });
 $("c-blocked").addEventListener("click", e => { const b = e.target.closest("[data-ny]"); if (b) openNeedsYou(+b.dataset.ny); });
 $("ny-cancel").onclick = () => $("nyDlg").close();
 $("ny-requeue").onclick = () => nyReply(true);
@@ -1609,14 +1878,18 @@ const params = new URLSearchParams(location.search);
 const only = params.get("only");
 if (only) {
   const keep = $(only);
-  document.querySelectorAll(".wrap > *").forEach(el => { if (el !== keep && !el.contains(keep)) el.style.display = "none"; });
+  if (keep) {
+    document.body.classList.add("section-only");
+    document.querySelectorAll(".wrap > *").forEach(el => { el.style.display = "none"; });
+    $("mainContent").append(keep); keep.style.display = ""; keep.hidden = false;
+  }
 }
 refresh().then(() => {
   if (params.get("open") === "week" && last) { renderWeek(last); $("weekDlg").showModal(); }
   if (params.get("open") === "add") { $("dlg").showModal(); }
   if (["settings", "accounts", "projects"].includes(params.get("open"))) openSettings(params.get("open") === "settings" ? "project" : params.get("open"));
   if (params.get("scores")) document.querySelectorAll("details.mrow").forEach(d => { if (d.dataset.sc === params.get("scores")) d.open = true; });
-  if (location.hash) { const el = document.getElementById(location.hash.slice(1)); if (el) el.scrollIntoView(); }
+  if (location.hash && !viewNames.includes(location.hash.slice(1))) { const el = document.getElementById(location.hash.slice(1)); if (el) el.scrollIntoView(); }
 });
 setInterval(refresh, 3000);
 </script>

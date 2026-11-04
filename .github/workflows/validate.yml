@@ -75,6 +75,12 @@ jobs:
           $env:PYTHONUTF8 = '1'
           python fletchery/test_fletchery.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Control room browser checks
+        run: |
+          npm ci --prefix ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test --prefix ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Automatic prerequisites and merge agent checks
         run: |
           $env:PYTHONUTF8 = '1'
