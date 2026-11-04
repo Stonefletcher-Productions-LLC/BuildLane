@@ -186,6 +186,10 @@ A limit on one account pauses only the agents on it, and their tasks go to the o
 
 ## Project rules
 
+All agent roles carry the [Blender Lab MCP requirement](docs/BLENDER-MCP.md): use the
+official MCP for Blender work, inspect scene ownership first, and report connection
+blockers instead of falling back to desktop control or direct Blender launches.
+
 Each project can tell its workers how it likes things done, in a `.fletchery/` folder in its own repository:
 
 | File | What it does |
