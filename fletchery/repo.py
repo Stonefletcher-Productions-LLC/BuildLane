@@ -15,11 +15,12 @@ _TASK_CHECKOUT_LOCK = threading.RLock()
 
 
 class Repo:
-    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin"):
+    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin", asset_tasks: dict | None = None):
         self.root = Path(root)
         self.worktree_root = Path(worktree_root)
         self.base = base
         self.remote = remote
+        self.asset_tasks = asset_tasks or {}
         self.env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
@@ -239,7 +240,24 @@ class Repo:
         refused here: that needs Tools\\CI\\PushWithLfs.ps1 on the PC, and a person."""
         tracked = self.lfs_tracked(wt, self.changed_files(wt))
         if tracked:
-            raise RuntimeError("branch changes LFS-tracked files, which Fletchery never pushes: " + ", ".join(tracked[:5]))
+            from asset_jobs import grant_for, permitted
+            grant=grant_for(self.asset_tasks,self.worktree_root,wt)
+            if not grant or any(not permitted(grant,name) for name in tracked):
+                raise RuntimeError("LFS asset changes require an operator grant for every changed asset path: " + ", ".join(tracked[:5]))
+            if grant.get("mode")=="delete":
+                remaining=self.git("diff","--no-renames","--name-only","--diff-filter=ACMRTUXB",f"{self.remote}/{self.base}...HEAD",cwd=wt).splitlines()
+                if any(name in remaining for name in tracked):
+                    raise RuntimeError("Deletion-only asset grant cannot publish added or modified assets")
+                self.git("push","-u",self.remote,f"HEAD:{branch}",cwd=wt)
+                return
+            helper=self.root / "Tools" / "CI" / "PushWithLfs.ps1"
+            if not helper.is_file():
+                raise RuntimeError("Authorized assets need the project's Tools/CI/PushWithLfs.ps1 delivery helper")
+            proc=subprocess.run(["pwsh","-NoProfile","-File",str(helper),"-Branch",branch,"-Remote",self.remote],
+                                cwd=wt,env=self.env,capture_output=True,text=True,timeout=1800)
+            if proc.returncode:
+                raise RuntimeError("Asset delivery failed: "+(proc.stdout+proc.stderr)[-4000:])
+            return
         self.git("push", "--no-verify", "-u", self.remote, f"HEAD:{branch}", cwd=wt)
 
     def head(self, wt: Path) -> str:
