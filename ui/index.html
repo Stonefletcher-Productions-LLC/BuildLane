@@ -913,7 +913,8 @@ function render(d) {
 
   // history
   const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out",
-                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent"};
+                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent",
+                 retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
       <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a></td>

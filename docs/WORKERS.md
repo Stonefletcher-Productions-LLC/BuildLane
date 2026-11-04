@@ -80,6 +80,12 @@ Actionable blockers are planned automatically by default: the harness creates at
 prerequisites, or links existing tasks, then adds `Depends on:` to the original issue and queues it to wait. The planner
 is read-only; GitHub changes are made by the harness. It preserves task bodies, checks dependency cycles and uses durable
 plan/issue markers to resume partial operations after failures. Generated prerequisites do not expand recursively.
+Concrete review corrections use a different path: instructions are added to the original issue and its existing branch
+is requeued, without inventing another task. The same failure gets one automatic retry, up to three distinct corrections
+per task; a generated prerequisite can also receive a correction. The planner reads its existing task worktree, including
+uncommitted drafts, and recent blocker/review evidence. Workers' lack of GitHub access is expected; the harness creates
+the issues. Candidate-specific native acceptance stays with the PR's build/check/unverified notes rather than blocking
+the candidate from reaching the lane. Deferred blocks rotate through the backlog; only one backlog planner runs at once.
 Missing decisions, credentials, source inputs and inaccessible capabilities remain in Needs you. Human explanations are
 cached until the task or a person's comments change. Disable this with `workers.autoPrerequisites: false`.
 

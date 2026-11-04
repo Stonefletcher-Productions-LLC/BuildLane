@@ -35,6 +35,7 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_held: bool = False                                  # Pause merging in the Merge section
+    blocker_checked: dict = field(default_factory=dict)       # task -> last planner dispatch; fair across deferred blocks
 
     @staticmethod
     def load(path: Path) -> "State":
@@ -257,10 +258,11 @@ class Engine:
         # 2. ready tasks -> workers, within slots and budget
         # Existing Needs you tasks get the same bounded prerequisite planning as new blocks.
         # One planner per pass, counted against worker slots and the daily cap.
-        if cfg.auto_prerequisites and not paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
+        blocker_busy = any(t.status == BLOCKED and t.number in self.active for t in tasks.values())
+        if cfg.auto_prerequisites and not blocker_busy and not paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
             import blockers
             import rules as rules_mod
-            for t in tasks.values():
+            for t in sorted(tasks.values(), key=lambda t: (st.blocker_checked.get(str(t.number), ""), t.created_at, t.number)):
                 if t.status != BLOCKED or t.number in self.active:
                     continue
                 try:
@@ -271,6 +273,8 @@ class Engine:
                     continue
                 self.last_plan.append(f"plan prerequisites for #{t.number}")
                 if not self.dry_run:
+                    st.blocker_checked[str(t.number)] = now()
+                    st.save(self.state_dir / "state.json")
                     t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
                     self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
                 break
@@ -531,8 +535,11 @@ class Engine:
             self._ledger(o)
             if o.result == "fixed" and o.pr_number is not None:
                 st.seen[str(o.pr_number)] = now()
-            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies") and pr_n is not None:
-                st.fix_attempts[str(pr_n)] = max(0, st.fix_attempts.get(str(pr_n), 1) - 1)
+            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix") and pr_n is not None:
+                # A new concrete repair plan or resolved prerequisite needs a fresh fixer opportunity,
+                # including when the previous block was caused by exhausted fixer attempts.
+                st.fix_attempts[str(pr_n)] = (0 if o.result in ("waiting_dependencies", "retry_fix") else
+                                             max(0, st.fix_attempts.get(str(pr_n), 1) - 1))
                 if prior is None:
                     st.seen.pop(str(pr_n), None)
                 else:
