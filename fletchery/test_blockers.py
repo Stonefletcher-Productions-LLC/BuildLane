@@ -136,7 +136,7 @@ class BlockerTests(unittest.TestCase):
         seen = []
         self.ctx.runtime.on_run = lambda role, cwd: seen.append((role, cwd))
         self.resolve()
-        self.assertEqual(seen[0], ("planner", wt))
+        self.assertEqual(seen[0], ("planner", wt.resolve()))
         self.assertTrue((wt / "Docs/Reviews/Prerequisites.md").exists())
         self.assertEqual(blockers.planner_root(graph.Task(9, "missing"), self.ctx), self.root)
 
