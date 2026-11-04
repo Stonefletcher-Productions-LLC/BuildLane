@@ -75,6 +75,17 @@ jobs:
           $env:PYTHONUTF8 = '1'
           python fletchery/test_fletchery.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Checkout recovery and reload lifecycle checks
+        run: |
+          $env:PYTHONUTF8 = '1'
+          python fletchery/test_round_recovery.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_github_dispatch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_reload_dispatch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_repair_checkout.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Control room browser checks
         run: |
           npm ci --prefix ui

@@ -224,6 +224,15 @@ Releases, the integration mode, timing history and merge controls are still in t
 
 Merge rounds can use any enabled, signed-in Claude, Codex or OpenCode agent allowed to take the merger role.
 The preferred merge agent wins when available; otherwise the best available C++ score wins, regardless of provider.
+Each round stops at confirmed validation failures and allows one small repair cycle per implicated PR
+(up to 15 minutes of diagnosis/editing). A failed repair leaves that head out; its dependencies wait,
+while independent PRs continue. Excluded heads stay out across restarts until changed, and worker PRs
+receive bounded fixer feedback. PRs without a worker issue get a repair tracking issue for their existing
+branch. New checkouts are created when the previous one is dirty or fails preparation;
+failed/dirty content stays in place with recovery diagnostics. Busy/leased checkouts wait untouched.
+
+LifeShare rounds use final-diff test selection, fail-fast preflight and memory-aware concurrency when
+its runner supports them. Full nightly/release validation and project acceptance checks remain required.
 Only one round runs at a time. Merger sessions have the local and GitHub access needed to build and land the round;
 worker and reviewer restrictions stay the same. Pause/resume merging is shown immediately, even during a slow poll.
 
@@ -309,3 +318,24 @@ preferences, worker details surviving polling, task dialogs, pause controls, nar
 windows and unavailable local storage. Preview screenshots go to the Windows temp
 folder; set `FLETCHERY_SCREENSHOTS` to choose another output folder. Set
 `FLETCHERY_BROWSER` to use a specific Chromium executable.
+
+
+### Agent task limits
+
+An agent may set `levels: ["easy"]` and `roles: ["worker"]` under `workers.agents`.
+These limits apply before cost/quality routing. Use `routing.preferredKindsByLevel` to
+prefer native subscriptions for medium/hard work, for example
+`{"medium": ["codex", "claude"], "hard": ["codex", "claude"]}`. Explicit preferences
+choose among eligible native agents without rewriting their learned quality scores.
+DeepSeek Flash can stay available for easy writing while Codex/Claude handle higher
+levels and review/merge roles. Disabled agents stay disabled; in-flight sessions finish.
+The local API `/api/agents/routing` saves these limits and preferences without a restart.
+
+
+Instruction and UI updates are read directly and do not pause dispatch. For a backend
+code update during a merge, workers keep running until that round finishes; then the
+app drains worker sessions and reloads. Explicit project switches/restart requests
+still drain immediately. The dashboard distinguishes an update waiting for a merge
+from an actual restart, so available slots do not appear silently stuck.
+
+PR feedback polling is bounded and rotates fairly between passes, so a large merge backlog or a failed status request cannot consume the entire dispatch pass before ready workers start.

@@ -2,6 +2,8 @@
 several calls concurrently. Every outcome is a plain record the loop writes to the ledger and the status issue."""
 from __future__ import annotations
 
+import asyncio
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -294,8 +296,8 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
                                 + "\n".join(f"> {f.text[:300]}" for f in feedback))
         out.detail = "fixer attempts exhausted"
         return out
-    wt = repo.worktree(task.number, task.slug, task.branch)
-    repo.fetch_base()
+    await asyncio.to_thread(repo.fetch_base)
+    wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
     task.rules = rules_mod.load(wt, cfg.project_root)
     fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
     rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")
@@ -329,7 +331,9 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
 
 async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcome:
     cfg, gh, repo = ctx.cfg, ctx.gh, ctx.repo
-    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=task.branch, base=cfg.base_branch, pr=str(pr.number),
+    local_branch = repo.git("branch", "--show-current", cwd=wt) if hasattr(repo, "git") else task.branch
+    fb += f"\n\nThe local repair branch is `{local_branch}`. The controller alone pushes the checked fix to existing PR branch `{pr.head}`; do not push or recreate its branch."
+    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
                          feedback=fb, freeze=_freeze_text(cfg))
     r = await rt.run("fixer", prompt, wt, cfg.fixer_budget_usd, cfg.fixer_max_turns)
     _account(out, r)
@@ -345,7 +349,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
         return out
-    repo.push(wt, task.branch)
+    await asyncio.to_thread(repo.push_repair, wt, pr.head, pr.head_sha)
     gh.comment(pr.number, f"Fletchery fixer (attempt {attempt}): {r.output.get('summary', '')}\n\n{gates_mod.summary(results)}\n\n"
                           "Pushed; the lane will take it again when it is labelled `ready`.")
     out.result, out.detail = "fixed", r.output.get("summary", "")

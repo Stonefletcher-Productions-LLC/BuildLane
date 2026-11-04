@@ -63,10 +63,21 @@ class GitHub:
         if body is not None:
             cmd += ["--input", "-"]
         # gh prints UTF-8; Windows' default (cp1252) can't decode some bytes and the whole pass failed (2026-11-03)
-        p = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
-        if p.returncode != 0:
-            raise RuntimeError(f"gh api {method} {path}: {p.stderr.strip() or p.stdout.strip()}")
+        attempts = 2 if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                p = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=15 if method == "GET" else 90)
+            except subprocess.TimeoutExpired as e:
+                if attempt + 1 < attempts:
+                    continue
+                raise RuntimeError(f"GitHub {method} {path} timed out; will retry on the next short dispatch pass") from e
+            if p.returncode == 0:
+                break
+            detail = p.stderr.strip() or p.stdout.strip()
+            transient = any(x in detail.lower() for x in ("timeout", "timed out", "connectex", "connection reset", "connection refused", "no such host", "temporary failure", "tls handshake"))
+            if not transient or attempt + 1 == attempts:
+                raise RuntimeError(f"gh api {method} {path}: {detail}")
         return parse_pages(p.stdout) if paginate else (json.loads(p.stdout) if p.stdout.strip() else None)
 
     def api_text(self, path: str) -> str:

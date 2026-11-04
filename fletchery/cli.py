@@ -73,11 +73,11 @@ RESTART_EXIT = 75  # the app (or Start-Fletchery.ps1) starts Fletchery again whe
 
 
 def code_fingerprint() -> str:
-    """What every file Fletchery runs from contains; a change means new code was installed. Contents, not dates:
-    reinstalling or checking out the same code re-dates the files, and that must not drain the workers for nothing."""
+    """Only imported Python needs a backend reload. Role prompts and UI are read per session/request.
+    Contents, not dates: reinstalling identical code must not drain workers."""
     here = Path(__file__).parent
     digest = hashlib.sha256()
-    for f in sorted(list(here.glob("*.py")) + list((here / "roles").glob("*.md"))):  # the UI is read per request
+    for f in sorted(here.glob("*.py")):
         try:
             data = f.read_bytes()
         except OSError:

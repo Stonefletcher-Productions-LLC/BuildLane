@@ -11,13 +11,14 @@ from pathlib import Path
 from config import Config
 import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task, readiness, pick
-from github import PullRequest
+from github import PullRequest, Feedback
 from pipeline import Context, Outcome, fix_pr, run_task
 
 
 @dataclass
 class State:
     last_pass: str = ""
+    feedback_cursor: int = 0                               # fair, bounded PR feedback polling before worker dispatch
     seen: dict[str, str] = field(default_factory=dict)        # pr number -> ISO time of the newest feedback acted on
     fix_attempts: dict[str, int] = field(default_factory=dict)  # pr number -> attempts so far
     spent: dict[str, float] = field(default_factory=dict)     # YYYY-MM-DD -> USD
@@ -34,6 +35,7 @@ class State:
     spent_by_agent: dict = field(default_factory=dict)        # YYYY-MM-DD -> {agent: USD}
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
+    merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
     merge_held: bool = False                                  # Pause merging in the Merge section
     blocker_checked: dict = field(default_factory=dict)       # task -> last planner dispatch; fair across deferred blocks
 
@@ -70,8 +72,15 @@ class _StatusTap:
     def __setattr__(self, name, value):
         setattr(self._inner, name, value)
 
+    def __delattr__(self, name):
+        # Match assignment forwarding (including temporary mock/spies used by checks).
+        delattr(self._inner, name)
+
     def set_status(self, number: int, status: str) -> None:
         self._inner.set_status(number, status)
+        task = getattr(self._fm, "_tasks", {}).get(number)
+        if task is not None:
+            task.labels = [l for l in task.labels if not graph.is_status_label(l)] + [graph.label_for(status)]
         for row in (self._fm.snapshot or {}).get("tasks", []):
             if row["number"] == number:
                 row["status"] = status.split(":")[-1]
@@ -233,13 +242,28 @@ class Engine:
         paused = limit_paused or st.held or bool(st.signed_out) or draining
 
         # 1. feedback on open PRs -> fixers (one per task at a time)
-        for pr_num, task in by_pr.items():
+        ordered_feedback = sorted(by_pr.items())
+        ordered_feedback = [x for x in ordered_feedback if x[0] > st.feedback_cursor] + [x for x in ordered_feedback if x[0] <= st.feedback_cursor]
+        inspected_feedback = 0
+        for pr_num, task in ordered_feedback:
+            if paused or self.free_slots() <= 0 or inspected_feedback >= 6:
+                break
             if task.number in self.active:
                 continue
             if any(d in tasks or not gh.issue_closed(d) for d in task.depends_on):
                 continue
             pr = prs[pr_num]
-            fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
+            inspected_feedback += 1
+            st.feedback_cursor = pr_num
+            try:
+                fb = gh.feedback_since(pr, st.seen.get(str(pr_num)))
+            except Exception as e:
+                self.ctx.log(f"PR #{pr_num}: feedback poll deferred: {e}")
+                fb = []
+            excluded = st.merge_excluded.get(str(pr_num), {})
+            if excluded.get("head") == pr.head_sha and st.fix_attempts.get(str(pr_num), 0) < cfg.fixer_attempts:
+                if not st.seen.get(str(pr_num)) or excluded.get("at", "") > st.seen[str(pr_num)]:
+                    fb.append(Feedback(pr_num, "merge", "Merge round left this PR out after its repair budget: " + excluded.get("why", ""), excluded["at"]))
             if not fb or paused or self.free_slots() <= 0:
                 continue
             if self.watcher:  # a failure on the build PC: give the fixer the failing step's log
@@ -329,10 +353,10 @@ class Engine:
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
-        if not self.dry_run and st.merge_last.get("result") == "crashed" and not st.merge_last.get("failure_issue"):
+        if not self.dry_run and st.merge_last.get("result") in ("crashed", "checkout_failed") and not st.merge_last.get("failure_issue"):
             try:
                 st.merge_last["failure_issue"] = rounds.report_failure(
-                    self.ctx.gh, cfg, st.merge_last, str(Path(cfg.worktree_root or self.state_dir / "worktrees") / "merge-round"))
+                    self.ctx.gh, cfg, st.merge_last, st.merge_last.get("worktree") or str(rounds.checkout_path(self.ctx.repo)))
                 st.save(self.state_dir / "state.json")
             except Exception as e:
                 self.ctx.log(f"merge rounds: could not file prior crash: {type(e).__name__}: {e}")
@@ -341,6 +365,28 @@ class Engine:
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
+            for p in ready:
+                old = st.merge_excluded.get(str(p.number))
+                if old and old.get("head") == p.head_sha and not old.get("repair_task"):
+                    linked = next((t for t in self._tasks.values() if t.pr_number == p.number or t.branch == p.head or re.search(r"\bcloses\s+#" + str(t.number) + r"\b", p.body or "", re.I)), None)
+                    try:
+                        if linked:
+                            old["repair_task"] = linked.number
+                        else:
+                            marker = f"<!-- fletchery-repair-pr:{p.number} -->"
+                            existing = self.ctx.gh.marked_issues(marker)
+                            old["repair_task"] = existing[0]["number"] if existing else self.ctx.gh.create_issue(
+                                f"Repair PR #{p.number}: {p.title}"[:200],
+                                f"Repair the existing PR on its own branch; it was left out of a merge round. "
+                                f"Keep its acceptance checks and send the fix to the same PR.\n\nExisting PR: #{p.number}\n"
+                                f"Repair branch: {p.head}\n\nFailed head: `{p.head_sha}`\n\n{old.get('why', '')}\n\n{marker}",
+                                [graph.PREFIX, graph.label_for(PR)])
+                        st.save(self.state_dir / "state.json")
+                    except Exception as e:
+                        self.ctx.log(f"PR #{p.number}: repair task creation deferred: {e}")
+                if old and old.get("head") != p.head_sha:
+                    st.merge_excluded.pop(str(p.number), None)
+            ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks)
         except Exception as e:  # GitHub down: try again next pass
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
             self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")
@@ -355,12 +401,21 @@ class Engine:
             self.merge_why = "no agent can run a round now (enable a signed-in agent with the merger role that is not at a limit)"
             return
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
-        busy = rounds.worktree_busy(Path(wt_root) / "merge-round") if wt_root and not self.dry_run else []
-        if busy:
-            self.merge_why = ("processes from the last round still run in its worktree (" + ", ".join(busy[:3])
-                              + "): the next round waits for them")
+        if wt_root and not self.dry_run:
+            try:
+                rounds.checkout_guard(rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
+            except RuntimeError as e:
+                self.merge_why = str(e)
+                return
+        limit = max(1, int(cfg.merge_round_max or 12))
+        batch = []
+        for offset in range(0, len(ready), limit):
+            batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks)
+            if batch:
+                break
+        if not batch:
+            self.merge_why = "ready PRs wait for prerequisite PRs to become eligible"
             return
-        batch = ready[:max(1, int(cfg.merge_round_max or 12))]
         round_file = cfg.merge_round_file or str(self.state_dir / "merge-round.json")
         try:
             last_no = int(str(rounds.read_file(round_file).get("round", "0")).strip() or 0)
@@ -389,7 +444,8 @@ class Engine:
         if pool is not None and agent:
             pool.acquire(agent)
         try:
-            wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch)
+            rounds.start_file(round_file, n, branch, str(rounds.checkout_path(self.ctx.repo)), agent or "claude", batch, cfg.base_branch)
+            wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch, cfg.heavy_lease_file)
             rounds.start_file(round_file, n, branch, str(wt), agent or "claude", batch, cfg.base_branch)
             rules = rules_mod.load(wt, cfg.project_root)
             flags_cfg = [f for f in (cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
@@ -399,12 +455,15 @@ class Engine:
                     return []
                 try:
                     files = gh.pr_files(p.number)
+                    self.__dict__.setdefault("_merge_files", {})[(p.number, p.head_sha)] = files
                 except Exception:
                     return []
                 return [f["flag"] for f in flags_cfg if any(re.search(f["paths"], x) for x in files)]
+            changed = sorted({f for p in batch for f in gh.pr_files(p.number)})
+            validation = rounds.validation_plan(changed, cfg.base_branch)
             prompt = role_prompt("merger", rules, project=cfg.name, base=cfg.base_branch, branch=branch, round=str(n),
                                  label=cfg.merge_label or "ready", prs=rounds.pr_list_text(batch, flags_for),
-                                 round_file=round_file, additions=rounds.notes_text(rules, cfg) or "(none: use the "
+                                 round_file=round_file, validation=validation, additions=rounds.notes_text(rules, cfg) or "(none: use the "
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
             rt = pool.runtime(agent) if pool is not None and agent else self.ctx.runtime
@@ -433,6 +492,9 @@ class Engine:
                 res["result"] = "unreachable"
                 pool.pause(agent, 360, f"model unreachable: {(r.error or '')[:160]}", shared=False)
                 pool.accounts.setdefault(agent, {})["ok"] = False
+        except rounds.CheckoutRecovery as e:
+            rounds.start_file(round_file, n, branch, str(e.path), agent or "claude", batch, cfg.base_branch)
+            res.update(result="checkout_failed", summary=str(e), key="", worktree=str(e.path), next_worktree=str(e.next_path))
         except Limited as e:
             res["result"], res["summary"] = "limited", f"{agent} hit a limit: {e}"
             if pool is not None and agent:
@@ -443,14 +505,20 @@ class Engine:
             if pool is not None and agent:
                 pool.release(agent)
         rounds.finish_file(round_file, res["result"], (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
-        if res["result"] == "unreachable":
+        if res["result"] in ("unreachable", "checkout_failed"):
             res["key"] = ""  # try the same PRs again at once on another agent
             self.wake()
+        for item in res.get("left_out", []):
+            if not isinstance(item, dict):
+                continue
+            p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
+            if p is not None:
+                self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
-        if res["result"] == "crashed":
+        if res["result"] in ("crashed", "checkout_failed"):
             try:
-                res["failure_issue"] = rounds.report_failure(gh, cfg, res, str(Path(cfg.worktree_root or self.state_dir / "worktrees") / "merge-round"))
+                res["failure_issue"] = rounds.report_failure(gh, cfg, res, res.get("worktree") or str(rounds.checkout_path(self.ctx.repo)))
                 self.state.save(self.state_dir / "state.json")
             except Exception as e:
                 self.ctx.log(f"merge round {n}: could not file crash issue: {type(e).__name__}: {e}")
@@ -557,48 +625,87 @@ class Engine:
         return outcomes
 
     def publish(self, outcomes: list[Outcome]) -> None:
-        """Rewrite the status issue and status.md, and refresh the board, from GitHub as it is now."""
+        """Publish the last dispatch snapshot and completed outcomes without a blocking GitHub refetch."""
         gh, st = self.ctx.gh, self.state
         st.last_pass = now()
         tasks, prs = self._tasks, self._prs
-        if not self.dry_run:
-            tasks = gh.open_tasks()
-            prs = {p.number: p for p in gh.open_prs()}
-            _tasks_by_pr(tasks, prs)
-            for t in tasks.values():  # what this process runs right now shows as running, whatever GitHub says yet
-                if t.number in self.active:
-                    t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
+        # Dispatch already fetched this snapshot. Rendering must never refetch the
+        # entire queue or every PR's files before newly-created worker tasks can run.
+        terminal = {"pr": PR, "fixed": PR, "blocked": BLOCKED,
+                    "waiting_dependencies": QUEUED, "retry_fix": QUEUED}
+        temporary = {"requeue", "limited", "signed_out", "agent_paused", "waiting_agent"}
+        for o in outcomes:
+            task = tasks.get(o.task)
+            if task is None:
+                continue
+            if o.pr_number:
+                task.pr_number = o.pr_number
+            status = terminal.get(o.result)
+            if o.result in temporary:
+                status = PR if o.pr_number else QUEUED
+            elif o.result == "gave_up":
+                # A failed fixer keeps its PR for another bounded attempt; only its
+                # explicit set_status(BLOCKED) (attempts exhausted) makes it blocked.
+                status = BLOCKED if task.status == BLOCKED or not o.pr_number else PR
+            if status is not None:
+                task.labels = [l for l in task.labels if not graph.is_status_label(l)] + [graph.label_for(status)]
+        for t in tasks.values():
+            if t.number in self.active:
+                t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
         waiting = graph.refresh_waits(tasks, {n: w for n, w in self._waiting.items() if n in tasks})
         text = self.status_text(tasks, prs, waiting, outcomes)
         self.snapshot = self.make_snapshot(tasks, prs, waiting, outcomes)
         if not self.dry_run:
-            gh.write_status(text)
+            # Publishing the optional GitHub status issue cannot block local dispatch.
+            try:
+                aloop = asyncio.get_running_loop()
+            except RuntimeError:
+                gh.write_status(text)
+            else:
+                previous = getattr(self, "_status_job", None)
+                if previous is None or previous.done():
+                    async def send_status():
+                        try:
+                            await asyncio.to_thread(gh.write_status, text)
+                        except Exception as e:
+                            self.ctx.log(f"status issue update deferred: {e}")
+                    self._status_job = aloop.create_task(send_status())
             (self.state_dir / "status.md").parent.mkdir(parents=True, exist_ok=True)
             (self.state_dir / "status.md").write_text(text, encoding="utf-8")
             st.save(self.state_dir / "state.json")
 
     async def run_forever(self, code_changed=None) -> None:
-        """Keep every slot busy: dispatch, then wait for a session to end, a wake (Check now, Resume, a new task) or the
-        poll interval, and dispatch again. When `code_changed()` says yes, start nothing new, let running sessions
-        finish, and return, so the launcher restarts Fletchery on the new code without cutting a session off."""
+        """Keep workers dispatching during an active merge, even when a code update is pending.
+        Once that round ends, drain workers and reload. Explicit restart/project switches
+        still drain immediately; hot-read role/UI updates do not require a reload."""
         self._aloop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
         loop = asyncio.get_running_loop()
-        draining = False
+        self._reload_draining = False
+        self.update_pending = False
         while True:
-            if not draining and (self.restart_reason or (code_changed and code_changed())):
-                draining = True
-                self.ctx.log(f"{self.restart_reason or 'Fletchery' + chr(39) + 's code changed on disk'}; "
-                             "restarting once running sessions finish")
+            if not self._reload_draining:
+                changed = bool(code_changed and code_changed())
+                if changed and not self.update_pending and not self.restart_reason:
+                    self.ctx.log("Updated code is installed; workers continue until the active merge round finishes"
+                                 if self.round_job is not None else "Updated code is installed; preparing to reload")
+                self.update_pending = changed
+                if self.restart_reason or (changed and self.round_job is None):
+                    self._reload_draining = True
+                    self.ctx.log(f"{self.restart_reason or 'Fletchery' + chr(39) + 's code changed on disk'}; "
+                                 "restarting once running sessions finish")
             try:
-                self.dispatch(draining=draining)
+                self.dispatch(draining=self._reload_draining)
+                await asyncio.sleep(0)  # let new worker coroutines start before optional status publishing
                 self.publish([])
-            except Exception as e:  # one bad sync (GitHub down, say) must not end the loop
+                self.sync_error = ""
+            except Exception as e:
                 self.passing = False
-                self.ctx.log(f"check failed: {type(e).__name__}: {e}")
-            if draining and not self.jobs and self.round_job is None:
+                self.sync_error = f"{type(e).__name__}: {e}"
+                self.ctx.log(f"check failed: {self.sync_error}")
+            if self._reload_draining and not self.jobs and self.round_job is None:
                 return
-            wait = self.cfg.poll_minutes * 60
+            wait = min(30, self.cfg.poll_minutes * 60) if self.sync_error else self.cfg.poll_minutes * 60
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
                                                        timezone.utc).isoformat(timespec="seconds")
             deadline = loop.time() + wait
@@ -613,7 +720,7 @@ class Engine:
                     waits[0].cancel()
                 if self.round_job is not None and self.round_job in done:
                     self.round_job, self.round_info = None, {}
-                    break  # the round ended: look again (the next round can start)
+                    break
                 ended = [j for j in done if j in self.jobs]
                 if ended:
                     outcomes = self._settle(ended)
@@ -621,14 +728,28 @@ class Engine:
                         self.publish(outcomes)
                     except Exception as e:
                         self.ctx.log(f"status update failed: {type(e).__name__}: {e}")
-                    break  # a slot is free: dispatch again now
+                    break
                 if self._wake.is_set():
                     break
-                if not draining and (self.restart_reason or (code_changed and code_changed())):
+                if not self._reload_draining and (self.restart_reason or
+                        (not self.update_pending and code_changed and code_changed())):
                     break
             self._wake.clear()
 
+    update_pending: bool = False
+    _reload_draining: bool = False
+
+    def restart_status(self) -> str:
+        if self.restart_reason:
+            return self.restart_reason
+        return "reloading updated code once running workers finish" if self._reload_draining else ""
+
+    def pending_update_status(self) -> str:
+        return ("Updated code is installed. Workers continue while the active merge round finishes; "
+                "then Fletchery drains and reloads." if self.update_pending and not self._reload_draining else "")
+
     # ---- controls (called from the dashboard's thread) ----
+    sync_error: str = ""
     restart_reason: str = ""  # set by request_restart: drain like a code update, then the launcher starts us again
 
     def request_restart(self, reason: str) -> None:
@@ -672,13 +793,9 @@ class Engine:
             flags: list[str] = []
             if pr and flags_cfg:
                 key = (pr.number, pr.head_sha)
+                files = cache.get(key) or []
                 if key not in cache:
-                    try:
-                        cache[key] = self.ctx.gh.pr_files(pr.number)
-                    except Exception as e:  # a file list is a nicety; never fail the pass for it
-                        self.ctx.log(f"merge flags: PR #{pr.number} files: {type(e).__name__}: {e}")
-                        cache[key] = None
-                files = cache[key] or []
+                    flags.append("Path checks pending; the merge round verifies them")
                 for f in flags_cfg:
                     rx = re.compile(f["paths"])
                     if any(rx.search(p) for p in files) and f["flag"] not in flags:
@@ -693,7 +810,8 @@ class Engine:
                          "in_round_branch": mv["in_branch"].get(t.pr_number),
                          "ready": bool(pr and "ready" in pr.labels), "conflict": bool(pr and pr.mergeable is False),
                          "imports": imports, "flags": flags,
-                         "fix_attempts": self.state.fix_attempts.get(str(t.pr_number), 0)})
+                         "fix_attempts": self.state.fix_attempts.get(str(t.pr_number), 0),
+                         "repair_wait": self.state.merge_excluded.get(str(t.pr_number), {}).get("why", "")})
         rows.sort(key=lambda r: (-len(r["unblocks"]), r["pr"]))
         return rows
 
@@ -736,6 +854,8 @@ class Engine:
                 "max_parallel": cfg.max_parallel, "poll_minutes": cfg.poll_minutes,
                 "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,
                 "usage_week": self.usage_week(),
+                "restarting": self.restart_status(), "update_pending": self.update_pending,
+                "update_note": self.pending_update_status(),
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
@@ -891,7 +1011,7 @@ def _tasks_by_pr(tasks: dict[int, Task], prs: dict[int, PullRequest]) -> dict[in
     out: dict[int, Task] = {}
     for pr in prs.values():
         for t in tasks.values():
-            if f"Closes #{t.number}" in (pr.body or "") or pr.head == t.branch:
+            if re.search(r"\bcloses\s+#" + str(t.number) + r"\b", pr.body or "", re.I) or pr.head == t.branch:
                 t.pr_number = pr.number
                 if t.status == PR:
                     out[pr.number] = t

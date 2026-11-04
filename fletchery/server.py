@@ -80,7 +80,9 @@ class Dashboard:
         snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
         snap["setup_needed"] = not fm.cfg.repo
-        snap["restarting"] = fm.restart_reason
+        snap["restarting"] = fm.restart_status()
+        snap["update_pending"] = getattr(fm, "update_pending", False)
+        snap["sync_error"] = getattr(fm, "sync_error", "")
         cfg = fm.cfg
         lane_view = None
         if cfg.lane_status_file:
@@ -208,7 +210,7 @@ class Dashboard:
         for spec in pool.specs.values():
             a = raw.get(spec.name, {"name": spec.name})
             a.update({"kind": spec.kind, "tier": spec.tier, "vendor": spec.vendor, "enabled": spec.enabled,
-                      "auth": spec.auth})
+                      "auth": spec.auth, "roles": spec.roles, "levels": spec.levels, "maxParallel": spec.max_parallel})
             if spec.model:
                 a["model"] = spec.model
             if spec.key_env:
@@ -379,6 +381,31 @@ class Dashboard:
         self.fm.ctx.log(f"agent {name} now runs on {'its API key' if mode == 'key' else 'its plan sign-in'} (from the dashboard)")
         return {"name": name, "mode": mode}
 
+    def set_routing_policy(self, data: dict) -> dict:
+        """Explicit subscription/provider preferences and task/role limits, without changing quality scores."""
+        pool = self._pool()
+        preferred = data.get("preferredKindsByLevel", {})
+        if not isinstance(preferred, dict) or any(k not in ("easy", "medium", "hard") or not isinstance(v, list)
+                or any(x not in ("codex", "claude", "opencode") for x in v) for k, v in preferred.items()):
+            raise ValueError("Preferred kinds must be provider lists for easy, medium or hard tasks")
+        changes = data.get("agents", [])
+        if not isinstance(changes, list) or any(not isinstance(c, dict) for c in changes):
+            raise ValueError("Agent restrictions must be a list")
+        for change in changes:
+            if change.get("name") not in pool.specs:
+                raise ValueError("Unknown agent")
+            for key, allowed in (("levels", ("easy", "medium", "hard")), ("roles", ("worker", "fixer", "reviewer", "planner", "merger"))):
+                if key in change and (not isinstance(change[key], list) or any(x not in allowed for x in change[key])):
+                    raise ValueError("Invalid " + key)
+        pool.routing["preferredKindsByLevel"] = preferred
+        for change in changes:
+            spec = pool.specs[change["name"]]
+            if "levels" in change: spec.levels = change["levels"]
+            if "roles" in change: spec.roles = change["roles"]
+        self.fm.cfg.save(routing=dict(pool.routing))
+        self._save_agents()
+        return {"preferredKindsByLevel": preferred}
+
     def set_scores(self, data: dict) -> dict:
         import scores
         pool = self._pool()
@@ -430,7 +457,7 @@ class Dashboard:
         out = projects.read_settings(self.fm.cfg)
         out["projects"] = projects.list_projects(getattr(self.fm.cfg, "_path", None))
         out["projects_dir"] = str(projects.projects_dir())
-        out["restarting"] = self.fm.restart_reason
+        out["restarting"] = self.fm.restart_status()
         return out
 
     def settings_save(self, data: dict) -> dict:
@@ -572,7 +599,7 @@ class Dashboard:
                     routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
-                              "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores,
+                              "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores, "/api/agents/routing": dash.set_routing_policy,
                               "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents, "/api/merge/hold": dash.merge_hold, "/api/merge/now": dash.merge_now,
                               "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,

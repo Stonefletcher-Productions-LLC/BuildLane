@@ -21,11 +21,25 @@ PRs labelled `{label}` into `{base}`, oldest first:
    rebase): `git fetch origin pull/N/head:round-pr-N` then `git merge --no-ff round-pr-N -m "Merge PR #N (head <sha>)"`.
    Resolve conflicts keeping both sides' intent; read both sides' recent commits first. Conflicts you cannot resolve
    with confidence, or in binary assets: abort that merge (`git merge --abort`), leave the PR out and go on.
-3. Build, run the content steps and the checks the project's notes below ask for, in their order. Fix small breakages
-   the combination causes (compile errors, a missing include, two PRs editing the same list) in this branch and commit
-   the fix. When a PR breaks the build or a check and the fix is not small, leave it out: rebuild the branch without it
-   (`git reset --hard origin/{base}` and merge the others again), and comment on that PR with the failing step and the
-   key error lines (`gh pr comment N --body ...`). Never skip, disable or weaken a test to get green.
+3. Build, run content steps and validate in the project's required order. Stop at the first confirmed
+   failure. Run deterministic preflight (compile, data/content validation, native specs) before expensive
+   game-launch tests. An isolated multiplayer failure gets at most one retry with confirmed host readiness;
+   a repeat is a confirmed failure. Do not continue unrelated tests while the candidate is known red.
+   Allow ONE small repair cycle per implicated PR, at most 15 minutes of diagnosis/editing (build and test
+   execution time does not extend the editing budget). Record the culprit, failure and attempt in the progress
+   file's note. A failed repair check or an exhausted budget means leave that PR out now, report it in
+   `left_out` with actionable evidence, and continue with the healthy remainder. Never restart the same repair
+   budget for another symptom of that PR. If attribution is uncertain, do at most three isolation probes;
+   leave the unresolved suspect group out rather than looping. Do not omit prerequisites of included PRs.
+   Preserve generated assets and diagnostics before constructing the remaining candidate; use a separate
+   owned candidate if rebuilding in place would discard work. Never reset a checkout with active processes
+   or a heavy lease. Revalidate the final candidate: results from an earlier source/content tree do not count.
+   Never skip, disable or weaken a test to get green. Fletchery holds excluded heads out of later rounds and
+   sends worker PRs to the bounded fixer queue; a changed head becomes eligible again.
+
+   Validation plan:
+   {validation}
+
 4. Land: `git push -u origin {branch}`, open one PR into `{base}` titled "Merge round {round}: <n> PRs", whose body lists
    every PR it merges (as `#N`), the fixes you made and every check you ran with its result, and merge it yourself with
    a merge commit (`gh pr merge <number> --merge`). GitHub marks the included PRs merged once their heads are in
