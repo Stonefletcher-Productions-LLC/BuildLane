@@ -314,13 +314,14 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
     return gh.create_issue("Fix merge-round crash: " + signature[:150], body, [graph.PREFIX, graph.label_for(graph.QUEUED)])
 
 
-def without_failed_dependencies(ready: list, excluded: dict, tasks: dict) -> list:
+def without_failed_dependencies(ready: list, excluded: dict, tasks: dict, known_closed: set[int] | None = None) -> list:
     """Keep failed heads and their issue/PR dependency closure out of the candidate.
 
     A PR with a changed head is not itself excluded. Existing open task dependencies
     still protect its descendants until that prerequisite actually lands.
     """
     prs = {p.number: p for p in ready}
+    known_closed = set(known_closed or ()) | {n for n, t in tasks.items() if t.closed}
     tasks = {n: t for n, t in tasks.items() if not t.closed}
     blocked_prs = {n for n, p in prs.items() if excluded.get(str(n), {}).get("head") == p.head_sha}
     issue_prs: dict[int, set[int]] = {t.number: {t.pr_number} for t in tasks.values() if t.pr_number is not None}
@@ -334,13 +335,17 @@ def without_failed_dependencies(ready: list, excluded: dict, tasks: dict) -> lis
     blocked_issues: set[int] = {n for n in tasks if not (issue_prs.get(n, set()) & prs.keys())}
     refs = {n: {int(ref) for line in re.findall(r"^\s*depends\s+on\s*:\s*(.+)$", p.body or "", re.I | re.M)
                 for ref in re.findall(r"#(\d+)", line)} for n, p in prs.items()}
+    # Absence from the harness issue list is not evidence of completion: it may
+    # be an unlabelled open issue, a missing PR, or a failed GitHub lookup.
+    dependencies = {d for t in tasks.values() for d in t.depends_on} | {d for ds in refs.values() for d in ds}
+    blocked_issues.update(dependencies - tasks.keys() - prs.keys() - known_closed)
     while True:
         old = (len(blocked_prs), len(blocked_issues))
         for issue, numbers in issue_prs.items():
             if numbers & blocked_prs:
                 blocked_issues.add(issue)
         for t in tasks.values():
-            if set(t.depends_on) & blocked_issues:
+            if set(t.depends_on) & (blocked_issues | blocked_prs):
                 blocked_issues.add(t.number)
         for issue in blocked_issues:
             blocked_prs.update(issue_prs.get(issue, set()))
