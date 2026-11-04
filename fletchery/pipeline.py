@@ -251,7 +251,7 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         ctx.live.stage(task.number, "Opening PR")
     try:
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file, True)
-        repo.push(wt, task.branch)
+        await asyncio.to_thread(repo.push, wt, task.branch)
         body = pr_body(task, worker_report, results, review, cfg, out if pool is not None and pool.multi else None)
         pr = gh.create_pr(task.branch, cfg.base_branch, f"#{task.number} {task.title}", body, [graph.PREFIX, "ready"],
                           cfg.assignee or None)

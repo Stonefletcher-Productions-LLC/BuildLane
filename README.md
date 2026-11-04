@@ -200,7 +200,9 @@ worktree root receives this grant. Codex authoring sessions need local tool acce
 read-only access. The grant is operator configuration, never inferred from issue text or worker files.
 
 Authorized LFS additions and updates publish through the project's existing `Tools/CI/PushWithLfs.ps1` helper;
-missing helpers or failed uploads stop publication. Every changed LFS path must be listed. A `"mode": "delete"`
+missing helpers or failed uploads stop publication. Delivery runs outside the controller event loop for both
+workers and fixers. Repairs validate their delta against the original PR head and retain ownership, ancestry and
+remote-head guards. Every changed LFS path must be listed, including both sides of a rename. A `"mode": "delete"`
 grant permits deletions only and uses the normal Git LFS hook. Reviewers still assess correctness and required
 Build Lane evidence; authorized binary files alone do not trigger escalation. Use official Blender Lab MCP for
 Blender work and preserve other workers' scenes. Remove grants when the tasks finish.
