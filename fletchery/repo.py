@@ -15,11 +15,12 @@ _TASK_CHECKOUT_LOCK = threading.RLock()
 
 
 class Repo:
-    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin"):
+    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin", asset_tasks: dict | None = None):
         self.root = Path(root)
         self.worktree_root = Path(worktree_root)
         self.base = base
         self.remote = remote
+        self.asset_tasks = asset_tasks or {}
         self.env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
@@ -200,18 +201,20 @@ class Repo:
         if self._repair_remote_head(branch) != expected_head:
             raise RuntimeError("The remote PR head changed during repair; local fix is preserved and was not pushed")
         self.git("merge-base", "--is-ancestor", expected_head, "HEAD", cwd=wt)
-        changed = [line for line in self.git("diff", "--name-only", expected_head, "HEAD", cwd=wt).splitlines() if line]
+        changed = [line for line in self.git("diff", "--no-renames", "--name-only", expected_head, "HEAD", cwd=wt).splitlines() if line]
         tracked = self.lfs_tracked(wt, changed)
-        if tracked:
-            raise RuntimeError("Repair changes LFS-tracked files; use the project's asset delivery lane: " + ", ".join(tracked[:5]))
+        grant = self._asset_grant(wt, tracked, f"{expected_head}..HEAD") if tracked else None
         # Recheck after remote inspection in case another process took ownership.
         self.ensure_repair_checkout(wt, branch, expected_head, lease_file, require_clean=True)
+        if grant:
+            self._publish_assets(wt, branch, grant)
+            return
         # No force or force-with-lease: another writer advancing after the check is
         # still protected by Git's normal fast-forward receive rule.
         self.git("push", "--no-verify", "-u", self.remote, f"HEAD:refs/heads/{branch}", cwd=wt)
 
     def changed_files(self, wt: Path) -> list[str]:
-        out = self.git("diff", "--name-only", f"{self.remote}/{self.base}...HEAD", cwd=wt, check=False)
+        out = self.git("diff", "--no-renames", "--name-only", f"{self.remote}/{self.base}...HEAD", cwd=wt, check=False)
         return [l for l in out.splitlines() if l]
 
     def has_commits(self, wt: Path) -> bool:
@@ -234,13 +237,38 @@ class Repo:
         return [l.split(":")[0] for l in out.splitlines() if l.endswith(": filter: lfs")]
 
     def push(self, wt: Path, branch: str) -> None:
-        """Workers change text only, so the push skips the LFS pre-push hook (`--no-verify`), which hangs where the LFS
-        endpoint is unreachable (seen from a cloud session on 2026-11-02). A branch that touches an LFS-tracked file is
-        refused here: that needs Tools\\CI\\PushWithLfs.ps1 on the PC, and a person."""
+        """Text-only pushes skip the LFS hook. Explicit operator grants route asset
+        publication through the project's delivery helper, or the normal hook for deletions."""
         tracked = self.lfs_tracked(wt, self.changed_files(wt))
         if tracked:
-            raise RuntimeError("branch changes LFS-tracked files, which Fletchery never pushes: " + ", ".join(tracked[:5]))
+            grant = self._asset_grant(wt, tracked, f"{self.remote}/{self.base}...HEAD")
+            self._publish_assets(wt, branch, grant)
+            return
         self.git("push", "--no-verify", "-u", self.remote, f"HEAD:{branch}", cwd=wt)
+
+    def _asset_grant(self, wt: Path, tracked: list[str], comparison: str) -> dict:
+        from asset_jobs import grant_for, permitted
+        grant = grant_for(self.asset_tasks, self.worktree_root, wt)
+        if not grant or any(not permitted(grant, name) for name in tracked):
+            raise RuntimeError("LFS asset changes require an operator grant for every changed asset path: " + ", ".join(tracked[:5]))
+        if grant.get("mode") == "delete":
+            remaining = self.git("diff", "--no-renames", "--name-only", "--diff-filter=ACMRTUXB", comparison, cwd=wt).splitlines()
+            if any(name in remaining for name in tracked):
+                raise RuntimeError("Deletion-only asset grant cannot publish added or modified assets")
+        return grant
+
+    def _publish_assets(self, wt: Path, branch: str, grant: dict) -> None:
+        """Both delivery paths retain Git's normal non-force receive protection."""
+        if grant.get("mode") == "delete":
+            self.git("push", "-u", self.remote, f"HEAD:{branch}", cwd=wt)
+            return
+        helper = self.root / "Tools" / "CI" / "PushWithLfs.ps1"
+        if not helper.is_file():
+            raise RuntimeError("Authorized assets need the project's Tools/CI/PushWithLfs.ps1 delivery helper")
+        proc = subprocess.run(["pwsh", "-NoProfile", "-File", str(helper), "-Branch", branch, "-Remote", self.remote],
+                              cwd=wt, env=self.env, capture_output=True, text=True, timeout=1800)
+        if proc.returncode:
+            raise RuntimeError("Asset delivery failed: " + (proc.stdout + proc.stderr)[-4000:])
 
     def head(self, wt: Path) -> str:
         return self.git("rev-parse", "HEAD", cwd=wt)

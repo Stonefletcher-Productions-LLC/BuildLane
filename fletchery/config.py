@@ -32,6 +32,7 @@ def default_state_dir(name: str) -> str:
 
 # profile key (in "workers") -> Config field
 WORKER_KEYS = {
+    "assetTasks": "asset_tasks",
     "autoPrerequisites": "auto_prerequisites",
     "enabled": "workers_enabled", "projectRoot": "project_root", "baseBranch": "base_branch", "assignee": "assignee",
     "worktreeRoot": "worktree_root", "stateDir": "state_dir", "maxParallel": "max_parallel", "pollMinutes": "poll_minutes",
@@ -64,6 +65,7 @@ class Config:
     worktree_root: str = ""                  # "" = <state_dir>/worktrees
     state_dir: str = ""                      # "" = %LOCALAPPDATA%\Fletchery\<name>
     max_parallel: int = 2                    # on a Claude plan the limits are shared with your own sessions
+    asset_tasks: dict = None                 # explicit per-task paths/mode; default remains text-only
     auto_prerequisites: bool = True          # turn actionable blocks into dependencies, not repeated human prompts
     poll_minutes: float = 10
     dashboard_port: int = 8770               # http://127.0.0.1:<port> while Fletchery runs

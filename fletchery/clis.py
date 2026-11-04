@@ -158,6 +158,9 @@ class CliRuntime(Runtime):
         result = RunResult(role, False)
         workdir = Path(tempfile.mkdtemp(prefix=f"fletchery-{self.kind}-"))
         prompt_file = workdir / "prompt.md"
+        from asset_jobs import grant_for, prompt_note
+        grant = grant_for(getattr(self,"asset_tasks",None), getattr(self,"worktree_root",None), cwd)
+        prompt += prompt_note(grant)
         prompt_file.write_text(prompt + (GIT_NOTE if role in ("worker", "fixer") else ""), encoding="utf-8")
         argv, stdin_text, extra_env = self.command(role, prompt_file, Path(cwd), workdir)
         minutes = (self.spec.timeout_minutes or {}).get(role) or DEFAULT_TIMEOUT_MIN.get(role, 30)
@@ -257,10 +260,13 @@ class CodexRuntime(CliRuntime):
     def command(self, role, prompt_file, cwd, workdir):
         schema = workdir / "schema.json"
         schema.write_text(json.dumps(strict_schema(SCHEMAS[role])), encoding="utf-8")
+        from asset_jobs import grant_for
+        grant = grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd)
+        asset = role in ("worker","fixer") and bool(grant and grant.get("mode","author")=="author")
         argv = [find_codex(self.spec.command), "exec", "--json", "--skip-git-repo-check",
                 "--output-schema", str(schema), "-o", str(workdir / "last.txt"), "-C", str(cwd),
-                "-s", "danger-full-access" if role == "merger" else "read-only" if role in READ_ONLY else "workspace-write"]
-        if role == "merger":
+                "-s", "danger-full-access" if role == "merger" or asset else "read-only" if role in READ_ONLY else "workspace-write"]
+        if role == "merger" or asset:
             argv += ["-c", 'approval_policy="never"']
         if self.spec.model:
             argv += ["-m", self.spec.model]
@@ -321,6 +327,11 @@ class OpenCodeRuntime(CliRuntime):
 
     def command(self, role, prompt_file, cwd, workdir):
         perms = OPENCODE_PERMISSIONS["merge" if role == "merger" else "read" if role in READ_ONLY else "write"]
+        from asset_jobs import grant_for
+        grant=grant_for(getattr(self,"asset_tasks",None),getattr(self,"worktree_root",None),cwd)
+        if role in ("worker","fixer") and grant and grant.get("mode","author")=="author":
+            perms=copy.deepcopy(perms)
+            perms["external_directory"]="allow"
         config = {"$schema": "https://opencode.ai/config.json", "permission": perms, "share": "disabled",
                   "autoupdate": False}
         # --standalone: a private server, never the OpenCode app's background service. On the service a session
@@ -403,9 +414,15 @@ def make_runtime(spec, cfg, repo_root: Path, plugin_path: Path | None, fake: Run
     if fake is not None or spec.kind == "fake":
         return fake
     if spec.kind == "codex":
-        return CodexRuntime(spec)
+        rt=CodexRuntime(spec)
+        rt.asset_tasks=cfg.asset_tasks
+        rt.worktree_root=cfg.worktree_root
+        return rt
     if spec.kind == "opencode":
-        return OpenCodeRuntime(spec)
+        rt=OpenCodeRuntime(spec)
+        rt.asset_tasks=cfg.asset_tasks
+        rt.worktree_root=cfg.worktree_root
+        return rt
     if spec.kind == "claude":
         from runtime import AgentSdkRuntime
         return AgentSdkRuntime(repo_root, spec.model or cfg.model or None, plugin_path=plugin_path,

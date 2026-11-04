@@ -113,7 +113,7 @@ def take_lock(state_dir: Path) -> Path:
 def real_context(cfg: Config, dry_run: bool) -> Context:
     gh = GitHub(cfg.repo)
     root = Path(cfg.project_root) if cfg.project_root else Path.cwd()
-    repo = Repo(root, Path(cfg.worktree_root), cfg.base_branch)
+    repo = Repo(root, Path(cfg.worktree_root), cfg.base_branch, asset_tasks=cfg.asset_tasks)
     pool = None
     if dry_run or not cfg.workers_enabled:
         rt = FakeRuntime()

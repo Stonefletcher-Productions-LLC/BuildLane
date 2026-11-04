@@ -191,6 +191,22 @@ Optional: give the repository a `.fletchery/` folder with its own rules ([Projec
 
 A limit on one account pauses only the agents on it, and their tasks go to the others.
 
+## Explicit asset tasks
+
+Workers remain text-only by default. An operator can authorize an individual local art task in the project
+profile's `workers.assetTasks`, keyed by issue number, for example
+`"991": {"paths": ["Art/Characters/Hair/", "Review991/"]}`. Only an immediate task checkout under the configured
+worktree root receives this grant. Codex authoring sessions need local tool access; reviewers and planners retain
+read-only access. The grant is operator configuration, never inferred from issue text or worker files.
+
+Authorized LFS additions and updates publish through the project's existing `Tools/CI/PushWithLfs.ps1` helper;
+missing helpers or failed uploads stop publication. Delivery runs outside the controller event loop for both
+workers and fixers. Repairs validate their delta against the original PR head and retain ownership, ancestry and
+remote-head guards. Every changed LFS path must be listed, including both sides of a rename. A `"mode": "delete"`
+grant permits deletions only and uses the normal Git LFS hook. Reviewers still assess correctness and required
+Build Lane evidence; authorized binary files alone do not trigger escalation. Use official Blender Lab MCP for
+Blender work and preserve other workers' scenes. Remove grants when the tasks finish.
+
 ## Project rules
 
 All agent roles carry the [Blender Lab MCP requirement](docs/BLENDER-MCP.md): use the
