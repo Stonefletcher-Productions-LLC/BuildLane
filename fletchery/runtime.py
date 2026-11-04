@@ -38,7 +38,9 @@ TOOLS: dict[str, dict[str, list[str]]] = {
         "disallowed": ["WebSearch", "WebFetch", "Agent"],
     },
     "planner": {
-        "allowed": ["Bash(gh:*)", "Bash(cat:*)", "Bash(grep:*)", "Bash(rg:*)", "Read", "Glob", "Grep"],
+        "allowed": ["Bash(gh issue view:*)", "Bash(gh pr view:*)", "Bash(gh search issues:*)",
+                    "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)",
+                    "Bash(cat:*)", "Bash(grep:*)", "Bash(rg:*)", "Read", "Glob", "Grep"],
         "disallowed": ["Edit", "Write", "WebSearch", "WebFetch", "Agent"],
     },
 }
@@ -78,6 +80,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 
 # Blocker planning uses the read-only planner, with an explicit human-decision escape hatch.
 SCHEMAS["planner"]["properties"].update({
+    "retry": {"type": "string"},
     "needs_human": {"type": "string"},
     "reuse": {"type": "array", "items": {"type": "integer"}},
 })

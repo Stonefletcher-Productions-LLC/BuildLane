@@ -16,7 +16,7 @@ from loop import Engine
 from pipeline import Context, Outcome, run_task
 from repo import FakeRepo
 from rounds import report_failure
-from runtime import FakeRuntime
+from runtime import FakeRuntime, TOOLS
 from server import Dashboard
 
 
@@ -68,7 +68,171 @@ class BlockerTests(unittest.TestCase):
     def test_no_recursive_child_expansion(self):
         self.task.body += "\n" + blockers.CHILD + "9:key:0 -->"
         self.resolve()
+        self.assertEqual(len(self.gh.tasks), 1)
+        self.assertEqual(self.task.status, graph.BLOCKED)
+        self.assertFalse(blockers.pending(self.gh.issue_thread(1)))
+
+    def retry_plan(self, instruction="Fix the double world initialization; retain the tests and list native checks for the lane."):
+        self.plan.update(issues=[], reuse=[], retry=instruction, needs_human="")
+
+    def test_concrete_reviewer_fix_requeues_original_branch(self):
+        self.gh.comment(1, "Fletchery blocked this task (cost so far $0.00): reviewer still asks for changes: double world initialization")
+        self.retry_plan()
+        out = self.resolve()
+        self.assertEqual(out.result, "retry_fix")
+        self.assertEqual(self.task.status, graph.QUEUED)
+        self.assertIn(self.plan["retry"], self.task.body)
+        self.assertIn(blockers.RETRY, self.task.body)
+        self.assertEqual(len(self.gh.tasks), 1)
+
+    def test_same_failure_does_not_retry_forever(self):
+        self.retry_plan()
+        self.resolve()
+        self.gh.set_status(1, graph.BLOCKED)
+        self.gh.comment(1, "Fletchery blocked this task: prerequisite helper is missing")
+        self.assertEqual(self.resolve().result, "blocked")
+        self.assertFalse(blockers.pending(self.gh.issue_thread(1)))
+        self.assertEqual(self.task.body.count(blockers.RETRY), 1)
+
+    def test_three_distinct_repairs_maximum(self):
+        self.retry_plan()
+        for i in range(4):
+            self.gh.set_status(1, graph.BLOCKED)
+            self.gh.comment(1, f"Fletchery blocked this task: concrete failure {i}")
+            self.resolve()
+        self.assertEqual(self.task.body.count(blockers.RETRY), 3)
+        self.assertEqual(self.task.status, graph.BLOCKED)
+
+    def test_generated_prerequisite_can_be_repaired(self):
+        self.task.body += "\n" + blockers.CHILD + "9:key:0 -->"
+        self.retry_plan()
+        self.assertEqual(self.resolve().result, "retry_fix")
+        self.assertEqual(len(self.gh.tasks), 1)
+
+    def test_repair_recovers_failed_label_write_without_duplicate_body(self):
+        self.retry_plan()
+        with patch.object(self.gh, "set_status", side_effect=RuntimeError("network")):
+            self.resolve()
+        self.assertEqual(self.task.status, graph.BLOCKED)
+        self.assertEqual(self.task.body.count(blockers.RETRY), 1)
+        self.assertEqual(self.resolve().result, "retry_fix")
+        self.assertEqual(self.task.body.count(blockers.RETRY), 1)
+        self.assertEqual(len(self.ctx.runtime.calls), 1)
+
+    def test_prerequisites_recover_after_link_but_before_label(self):
+        with patch.object(self.gh, "set_status", side_effect=RuntimeError("network")):
+            self.resolve()
+        self.assertEqual(self.task.depends_on, [2])
+        self.resolve()
+        self.assertEqual(len(self.gh.tasks), 2)
+        self.assertEqual(len(self.ctx.runtime.calls), 1)
+        self.assertEqual(self.task.status, graph.QUEUED)
+
+    def test_existing_drafts_are_read_in_task_worktree(self):
+        wt = self.root / f"1-{self.task.slug}"
+        (wt / "Docs/Reviews").mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: task")
+        (wt / "Docs/Reviews/Prerequisites.md").write_text("Saved bike identity and party-lot contract drafts")
+        seen = []
+        self.ctx.runtime.on_run = lambda role, cwd: seen.append((role, cwd))
+        self.resolve()
+        self.assertEqual(seen[0], ("planner", wt.resolve()))
+        self.assertTrue((wt / "Docs/Reviews/Prerequisites.md").exists())
+        self.assertEqual(blockers.planner_root(graph.Task(9, "missing"), self.ctx), self.root)
+
+    def test_scope_change_during_plan_is_not_overwritten_or_queued(self):
+        self.retry_plan()
+        self.ctx.runtime.on_run = lambda *a: setattr(self.task, "body", "New scope supplied while planning")
+        self.resolve()
+        self.assertEqual(self.task.body, "New scope supplied while planning")
+        self.assertEqual(self.task.status, graph.BLOCKED)
+
+    def test_changed_scope_or_closed_task_does_not_create_prerequisites(self):
+        self.ctx.runtime.on_run = lambda *a: setattr(self.task, "body", "Updated scope during planning")
+        self.resolve()
+        self.assertEqual(len(self.gh.tasks), 1)
+        self.task.closed = True
+        self.resolve()
+        self.assertEqual(len(self.gh.tasks), 1)
+
+    def test_known_closed_prerequisite_can_be_reused(self):
+        self.gh.closed.add(9)
+        self.plan.update(issues=[], reuse=[9])
+        self.assertEqual(self.resolve().result, "waiting_dependencies")
+        self.assertEqual(self.task.depends_on, [9])
+
+    def test_repair_plan_cannot_mix_actions(self):
+        self.retry_plan()
+        with self.assertRaises(ValueError):
+            blockers.validate(dict(self.plan, needs_human="Choose a design"), 1, self.gh.tasks)
+
+    def test_backlog_does_not_launch_second_planner_while_one_is_active(self):
+        self.gh.tasks[2] = graph.Task(2, "Other blocked task", labels=[graph.PREFIX, graph.label_for(graph.BLOCKED)])
+        engine = Engine(self.ctx, self.root / "serial")
+        engine.active.add(1)
+        asyncio.run(engine.once())
         self.assertEqual(self.ctx.runtime.calls, [])
+
+    def test_daily_cap_defers_backlog_planning(self):
+        self.ctx.cfg.daily_budget_usd = 0
+        asyncio.run(Engine(self.ctx, self.root / "budget").once())
+        self.assertEqual(self.ctx.runtime.calls, [])
+
+    def test_requeued_pr_gets_fresh_fixer_attempt_and_feedback(self):
+        async def settle(result):
+            engine = Engine(self.ctx, self.root / result)
+            engine.state.fix_attempts["9000"] = 3
+            engine.state.seen["9000"] = "feedback already consumed"
+            async def done():
+                return Outcome(1, result, pr_number=9000)
+            engine._start(done(), 1, 9000, "earlier feedback")
+            await engine._wait_for_jobs(None)
+            self.assertEqual(engine.state.fix_attempts["9000"], 0)
+            self.assertEqual(engine.state.seen["9000"], "earlier feedback")
+        asyncio.run(settle("retry_fix"))
+        asyncio.run(settle("waiting_dependencies"))
+
+    def test_old_human_verdict_reclassified_once(self):
+        thread = self.gh.issue_thread(1)
+        key, _ = blockers.context(thread)
+        self.gh.comment(1, "Fletchery: prerequisite plan\n" + blockers.PLAN + key + "\n" +
+                        json.dumps({"issues": [], "needs_human": "A maintainer must create the drafts"}) + "\n-->")
+        self.retry_plan()
+        self.assertTrue(blockers.pending(self.gh.issue_thread(1)))
+        self.assertEqual(self.resolve().result, "retry_fix")
+
+    def test_old_actionable_plan_keeps_its_child_identity_during_upgrade(self):
+        key, _ = blockers.context(self.gh.issue_thread(1))
+        self.gh.comment(1, "Fletchery: prerequisite plan\n" + blockers.PLAN + key + "\n" + json.dumps(self.plan) + "\n-->")
+        with patch.object(self.gh, "set_status", side_effect=RuntimeError("network")):
+            self.resolve()
+        self.resolve()
+        self.assertEqual(len(self.gh.tasks), 2)
+        self.assertEqual(self.ctx.runtime.calls, [])
+        self.assertEqual(self.task.status, graph.QUEUED)
+
+    def test_backlog_rotates_past_deferred_failure(self):
+        self.gh.tasks[2] = graph.Task(2, "Other blocked task", labels=[graph.PREFIX, graph.label_for(graph.BLOCKED)])
+        self.ctx.runtime.script[("planner", 1)] = {"error": "temporary planner error"}
+        engine = Engine(self.ctx, self.root / "fair")
+        asyncio.run(engine.once())
+        asyncio.run(engine.once())
+        self.assertEqual([c[1] for c in self.ctx.runtime.calls], [1, 2])
+
+    def test_native_acceptance_is_an_explicit_continuation_not_dependency(self):
+        self.retry_plan("Fix joined-client offscreen exit; carry W1-W7 runtime rows and Studio captures to the PR lane checks.")
+        self.resolve()
+        self.assertEqual(len(self.gh.tasks), 1)
+        self.assertEqual(self.task.depends_on, [])
+        prompt = self.ctx.runtime.calls[0][2]
+        self.assertIn("GitHub networking is expected", prompt)
+        self.assertIn("not prerequisite issues that block their own source PR", prompt)
+
+    def test_planner_github_commands_are_read_only(self):
+        allowed = TOOLS["planner"]["allowed"]
+        self.assertNotIn("Bash(gh:*)", allowed)
+        self.assertIn("Bash(gh issue view:*)", allowed)
+        self.assertIn("Edit", TOOLS["planner"]["disallowed"])
 
     def test_disabled_and_zero_workers_do_not_plan_backlog(self):
         self.ctx.cfg.auto_prerequisites = False

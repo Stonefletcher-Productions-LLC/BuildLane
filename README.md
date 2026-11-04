@@ -216,12 +216,18 @@ The preferred merge agent wins when available; otherwise the best available C++ 
 Only one round runs at a time. Merger sessions have the local and GitHub access needed to build and land the round;
 worker and reviewer restrictions stay the same. Pause/resume merging is shown immediately, even during a slow poll.
 
-**Blocked work:** by default, Fletchery asks a read-only planner whether a blocked task needs actionable prerequisites.
-It creates up to three independent issues (or reuses existing ones), adds `Depends on:` to the original, and returns it
-to the queue to wait for them. This also handles the existing Needs you backlog, one planning session per pass within
-worker slots and the daily cap. Plans and created issues survive restarts without duplication. Generated prerequisites
-are not expanded recursively. Genuine decisions, credentials, unavailable inputs or capabilities still need a person.
-Turn this off with **Settings > Workers > Create prerequisite tasks automatically**, or `workers.autoPrerequisites: false`.
+**Blocked work:** by default, a read-only planner checks the task's existing worktree, saved prerequisite drafts and
+recent review findings. Missing implementation work becomes up to three independent issues (or links to existing ones),
+and the original waits on `Depends on:`. A concrete fix instead gets continuation instructions in the original issue
+and is requeued on its existing branch. Worker GitHub restrictions are handled by the harness; native tests and captures
+belong to the PR's lane checks, not circular prerequisites that prevent that PR from being opened.
+
+The existing Needs you backlog is handled fairly, with one backlog planner at a time, within worker slots and the daily
+cap. Plans and partial GitHub updates survive restarts without duplication. Generated prerequisites can receive repairs
+but cannot expand recursively. The same concrete failure gets one automatic repair, with at most three distinct repairs
+per task. Genuine decisions, unavailable inputs/capabilities and exhausted repairs still need a person. Older cached
+human verdicts are reconsidered once under this policy. Turn this off with **Settings > Workers > Handle blocked tasks
+automatically**, or `workers.autoPrerequisites: false`.
 
 Merge-round crashes also create a repair issue, including a crash recorded before this update. The same failure reuses
 its issue and adds each new round's evidence once. The error remains visible in Merge until another round finishes;
