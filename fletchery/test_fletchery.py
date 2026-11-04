@@ -1270,6 +1270,23 @@ _notes.write_text("Run Tools/Build.ps1, then strict NavCheck.", encoding="utf-8"
 _cfg.merge_notes = str(_notes)
 assert "strict NavCheck" in _rounds.notes_text(None, _cfg)
 
+# an agent whose model can't be reached (OpenCode dropped it, LifeShare 2026-11-04) is taken out and the next agent
+# runs the same round at once, instead of the same dead agent failing every mergeRetryMinutes
+_cfg2 = Config(max_parallel=0, daily_budget_usd=60, base_branch="Test-Staging", merge_rounds=True, merge_agent="claude")
+_fk = {"claude": FakeRuntime({("merger", 0): {"error": "opencode failed: {'type': 'provider.no-route', "
+                                                       "'message': 'Model unavailable: opencode/claude-opus-5-5'}"}}),
+       "deepseek-pro": FakeRuntime({("merger", 0): _ans}), "deepseek": FakeRuntime()}
+ctx, tmp = ctx_with({}, cfg=_cfg2)
+ctx.agents = pool_with(_fk)
+ctx.gh.prs = [_PR(11, "Town", "b11", "Test-Staging", "b" * 40, ["ready"])]
+fm, _ = run_once(ctx, tmp)
+assert fm.state.merge_last["result"] == "unreachable" and "claude" in ctx.agents.paused, fm.state.merge_last
+assert _rounds.read_file(str(tmp / "state" / "merge-round.json"))["state"] == "failed"
+asyncio.run(fm.once())
+assert fm.state.merge_last["result"] == "landed" and fm.state.merge_last["agent"] != "claude", fm.state.merge_last
+assert [r for r, _, _ in _fk["claude"].calls] == ["merger"], "the dead agent isn't tried again"
+assert _clis.unreachable("Model unavailable: x") and not _clis.unreachable("You've hit your usage limit")
+
 
 # the round's worktree is made once and reset to origin/<base> for every round (build output stays)
 import subprocess as _sp  # noqa: E402

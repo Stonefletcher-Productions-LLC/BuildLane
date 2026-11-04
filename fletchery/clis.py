@@ -398,6 +398,15 @@ def make_runtime(spec, cfg, repo_root: Path, plugin_path: Path | None, fake: Run
     raise ValueError(f'agent "{spec.name}": unknown kind "{spec.kind}" (claude, codex or opencode)')
 
 
+UNREACHABLE_RE = re.compile(r"provider\.no-route|model unavailable|model[^\n]{0,40}not (found|available|supported)|"
+                            r"unknown model|no such model|ProviderModelNotFound", re.IGNORECASE)
+
+
+def unreachable(error: str) -> bool:
+    """The agent's model can't be reached at all (not a limit, not the task): another agent should take the work."""
+    return bool(error and UNREACHABLE_RE.search(error))
+
+
 def check(spec, auth_mode: str = "subscription") -> tuple[bool, str]:
     """Is this agent's CLI there and signed in? Quick, no session."""
     import subprocess
@@ -412,6 +421,9 @@ def check(spec, auth_mode: str = "subscription") -> tuple[bool, str]:
             return False, "No API key is known for this model's provider: add one to the agent's keys."
         return (True, f"Runs on the API key {name}") if keys.get(name) else (False, f"Runs on an API key, but {name} is not stored.")
     if stored and spec.kind == "opencode":
+        known = opencode_models(spec.command)
+        if known and spec.model and spec.model not in known:
+            return False, f"OpenCode doesn't offer {spec.model} right now (`opencode models`): pick another model."
         return True, "Using the stored key " + ", ".join(stored)
     try:
         if spec.kind == "codex":
@@ -434,6 +446,9 @@ def check(spec, auth_mode: str = "subscription") -> tuple[bool, str]:
             flat = re.sub(r"[\s\-_]", "", out.lower())
             if provider and re.sub(r"[\-_]", "", provider.lower()) not in flat:
                 return False, f"OpenCode has no sign-in for {provider}: run `opencode auth login`, or store its key."
+            known = opencode_models(spec.command)
+            if known and spec.model and spec.model not in known:  # signed in, but this model isn't offered (any more)
+                return False, f"OpenCode doesn't offer {spec.model} right now (`opencode models`): pick another model."
             return True, f"OpenCode signed in ({provider or 'default provider'})"
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"{spec.kind} CLI not found or not answering: {e}"

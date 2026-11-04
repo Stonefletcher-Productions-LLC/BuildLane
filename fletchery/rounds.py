@@ -93,7 +93,7 @@ def finish_file(path: str, result: str, note: str) -> None:
     d = read_file(path)
     if not d:
         return
-    d["state"] = "done" if result == "landed" else "failed" if result in ("failed", "crashed") else "done"
+    d["state"] = "done" if result in ("landed", "nothing") else "failed"
     d["note"] = note[:400]
     d["updated"] = now_iso()
     write_file(path, d)
