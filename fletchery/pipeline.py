@@ -186,64 +186,71 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         ctx.log(f"#{task.number} escalated to {agent}")
     _load_notes(ctx, task)
     try:
-        repo.fetch_base()
-        wt = repo.worktree(task.number, task.slug, task.branch)
+        await asyncio.to_thread(repo.fetch_base)
+        wt = await asyncio.to_thread(repo.worktree, task.number, task.slug, task.branch, cfg.heavy_lease_file)
+        await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
     except Exception as e:
         return _block(ctx, out, f"could not make the worktree: {e}")
+    local_branch = _branch_at(repo, wt, task.branch)
     task.rules = rules_mod.load(wt, cfg.project_root)
-    fail = lambda why, infra=False: _fail(ctx, task, out, wt, agent, why, infra)  # noqa: E731
+    async def fail(why, infra=False):
+        return await asyncio.to_thread(_fail, ctx, task, out, wt, agent, why, infra)
     issue = _issue_text(task) + _history_text(history)
 
     # 1. worker
     freeze = _freeze_text(cfg)
-    prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=task.branch, base=cfg.base_branch, freeze=freeze)
+    prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch, freeze=freeze)
     r = await rt.run("worker", prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
     _account(out, r)
     if not r.ok:
-        return fail(f"worker session failed: {r.error}", infra=True)
+        return await fail(f"worker session failed: {r.error}", infra=True)
     if r.output.get("gave_up"):
-        return fail(f"worker gave up: {r.output['gave_up']}")
+        return await fail(f"worker gave up: {r.output['gave_up']}")
+    await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
     if repo.dirty(wt):
         repo.commit_all(wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
     if not repo.has_commits(wt):
-        return fail("worker made no commits")
+        return await fail("worker made no commits")
     worker_report = r.output
 
     # 2. gates (a failure goes back to the worker once)
     results = _gates(ctx, task, wt)
     if not all(g.passed for g in results):
-        fix_prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=task.branch, base=cfg.base_branch,
+        fix_prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch,
                                  freeze=freeze) + "\n\n## Gate failures to fix\n" + _gate_output(results)
         r2 = await rt.run("worker", fix_prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r2)
+        await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if repo.dirty(wt):
             repo.commit_all(wt, f"Fletchery: #{task.number} gate fixes")
         results = _gates(ctx, task, wt)
         if not all(g.passed for g in results):
-            return fail("gates still fail after one fix pass:\n" + gates_mod.summary(results))
+            return await fail("gates still fail after one fix pass:\n" + gates_mod.summary(results))
 
     # 3. reviewer (fresh context, read-only)
     review = await _review(ctx, task, wt, out, agent, issue)
     if review.get("verdict") == "needs_work":
-        back = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=task.branch, base=cfg.base_branch, freeze=freeze) \
+        back = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch, freeze=freeze) \
             + "\n\n## Review findings to address\n" + _findings_text(review)
         r3 = await rt.run("worker", back, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r3)
+        await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if repo.dirty(wt):
             repo.commit_all(wt, f"Fletchery: #{task.number} review fixes")
         results = _gates(ctx, task, wt)
         if not all(g.passed for g in results):
-            return fail("gates fail after the review fixes:\n" + gates_mod.summary(results))
+            return await fail("gates fail after the review fixes:\n" + gates_mod.summary(results))
         review = await _review(ctx, task, wt, out, agent, issue)
     if review.get("verdict") == "escalate":
         return _block(ctx, out, "reviewer escalated:\n" + _findings_text(review))
     if review.get("verdict") != "approve":
-        return fail("reviewer still asks for changes after one fix pass:\n" + _findings_text(review))
+        return await fail("reviewer still asks for changes after one fix pass:\n" + _findings_text(review))
 
     # 4. PR
     if ctx.live:
         ctx.live.stage(task.number, "Opening PR")
     try:
+        await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file, True)
         repo.push(wt, task.branch)
         body = pr_body(task, worker_report, results, review, cfg, out if pool is not None and pool.multi else None)
         pr = gh.create_pr(task.branch, cfg.base_branch, f"#{task.number} {task.title}", body, [graph.PREFIX, "ready"],
@@ -298,6 +305,7 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
         return out
     await asyncio.to_thread(repo.fetch_base)
     wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
+    await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
     task.rules = rules_mod.load(wt, cfg.project_root)
     fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
     rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")
@@ -337,7 +345,7 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
 
 async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcome:
     cfg, gh, repo = ctx.cfg, ctx.gh, ctx.repo
-    local_branch = repo.git("branch", "--show-current", cwd=wt) if hasattr(repo, "git") else task.branch
+    local_branch = _branch_at(repo, wt, task.branch)
     fb += f"\n\nThe local repair branch is `{local_branch}`. The controller alone pushes the checked fix to existing PR branch `{pr.head}`; do not push or recreate its branch."
     prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
                          feedback=fb, freeze=_freeze_text(cfg))
@@ -348,6 +356,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         out.attempts.append({"agent": agent or "", "difficulty": "", "role": "fixer", "ok": False, "why": out.detail[:200]})
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}) could not fix PR #{pr.number}: {out.detail}")
         return out
+    await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
     if repo.dirty(wt):
         repo.commit_all(wt, f"Fletchery: #{task.number} fix after lane feedback")
     results = _gates(ctx, task, wt)
@@ -355,7 +364,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
         return out
-    await asyncio.to_thread(repo.push_repair, wt, pr.head, pr.head_sha)
+    await asyncio.to_thread(repo.push_repair, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
     gh.comment(pr.number, f"Fletchery fixer (attempt {attempt}): {r.output.get('summary', '')}\n\n{gates_mod.summary(results)}\n\n"
                           "Pushed; the lane will take it again when it is labelled `ready`.")
     out.result, out.detail = "fixed", r.output.get("summary", "")
@@ -382,19 +391,23 @@ def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, w
             why += "\n\nAgents tried, in order: " + ", ".join(tried) + "."
         return _requeue_or_block(ctx, task, out, why) if infra and len(tried) <= 1 else _block(ctx, out, why)
     try:
-        ctx.repo.reset_to_base(wt)
+        fresh = ctx.repo.restart_task_worktree(task.number, task.slug, task.branch, wt, why, ctx.cfg.heavy_lease_file)
     except Exception as e:
-        return _block(ctx, out, f"{why}\n\n(could not reset the branch for {nxt}: {e})")
+        return _block(ctx, out, f"{why}\n\n(could not preserve this attempt and prepare {nxt}'s checkout: {e})")
     ctx.gh.comment(task.number, f"Fletchery: {agent} could not finish this ({first_line[:300]}). "
-                                f"Its work was discarded; {nxt} starts again from `{ctx.cfg.base_branch}`.")
+                                f"Its work is preserved at `{wt}`; {nxt} starts in `{fresh}` from `{ctx.cfg.base_branch}`.")
     ctx.log(f"#{task.number} {agent} failed ({first_line[:80]}); escalating to {nxt}")
-    return _Escalate(nxt, f"- {agent} tried and failed: {why[:1500]}")
+    return _Escalate(nxt, f"- {agent} tried and failed: {why[:1500]}\n  Preserved attempt: `{wt}`. Read it only if useful; do not modify it.")
+
+
+def _branch_at(repo, wt: Path, fallback: str) -> str:
+    return repo.git("branch", "--show-current", cwd=wt) if hasattr(repo, "git") else fallback
 
 
 def _history_text(history: list[str]) -> str:
     if not history:
         return ""
-    return ("\n\n## Earlier attempts (their work was discarded; the branch is clean again)\n\n" + "\n".join(history)
+    return ("\n\n## Earlier attempts (preserved separately; this attempt has a fresh checkout)\n\n" + "\n".join(history)
             + "\n\nAvoid what made them fail.")
 
 
@@ -450,7 +463,7 @@ async def _review(ctx: Context, task: Task, wt: Path, out: Outcome, worker: str 
     """A fresh, read-only session. With several agents the reviewer comes from another vendor than the worker
     (agents.AgentPool.reviewer_for), so no model marks its own homework."""
     cfg, pool = ctx.cfg, ctx.agents
-    prompt = role_prompt("reviewer", task.rules, project=cfg.name, issue=issue or _issue_text(task), branch=task.branch, base=cfg.base_branch)
+    prompt = role_prompt("reviewer", task.rules, project=cfg.name, issue=issue or _issue_text(task), branch=_branch_at(ctx.repo, wt, task.branch), base=cfg.base_branch)
     failed: dict[str, str] = {}  # reviewers whose session failed to run on this task -> why
     while True:
         name = ""

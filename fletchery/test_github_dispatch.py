@@ -9,6 +9,28 @@ from github import GitHub
 
 
 class GitHubRetryTests(unittest.TestCase):
+    def test_abandoned_pr_does_not_satisfy_a_dependency(self):
+        gh = GitHub('example/repo')
+        for merged in (None, '2026-11-04T00:00:00Z'):
+            with self.subTest(merged=merged), patch.object(gh, 'api', side_effect=[
+                    {'state': 'closed', 'pull_request': {'url': 'pr'}}, {'merged_at': merged}]) as api:
+                self.assertEqual(gh.issue_closed(90), merged is not None)
+                self.assertEqual(api.call_args.args[0], 'repos/example/repo/pulls/90')
+
+    def test_plain_log_download_timeout_is_bounded(self):
+        with patch('github.subprocess.run', side_effect=subprocess.TimeoutExpired('gh', 15)) as run:
+            with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                GitHub('example/repo').api_text('repos/example/repo/actions/jobs/12/logs')
+            self.assertEqual(run.call_count, 2)
+            self.assertTrue(all(call.kwargs['timeout'] == 15 for call in run.call_args_list))
+
+    def test_plain_log_download_retries_and_preserves_text(self):
+        output = 'Build failed\nnot JSON: [diagnostic]\n'
+        responses = [SimpleNamespace(returncode=1, stderr='TLS handshake timeout', stdout=''),
+                     SimpleNamespace(returncode=0, stderr='', stdout=output)]
+        with patch('github.subprocess.run', side_effect=responses):
+            self.assertEqual(GitHub('example/repo').api_text('job/logs'), output)
+
     def test_get_retries_connect_failure_once(self):
         responses = [SimpleNamespace(returncode=1, stderr='connectex: connection timed out', stdout=''),
                      SimpleNamespace(returncode=0, stderr='', stdout='{"ok": true}')]

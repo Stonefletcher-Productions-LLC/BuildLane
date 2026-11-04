@@ -329,7 +329,10 @@ prefer native subscriptions for medium/hard work, for example
 choose among eligible native agents without rewriting their learned quality scores.
 DeepSeek Flash can stay available for easy writing while Codex/Claude handle higher
 levels and review/merge roles. Disabled agents stay disabled; in-flight sessions finish.
-The local API `/api/agents/routing` saves these limits and preferences without a restart.
+The local API `/api/agents/routing` saves these limits and preferences without a restart. Omitted
+fields keep their current values, `[]` denies every role/level, and `null` restores unrestricted eligibility.
+Provider preferences apply in both score and list routing, after role, difficulty and availability checks.
+Invalid policies and failed saves keep the existing live policy intact.
 
 
 Instruction and UI updates are read directly and do not pause dispatch. For a backend
@@ -338,4 +341,17 @@ app drains worker sessions and reloads. Explicit project switches/restart reques
 still drain immediately. The dashboard distinguishes an update waiting for a merge
 from an actual restart, so available slots do not appear silently stuck.
 
-PR feedback polling is bounded and rotates fairly between passes, so a large merge backlog or a failed status request cannot consume the entire dispatch pass before ready workers start.
+PR feedback polling is bounded and rotates fairly between passes. Shared prerequisites are checked once per
+pass; a failed lookup holds only the affected tasks and triggers the short network retry. Merge preparation fetches each
+PR file list once outside the worker event loop, so metadata reads do not freeze running sessions. Plain-text
+build-log downloads use the same bounded network retries as other reads.
+
+The daily budget gates new workers, prerequisite planners, fixers and merge rounds. Running sessions finish;
+the cap is a dispatch limit rather than a reservation of their eventual cost. Merge eligibility uses the current
+issue snapshot even on the first pass after startup. External or unlabelled prerequisites require verified
+completion too; a closed, unmerged PR does not satisfy a dependency. The one-shot command waits for its final
+status write before exiting, while the continuous app keeps publishing in the background.
+
+Worker escalation preserves failed attempts in place, including staged, untracked and ignored generated files.
+The next eligible agent gets a separate checkout; a persistent task registry selects that checkout after a restart.
+Checkout ownership is rechecked before the controller commits or pushes worker/repair changes.

@@ -82,9 +82,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_github_dispatch.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_dispatch_resilience.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_routing_policy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_reload_dispatch.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_repair_checkout.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_task_preservation.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Control room browser checks
         run: |

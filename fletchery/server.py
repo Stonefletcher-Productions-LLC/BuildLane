@@ -202,25 +202,26 @@ class Dashboard:
             raise ValueError("This project runs Claude only. Add a workers.agents list to its profile to use other agents.")
         return pool
 
-    def _save_agents(self) -> None:
-        """Write the agents back into the profile, keeping any keys this version does not know."""
+    def _agent_config(self, specs=None) -> list:
+        """Serialize agents for the profile, keeping any keys this version does not know."""
         pool, cfg = self._pool(), self.fm.cfg
         raw = {str(a.get("name")): dict(a) for a in (cfg.agents or [])}
         out = []
-        for spec in pool.specs.values():
+        for spec in (pool.specs if specs is None else specs).values():
             a = raw.get(spec.name, {"name": spec.name})
             a.update({"kind": spec.kind, "tier": spec.tier, "vendor": spec.vendor, "enabled": spec.enabled,
                       "auth": spec.auth, "roles": spec.roles, "levels": spec.levels, "maxParallel": spec.max_parallel})
-            if spec.model:
-                a["model"] = spec.model
-            if spec.key_env:
-                a["keyEnv"] = list(spec.key_env)
+            a["model"] = spec.model
+            a["keyEnv"] = list(spec.key_env or [])
             if spec.scores:
                 a["scores"] = dict(spec.scores)
             else:
                 a.pop("scores", None)
             out.append(a)
-        cfg.save(agents=out)
+        return out
+
+    def _save_agents(self) -> None:
+        self.fm.cfg.save(agents=self._agent_config())
         self.fm.wake()
 
     def toggle_agent(self, data: dict) -> dict:
@@ -240,7 +241,7 @@ class Dashboard:
         return {"name": name, "on": on}
 
     def add_agent(self, data: dict) -> dict:
-        from agents import guess_vendor, specs_from, tidy_name
+        from agents import guess_vendor, restrictions, specs_from, tidy_name
         pool = self._pool()
         kind = str(data.get("kind", "")).strip()
         model = str(data.get("model", "")).strip()
@@ -282,6 +283,7 @@ class Dashboard:
         key_env = [k.strip() for k in str(data.get("keyEnv", "")).split(",") if k.strip()]
         raw = {"name": name, "kind": kind, "model": model, "tier": max(1, min(5, tier)),
                "vendor": str(data.get("vendor", "")).strip().lower() or guess_vendor(kind, model), "enabled": True, "keyEnv": key_env}
+        raw.update(restrictions(data))
         spec = specs_from([raw])[0]
         pool.specs[name] = spec
         self.fm.cfg.agents = list(self.fm.cfg.agents or []) + [{k: v for k, v in raw.items() if v not in ("", [])}]
@@ -383,8 +385,12 @@ class Dashboard:
 
     def set_routing_policy(self, data: dict) -> dict:
         """Explicit subscription/provider preferences and task/role limits, without changing quality scores."""
+        from copy import deepcopy
+        from agents import restrictions
+        if not isinstance(data, dict):
+            raise ValueError("Routing policy must be an object")
         pool = self._pool()
-        preferred = data.get("preferredKindsByLevel", {})
+        preferred = data.get("preferredKindsByLevel", pool.routing.get("preferredKindsByLevel", {}))
         if not isinstance(preferred, dict) or any(k not in ("easy", "medium", "hard") or not isinstance(v, list)
                 or any(x not in ("codex", "claude", "opencode") for x in v) for k, v in preferred.items()):
             raise ValueError("Preferred kinds must be provider lists for easy, medium or hard tasks")
@@ -392,18 +398,27 @@ class Dashboard:
         if not isinstance(changes, list) or any(not isinstance(c, dict) for c in changes):
             raise ValueError("Agent restrictions must be a list")
         for change in changes:
-            if change.get("name") not in pool.specs:
+            if not isinstance(change.get("name"), str) or change["name"] not in pool.specs:
                 raise ValueError("Unknown agent")
-            for key, allowed in (("levels", ("easy", "medium", "hard")), ("roles", ("worker", "fixer", "reviewer", "planner", "merger"))):
-                if key in change and (not isinstance(change[key], list) or any(x not in allowed for x in change[key])):
-                    raise ValueError("Invalid " + key)
-        pool.routing["preferredKindsByLevel"] = preferred
+            restrictions(change)
+        routing, specs = deepcopy(pool.routing), deepcopy(pool.specs)
+        routing["preferredKindsByLevel"] = deepcopy(preferred)
         for change in changes:
-            spec = pool.specs[change["name"]]
-            if "levels" in change: spec.levels = change["levels"]
-            if "roles" in change: spec.roles = change["roles"]
-        self.fm.cfg.save(routing=dict(pool.routing))
-        self._save_agents()
+            for key, value in restrictions(change).items():
+                setattr(specs[change["name"]], key, value)
+        cfg = self.fm.cfg
+        old_routing, old_agents = cfg.routing, cfg.agents
+        try:
+            cfg.save(routing=routing, agents=self._agent_config(specs))
+        except Exception:
+            cfg.routing, cfg.agents = old_routing, old_agents
+            raise
+        # Publish only after the complete policy is durably saved. Preserve spec identity
+        # for running sessions and update just the limits affected by this endpoint.
+        pool.routing = routing
+        for name, spec in specs.items():
+            pool.specs[name].roles, pool.specs[name].levels = spec.roles, spec.levels
+        self.fm.wake()
         return {"preferredKindsByLevel": preferred}
 
     def set_scores(self, data: dict) -> dict:

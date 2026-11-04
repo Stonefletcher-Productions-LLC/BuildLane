@@ -56,7 +56,7 @@ class GitHub:
         self.gh = gh
 
     # ---- raw ----
-    def api(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False):
+    def _request(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False) -> str:
         cmd = [self.gh, "api", "-X", method, path]
         if paginate:
             cmd.append("--paginate")
@@ -78,14 +78,15 @@ class GitHub:
             transient = any(x in detail.lower() for x in ("timeout", "timed out", "connectex", "connection reset", "connection refused", "no such host", "temporary failure", "tls handshake"))
             if not transient or attempt + 1 == attempts:
                 raise RuntimeError(f"gh api {method} {path}: {detail}")
-        return parse_pages(p.stdout) if paginate else (json.loads(p.stdout) if p.stdout.strip() else None)
+        return p.stdout
+
+    def api(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False):
+        output = self._request(path, method, body, paginate)
+        return parse_pages(output) if paginate else (json.loads(output) if output.strip() else None)
 
     def api_text(self, path: str) -> str:
-        """A GET whose answer is plain text (a job's log)."""
-        p = subprocess.run([self.gh, "api", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if p.returncode != 0:
-            raise RuntimeError(f"gh api {path}: {p.stderr.strip()}")
-        return p.stdout
+        """A bounded GET whose answer is plain text (a job's log)."""
+        return self._request(path)
 
     # ---- issues ----
     def open_tasks(self) -> dict[int, Task]:
@@ -100,7 +101,13 @@ class GitHub:
 
     def issue_closed(self, number: int) -> bool:
         it = self.api(f"repos/{self.repo}/issues/{number}")
-        return it is not None and it["state"] == "closed"
+        if it is None or it["state"] != "closed":
+            return False
+        if it.get("pull_request"):
+            # An abandoned PR is closed too, but its implementation never landed.
+            pr = self.api(f"repos/{self.repo}/pulls/{number}")
+            return bool(pr and pr.get("merged_at"))
+        return True
 
     def set_status(self, number: int, status: str) -> None:
         """`status` is a plain state (queued, running, pr, blocked); the issue gets "<label>:<state>"."""
