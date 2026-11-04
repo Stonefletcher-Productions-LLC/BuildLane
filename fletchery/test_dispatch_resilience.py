@@ -40,6 +40,28 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lookup.call_count, 1)
         self.assertEqual({n for role, n, _ in runtime.calls if role == "worker"}, {2, 3})
 
+    async def test_once_finishes_its_final_status_write_before_exit(self):
+        engine, gh, _ = self.engine()
+        entered, release = threading.Event(), threading.Event()
+        original = gh.write_status
+
+        def slow_status(text):
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError("fixture status write timed out")
+            original(text)
+
+        with patch.object(gh, "write_status", side_effect=slow_status):
+            command = asyncio.create_task(engine.once())
+            try:
+                while not entered.is_set():
+                    await asyncio.sleep(0)
+                self.assertFalse(command.done(), "once must not exit with its status write still pending")
+            finally:
+                release.set()
+            await asyncio.wait_for(command, timeout=3)
+        self.assertEqual(gh.status_text, (engine.state_dir / "status.md").read_text(encoding="utf-8"))
+
     async def test_failed_dependency_lookup_holds_only_dependent_work_and_recovers(self):
         tasks = {1: Task(1, "Dependent", "Depends on: #90"), 2: Task(2, "Independent")}
         engine, gh, runtime = self.engine(tasks)
@@ -82,6 +104,21 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         gh.close_issue(2)
         await engine.once()
         self.assertTrue([call for call in runtime.calls if call[0] == "merger"])
+
+    async def test_external_prerequisites_require_verified_completion_for_merge(self):
+        for direct_pr_dependency in (False, True):
+            for answer in (False, True, RuntimeError("GitHub unavailable")):
+                with self.subTest(direct=direct_pr_dependency, answer=answer):
+                    task = Task(1, "Feature", "" if direct_pr_dependency else "Depends on: #90",
+                                [label_for(PR)])
+                    engine, gh, runtime = self.engine({1: task}, merge_rounds=True, max_parallel=0)
+                    body = "Closes #1" + ("\nDepends on: #90" if direct_pr_dependency else "")
+                    gh.prs = [PullRequest(12, "Feature", task.branch, "Test-Staging", "a" * 40,
+                                          ["ready"], body)]
+                    options = {"side_effect": answer} if isinstance(answer, Exception) else {"return_value": answer}
+                    with patch.object(gh, "issue_closed", **options):
+                        await engine.once()
+                    self.assertEqual(bool([call for call in runtime.calls if call[0] == "merger"]), answer is True)
 
     async def test_slow_merge_file_reads_leave_event_loop_free_and_fetch_once(self):
         engine, gh, runtime = self.engine(merge_rounds=True,

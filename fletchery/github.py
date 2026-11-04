@@ -101,7 +101,13 @@ class GitHub:
 
     def issue_closed(self, number: int) -> bool:
         it = self.api(f"repos/{self.repo}/issues/{number}")
-        return it is not None and it["state"] == "closed"
+        if it is None or it["state"] != "closed":
+            return False
+        if it.get("pull_request"):
+            # An abandoned PR is closed too, but its implementation never landed.
+            pr = self.api(f"repos/{self.repo}/pulls/{number}")
+            return bool(pr and pr.get("merged_at"))
+        return True
 
     def set_status(self, number: int, status: str) -> None:
         """`status` is a plain state (queued, running, pr, blocked); the issue gets "<label>:<state>"."""

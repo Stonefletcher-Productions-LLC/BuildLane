@@ -180,6 +180,11 @@ class Engine:
             await self.round_job
             self.round_job, self.round_info = None, {}
         self.publish(outcomes)
+        # The one-shot command owns its event loop and exits next. Finish its
+        # final status write before asyncio.run cancels pending tasks on shutdown.
+        status_job = getattr(self, "_status_job", None)
+        if status_job is not None:
+            await status_job
         return outcomes
 
     # ---- dispatch: sync with GitHub and start sessions in the free slots (never waits for them) ----
@@ -321,6 +326,8 @@ class Engine:
                     self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
                 break
         external_dependencies = {d for t in tasks.values() for d in t.depends_on if d not in tasks}
+        external_dependencies.update(d for p in prs.values() for d in Task(0, "", p.body).depends_on
+                                     if d not in tasks and d not in prs)
         closed_deps = {d for d in sorted(external_dependencies) if is_closed(d)}
         rd = readiness(tasks, closed_deps)
         for number in rd.waiting:
@@ -368,6 +375,7 @@ class Engine:
         # Merge eligibility must see this pass's issue dependencies, including on
         # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
+        self._known_closed_dependencies = closed_deps
         self._merge_round(draining)
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
@@ -414,7 +422,7 @@ class Engine:
                         self.ctx.log(f"PR #{p.number}: repair task creation deferred: {e}")
                 if old and old.get("head") != p.head_sha:
                     st.merge_excluded.pop(str(p.number), None)
-            ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks)
+            ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
         except Exception as e:  # GitHub down: try again next pass
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
             self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")
@@ -438,7 +446,7 @@ class Engine:
         limit = max(1, int(cfg.merge_round_max or 12))
         batch = []
         for offset in range(0, len(ready), limit):
-            batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks)
+            batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
             if batch:
                 break
         if not batch:

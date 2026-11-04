@@ -348,7 +348,9 @@ build-log downloads use the same bounded network retries as other reads.
 
 The daily budget gates new workers, prerequisite planners, fixers and merge rounds. Running sessions finish;
 the cap is a dispatch limit rather than a reservation of their eventual cost. Merge eligibility uses the current
-issue snapshot even on the first pass after startup.
+issue snapshot even on the first pass after startup. External or unlabelled prerequisites require verified
+completion too; a closed, unmerged PR does not satisfy a dependency. The one-shot command waits for its final
+status write before exiting, while the continuous app keeps publishing in the background.
 
 Worker escalation preserves failed attempts in place, including staged, untracked and ignored generated files.
 The next eligible agent gets a separate checkout; a persistent task registry selects that checkout after a restart.
