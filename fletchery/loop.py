@@ -571,6 +571,18 @@ class Engine:
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
+        # An active round owns its reservation even when future merges are held.
+        # A deferred merge must not reserve worker capacity for housekeeping.
+        if self.round_job is not None:
+            self.merge_why = "a round is running"
+            return
+        if st.merge_held:
+            self.merge_why = "merging is paused; feature work continues"
+            return
+        resume = st.merge_resume
+        if resume and not resume.get("authorized"):
+            self.merge_why = "Merge interrupted; saved progress waits for Resume / Merge now. " + str(resume.get("stop_reason", ""))[:300]
+            return
         if self._storage_job and not self._storage_job.done():
             self.merge_priority = True
             self.merge_why = "Completed-task cleanup is finishing before the next merge"

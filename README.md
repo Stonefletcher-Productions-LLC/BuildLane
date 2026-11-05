@@ -16,6 +16,7 @@ Workers and fixers that report heavy-work reservation contention keep their exis
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
+Paused merging and interrupted rounds awaiting authorization leave feature capacity available, including while cleanup finishes. Active rounds retain their reservation. See [work, merge and package policy](docs/WORK-MERGE-PACKAGE.md) for the operating plan.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
 Open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
 available across views. Choose **System**, **Light** or **Dark** in the sidebar; your

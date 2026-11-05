@@ -142,6 +142,45 @@ class MergePriorityTests(unittest.IsolatedAsyncioTestCase):
             current.set_result({})
             engine.round_job = None
 
+    async def test_deferred_merge_cleanup_does_not_reserve_feature_capacity(self):
+        for state in ("paused", "recovery"):
+            with self.subTest(state=state):
+                engine, gh, rt = self.engine({1: Task(1, "Independent worker")}, merge_rounds=True)
+                gh.prs = [self.ready_pr()]
+                cleanup = asyncio.get_running_loop().create_future()
+                engine._storage_job = cleanup
+                if state == "paused":
+                    engine.state.merge_held = True
+                else:
+                    engine.state.merge_resume = {"authorized": False, "checkpoint": {"head": "a" * 40}}
+                saved = json.loads(json.dumps(engine.state.merge_resume))
+                try:
+                    engine.dispatch()
+                    self.assertFalse(engine.merge_priority)
+                    self.assertTrue(engine.jobs, "Independent work must start while merging is deferred")
+                    self.assertIsNone(engine.round_job)
+                    self.assertFalse(cleanup.cancelled())
+                    self.assertEqual(engine.state.merge_resume, saved)
+                    await engine._wait_for_jobs(None)
+                    self.assertIn("worker", [role for role, _, _ in rt.calls])
+                finally:
+                    cleanup.set_result(None)
+                    engine._storage_job = None
+
+    async def test_active_round_keeps_reservation_when_future_merges_held(self):
+        engine, gh, rt = self.engine({1: Task(1, "Queued worker")}, merge_rounds=True)
+        engine.state.merge_held = True
+        active = asyncio.get_running_loop().create_future()
+        engine.round_job = active
+        try:
+            engine.dispatch()
+            self.assertTrue(engine.merge_priority)
+            self.assertFalse(engine.jobs)
+            self.assertFalse(active.cancelled())
+        finally:
+            active.set_result({})
+            engine.round_job = None
+
     async def test_completed_round_timestamp_starts_cooldown_at_end(self):
         engine, gh, rt = self.engine(merge_rounds=True)
         pr = self.ready_pr()
