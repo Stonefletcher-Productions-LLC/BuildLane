@@ -99,6 +99,21 @@ class Repo:
             raise RuntimeError("Active task checkout was already preserved")
         return path, entry["local_branch"] if entry else branch
 
+    def existing_task_worktree(self, number: int, slug: str, branch: str) -> Path | None:
+        """Resolve the active attempt for read-only planning; never create or reset it."""
+        with _TASK_CHECKOUT_LOCK:
+            state = self._task_checkout_state()
+            path, local_branch = self._task_location(number, slug, branch, state)
+            if not path.exists():
+                if branch in state["active"]:
+                    raise RuntimeError("Active task checkout is missing; cannot inspect its blocker evidence")
+                return None
+            if not (path / ".git").exists() or path.resolve() not in self._registered_worktrees():
+                raise RuntimeError("Task evidence is not in this repository's registered checkout")
+            if self.git("branch", "--show-current", cwd=path) != local_branch:
+                raise RuntimeError("Task evidence checkout belongs to another local branch")
+            return path.resolve()
+
     def worktree(self, number: int, slug: str, branch: str, lease_file: str = "") -> Path:
         """Return this task's owned active checkout. Escalated attempts use fresh paths;
         the original checkout and all generated/staged content remain untouched."""
@@ -291,6 +306,10 @@ class FakeRepo:
         p = self.active_checkouts.get(branch, self.worktree_root / f"{number}-{slug}")
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    def existing_task_worktree(self, number, slug, branch):
+        path = self.active_checkouts.get(branch, self.worktree_root / f"{number}-{slug}")
+        return path.resolve() if path.is_dir() and (path / ".git").exists() else None
 
     def repair_worktree(self, number, slug, branch, head_sha):
         return self.worktree(number, slug, branch)

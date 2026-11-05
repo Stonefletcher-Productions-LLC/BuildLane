@@ -140,6 +140,22 @@ class BlockerTests(unittest.TestCase):
         self.assertTrue((wt / "Docs/Reviews/Prerequisites.md").exists())
         self.assertEqual(blockers.planner_root(graph.Task(9, "missing"), self.ctx), self.root)
 
+    def test_planner_reads_current_attempt_instead_of_preserved_original(self):
+        original = self.root / f"1-{self.task.slug}"
+        current = self.root / f"1-{self.task.slug}-attempt-abcdef123456"
+        for path in (original, current):
+            path.mkdir()
+            (path / ".git").write_text("gitdir: fixture")
+        (original / "draft.txt").write_text("obsolete prerequisite proposal")
+        (current / "draft.txt").write_text("latest concrete correction")
+        self.ctx.repo.active_checkouts[self.task.branch] = current
+        seen = []
+        self.ctx.runtime.on_run = lambda role, cwd: seen.append(cwd)
+        self.resolve()
+        self.assertEqual(seen, [current.resolve()])
+        self.assertEqual((original / "draft.txt").read_text(), "obsolete prerequisite proposal")
+        self.assertEqual((current / "draft.txt").read_text(), "latest concrete correction")
+
     def test_scope_change_during_plan_is_not_overwritten_or_queued(self):
         self.retry_plan()
         self.ctx.runtime.on_run = lambda *a: setattr(self.task, "body", "New scope supplied while planning")

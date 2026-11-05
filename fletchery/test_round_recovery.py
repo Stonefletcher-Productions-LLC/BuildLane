@@ -106,9 +106,27 @@ class RecoveryTests(unittest.TestCase):
             fetch()
             lease.write_text(json.dumps({"token": "other-owner", "pid": 42}), encoding="utf-8")
         with patch.object(self.repo, "fetch_base", side_effect=acquire_during_fetch):
-            with self.assertRaisesRegex(RuntimeError, "lease is held"):
+            with self.assertRaisesRegex(rounds.CheckoutBusy, "lease is held"):
                 rounds.prepare_worktree(self.repo, "round-2", str(lease))
         self.assertEqual(self.git("branch", "--show-current", cwd=self.path).strip(), "round-1")
+
+    def test_confirmed_checkout_owner_defers_without_quarantining(self):
+        with patch.object(rounds, "worktree_busy", return_value=["42 UnrealEditor.exe"]):
+            with self.assertRaisesRegex(rounds.CheckoutBusy, "owned by running processes"):
+                rounds.prepare_worktree(self.repo, "round-2")
+        self.assertFalse((self.path.parent / ".merge-checkouts.json").exists())
+        self.assertEqual(self.git("branch", "--show-current", cwd=self.path).strip(), "round-1")
+
+    def test_lease_query_errors_are_not_classified_as_busy(self):
+        lease = self.root / "heavy.json"
+        lease.write_text("{unfinished", encoding="utf-8")
+        with self.assertRaises(RuntimeError) as error:
+            rounds.checkout_guard(self.path, str(lease))
+        self.assertNotIsInstance(error.exception, rounds.CheckoutBusy)
+        with patch.object(rounds, "worktree_busy", side_effect=RuntimeError("CIM unavailable")):
+            with self.assertRaises(RuntimeError) as error:
+                rounds.checkout_guard(self.path)
+        self.assertNotIsInstance(error.exception, rounds.CheckoutBusy)
 
     def test_bad_lease_or_registry_fails_closed(self):
         lease = self.root / "heavy.json"
@@ -187,6 +205,14 @@ class SelectionTests(unittest.TestCase):
         tasks = {1: Task(1, "Other", closed=True), 2: Task(2, "Child", "Depends on: #1")}
         self.assertEqual([p.number for p in rounds.without_failed_dependencies(prs, {"10": {"head": "a" * 40}}, tasks)], [20])
 
+    def test_busy_round_does_not_impose_failure_cooldown(self):
+        prs = [self.pr(10)]
+        last = {"result": "waiting", "key": rounds.key_of(prs), "at": rounds.now_iso()}
+        cfg = SimpleNamespace(merge_rounds=True, merge_retry_minutes=45)
+        self.assertEqual(rounds.should_start(cfg, last, False, False, False, prs), (True, ""))
+        last["result"] = "failed"
+        self.assertFalse(rounds.should_start(cfg, last, False, False, False, prs)[0])
+
     def test_validation_includes_base_and_caps_path_preview(self):
         text = rounds.validation_plan([f"Content/{n}.uasset" for n in range(110)], "integration")
         self.assertIn("origin/integration", text)
@@ -258,6 +284,22 @@ class ProcessProbeTests(unittest.TestCase):
             self.assertEqual(rounds.report_failure(tracker, SimpleNamespace(base_branch="main"), result), 7)
         self.assertEqual(tracker.created, 1)
         self.assertEqual(len(tracker.comments), 1)
+
+    def test_busy_round_keeps_waiting_progress_without_failed_steps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / "round.json")
+            rounds.start_file(path, 18, "round-18", folder, "codex", [], "main")
+            rounds.finish_file(path, "waiting", "Hearth acquired the PC during fetch")
+            data = rounds.read_file(path)
+            self.assertEqual(data["state"], "waiting")
+            self.assertEqual(data["steps"][0], {"name": "Prepare merge checkout", "state": "waiting"})
+            self.assertFalse(any(step["state"] == "failed" for step in data["steps"]))
+            self.assertEqual(merge.view(path, "")["state"], "waiting")
+            data["steps"] = [{"name": "Compile", "state": "done"},
+                             {"name": "Imports", "state": "running"}]
+            rounds.write_file(path, data)
+            rounds.finish_file(path, "waiting", "Native work still owns the PC")
+            self.assertEqual([s["state"] for s in rounds.read_file(path)["steps"]], ["done", "waiting"])
 
     def test_failed_round_updates_running_steps_and_view(self):
         with tempfile.TemporaryDirectory() as folder:

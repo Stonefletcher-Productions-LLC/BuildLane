@@ -360,14 +360,25 @@ from an actual restart, so available slots do not appear silently stuck.
 PR feedback polling is bounded and rotates fairly between passes. Shared prerequisites are checked once per
 pass; a failed lookup holds only the affected tasks and triggers the short network retry. Merge preparation fetches each
 PR file list once outside the worker event loop, so metadata reads do not freeze running sessions. Plain-text
-build-log downloads use the same bounded network retries as other reads.
+build-log downloads use the same bounded network retries as other reads. Worker gates and local Git
+checks run outside the shared scheduler, so a slow check does not freeze other workers. Fixers and escalations reserve their
+agent before checkout setup, respecting its parallel limit even when several repairs arrive together.
+Escalation reservations transfer once to the next attempt and are released if setup fails or is cancelled.
+Push/PR retries consult saved GitHub history, so the retry bound also holds after an app restart.
+A PC reservation appearing during merge preparation is a normal wait: it creates no crash issue and does
+not impose the failed-round cooldown once the reservation clears.
 
 The daily budget gates new workers, prerequisite planners, fixers and merge rounds. Running sessions finish;
 the cap is a dispatch limit rather than a reservation of their eventual cost. Merge eligibility uses the current
 issue snapshot even on the first pass after startup. External or unlabelled prerequisites require verified
-completion too; a closed, unmerged PR does not satisfy a dependency. The one-shot command waits for its final
-status write before exiting, while the continuous app keeps publishing in the background.
+completion too, including ready PRs created outside the harness; a closed, unmerged PR does not satisfy a dependency.
+Feedback arriving while a fixer is working remains pending for the next pass instead of being silently consumed. The one-shot command waits for its final
+status write before exiting, while the continuous app keeps publishing in the background. Slow status
+writes coalesce to the newest snapshot instead of dropping it. State checkpoints are replaced atomically;
+a failed save leaves the previous valid checkpoint intact.
 
 Worker escalation preserves failed attempts in place, including staged, untracked and ignored generated files.
 The next eligible agent gets a separate checkout; a persistent task registry selects that checkout after a restart.
 Checkout ownership is rechecked before the controller commits or pushes worker/repair changes.
+Blocker planners read the current active attempt from the same persistent registry, including its saved
+uncommitted drafts; they do not silently inspect a preserved older attempt or create a checkout to plan.

@@ -108,6 +108,29 @@ class TaskPreservationTests(unittest.TestCase):
             self.worker()
         self.assertEqual(marker.read_bytes(), b"keep")
 
+    def test_read_only_planner_resolution_uses_active_attempt_without_mutation(self):
+        old = self.worker()
+        (old / "draft.txt").write_text("old saved evidence")
+        current = self.repo.restart_task_worktree(42, "assets", "fletchery/42-assets", old, "retry")
+        (current / "draft.txt").write_text("current saved evidence")
+        registry = self.repo.worktree_root / ".task-checkouts.json"
+        before = registry.read_bytes()
+        resumed = Repo(self.host, self.repo.worktree_root, "main")
+        self.assertEqual(resumed.existing_task_worktree(42, "assets", "fletchery/42-assets"), current.resolve())
+        self.assertEqual(registry.read_bytes(), before)
+        self.assertEqual((old / "draft.txt").read_text(), "old saved evidence")
+        self.assertEqual((current / "draft.txt").read_text(), "current saved evidence")
+        self.assertIsNone(resumed.existing_task_worktree(99, "missing", "fletchery/99-missing"))
+        self.assertFalse((self.repo.worktree_root / "99-missing").exists())
+
+    def test_planner_registry_cannot_redirect_to_foreign_checkout(self):
+        self.repo.worktree_root.mkdir(parents=True, exist_ok=True)
+        registry = self.repo.worktree_root / ".task-checkouts.json"
+        registry.write_text(json.dumps({"active": {"fletchery/42-assets":
+            {"path": str(self.host), "local_branch": "main"}}, "preserved": []}))
+        with self.assertRaisesRegex(RuntimeError, "Invalid active task checkout path"):
+            self.repo.existing_task_worktree(42, "assets", "fletchery/42-assets")
+
     def test_repair_dirty_wrong_branch_and_lease_are_never_pushed(self):
         wt = self.prepared()
         (wt / "scene.blend").write_bytes(b"keep")

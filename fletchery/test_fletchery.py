@@ -49,6 +49,9 @@ def ctx_with(tasks, script=None, closed=(), gates_fn=PASS, cfg=None, changed=Non
 
 def run_once(ctx, tmp, dry=False):
     fm = Foreman(ctx, tmp / "state", dry_run=dry)
+    # These are fake runtime fixtures, even when their routing specs name real
+    # providers. Host CLI sign-ins must not race the deterministic routing checks.
+    fm.check_accounts = lambda force=False: None
     return fm, asyncio.run(fm.once())
 
 

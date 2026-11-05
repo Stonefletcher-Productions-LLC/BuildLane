@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
+import threading
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -13,6 +16,9 @@ import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task, readiness, pick
 from github import PullRequest, Feedback
 from pipeline import Context, Outcome, fix_pr, run_task
+
+
+_STATE_SAVE_LOCK = threading.RLock()
 
 
 @dataclass
@@ -49,7 +55,22 @@ class State:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.__dict__, indent=2), encoding="utf-8")
+        with _STATE_SAVE_LOCK:
+            # Serialize before touching the previous checkpoint. Unique same-directory
+            # files also keep overlapping UI/engine saves from sharing a temp name.
+            payload = json.dumps(self.__dict__, indent=2)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                                 prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
 
 
 def today() -> str:
@@ -376,6 +397,7 @@ class Engine:
         # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
         self._known_closed_dependencies = closed_deps
+        self._dependency_lookup = is_closed
         self._merge_round(draining)
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
@@ -401,6 +423,20 @@ class Engine:
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
+            # External ready PRs need not carry the harness task label and thus
+            # may be absent from open_prs(). Verify their own dependency refs too.
+            known_closed = getattr(self, "_known_closed_dependencies", set())
+            refs = {d for p in ready for d in Task(0, "", p.body).depends_on}
+            unresolved = refs - self._tasks.keys() - {p.number for p in ready} - known_closed
+            lookup = getattr(self, "_dependency_lookup", self.ctx.gh.issue_closed)
+            for dependency in sorted(unresolved):
+                try:
+                    if lookup(dependency):
+                        known_closed.add(dependency)
+                except Exception as e:
+                    self.dispatch_warning = f"GitHub could not verify prerequisite #{dependency}"
+                    self.ctx.log(f"#{dependency}: merge prerequisite lookup deferred: {e}")
+            self._known_closed_dependencies = known_closed
             for p in ready:
                 old = st.merge_excluded.get(str(p.number))
                 if old and old.get("head") == p.head_sha and not old.get("repair_task"):
@@ -529,6 +565,10 @@ class Engine:
                 res["result"] = "unreachable"
                 pool.pause(agent, 360, f"model unreachable: {(r.error or '')[:160]}", shared=False)
                 pool.accounts.setdefault(agent, {})["ok"] = False
+        except rounds.CheckoutBusy as e:
+            # A reservation can appear while fetch is running. This is a normal
+            # wait, not a broken PR/harness or a 45-minute failed-round backoff.
+            res.update(result="waiting", summary=str(e), key="")
         except rounds.CheckoutRecovery as e:
             rounds.start_file(round_file, n, branch, str(e.path), agent or "claude", batch, cfg.base_branch)
             res.update(result="checkout_failed", summary=str(e), key="", worktree=str(e.path), next_worktree=str(e.next_path))
@@ -638,8 +678,9 @@ class Engine:
                 for old in [d for d in st.spent_by_agent if d < (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")]:
                     del st.spent_by_agent[old]
             self._ledger(o)
-            if o.result == "fixed" and o.pr_number is not None:
-                st.seen[str(o.pr_number)] = now()
+            # Dispatch already recorded the newest feedback actually sent to
+            # this fixer. Do not advance it to completion time: comments/checks
+            # arriving during the repair still need to be handled next pass.
             if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix") and pr_n is not None:
                 # A new concrete repair plan or resolved prerequisite needs a fresh fixer opportunity,
                 # including when the previous block was caused by exhausted fixer attempts.
@@ -699,13 +740,16 @@ class Engine:
             except RuntimeError:
                 gh.write_status(text)
             else:
+                self._status_pending = text
                 previous = getattr(self, "_status_job", None)
                 if previous is None or previous.done():
                     async def send_status():
-                        try:
-                            await asyncio.to_thread(gh.write_status, text)
-                        except Exception as e:
-                            self.ctx.log(f"status issue update deferred: {e}")
+                        while self._status_pending is not None:
+                            pending, self._status_pending = self._status_pending, None
+                            try:
+                                await asyncio.to_thread(gh.write_status, pending)
+                            except Exception as e:
+                                self.ctx.log(f"status issue update deferred: {e}")
                     self._status_job = aloop.create_task(send_status())
             (self.state_dir / "status.md").parent.mkdir(parents=True, exist_ok=True)
             (self.state_dir / "status.md").write_text(text, encoding="utf-8")

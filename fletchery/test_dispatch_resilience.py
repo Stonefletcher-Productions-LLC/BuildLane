@@ -10,8 +10,8 @@ from unittest.mock import patch
 from config import Config
 from github import FakeGitHub, Feedback, PullRequest
 from graph import Task, PR, label_for
-from loop import Engine, today
-from pipeline import Context
+from loop import Engine, State, today
+from pipeline import Context, Outcome
 from repo import FakeRepo
 from runtime import FakeRuntime
 
@@ -28,6 +28,50 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         ctx = Context(cfg, gh, FakeRepo(root / "worktrees"), runtime,
                       run_gates=lambda *_: [], log=lambda _: None)
         return Engine(ctx, root / "state"), gh, runtime
+
+    async def test_external_ready_pr_dependency_is_verified_even_without_harness_label(self):
+        for answer in (True, False, RuntimeError("GitHub down")):
+            with self.subTest(answer=answer):
+                engine, gh, runtime = self.engine(merge_rounds=True, max_parallel=0)
+                external = PullRequest(12, "External feature", "external", "Test-Staging", "a" * 40,
+                                       ["ready"], "Depends on: #90")
+                independent = PullRequest(13, "Independent", "independent", "Test-Staging", "b" * 40, ["ready"])
+                options = {"side_effect": answer} if isinstance(answer, Exception) else {"return_value": answer}
+                with patch.object(gh, "open_prs", return_value=[]), \
+                     patch.object(gh, "labelled_prs", return_value=[external, independent]), \
+                     patch.object(gh, "issue_closed", **options) as lookup:
+                    await engine.once()
+                lookup.assert_called_once_with(90)
+                progress = __import__("rounds").read_file(str(engine.state_dir / "merge-round.json"))
+                self.assertEqual(progress["prs"], [12, 13] if answer is True else [13])
+
+    async def test_feedback_arriving_during_repair_is_not_marked_consumed(self):
+        task = Task(1, "Fix existing feature", labels=[label_for(PR)])
+        engine, gh, _ = self.engine({1: task})
+        pr = PullRequest(12, "Feature", task.branch, "Test-Staging", "a" * 40, ["ready"], "Closes #1")
+        gh.prs = [pr]
+        first = "2026-11-04T00:00:00Z"
+        later = "2026-11-04T00:01:00Z"
+        gh.feedback[12] = [Feedback(12, "comment", "Initial correction", first)]
+        entered, release = asyncio.Event(), asyncio.Event()
+        seen = []
+
+        async def fixer(task, pr, feedback, attempt, ctx):
+            seen.append([f.text for f in feedback])
+            if len(seen) == 1:
+                entered.set()
+                await release.wait()
+            return Outcome(1, "fixed", pr_number=12)
+
+        with patch("loop.fix_pr", side_effect=fixer):
+            engine.dispatch()
+            await asyncio.wait_for(entered.wait(), 2)
+            gh.feedback[12].append(Feedback(12, "comment", "New correction during repair", later))
+            release.set()
+            await engine._wait_for_jobs(None)
+            self.assertEqual(engine.state.seen["12"], first)
+            await engine.once()
+        self.assertEqual(seen, [["Initial correction"], ["New correction during repair"]])
 
     async def test_shared_dependency_queried_once_across_fixers_and_workers(self):
         tasks = {1: Task(1, "Existing PR", "Depends on: #90", [label_for(PR)]),
@@ -61,6 +105,51 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
             await asyncio.wait_for(command, timeout=3)
         self.assertEqual(gh.status_text, (engine.state_dir / "status.md").read_text(encoding="utf-8"))
+
+    async def test_background_status_coalesces_to_latest_snapshot(self):
+        engine, gh, _ = self.engine()
+        engine.dispatch()
+        entered, release = threading.Event(), threading.Event()
+        writes = []
+
+        def slow_status(text):
+            writes.append(text)
+            if len(writes) == 1:
+                entered.set()
+                if not release.wait(2):
+                    raise RuntimeError("fixture writer timed out")
+            gh.status_text = text
+
+        with patch.object(gh, "write_status", side_effect=slow_status):
+            engine.publish([])
+            try:
+                while not entered.is_set():
+                    await asyncio.sleep(0)
+                engine.state.held = True
+                engine.publish([])
+                newest = (engine.state_dir / "status.md").read_text(encoding="utf-8")
+                self.assertNotEqual(writes[0], newest)
+            finally:
+                release.set()
+            await asyncio.wait_for(engine._status_job, timeout=3)
+        self.assertEqual(len(writes), 2)
+        self.assertEqual(gh.status_text, newest)
+
+    async def test_lease_race_is_waiting_without_crash_issue_or_failure_backoff(self):
+        import rounds
+        engine, gh, _ = self.engine(merge_rounds=True)
+        batch = [PullRequest(12, "Feature", "feature", "Test-Staging", "a" * 40, ["ready"])]
+        progress = str(engine.state_dir / "round.json")
+        with patch("rounds.prepare_worktree", side_effect=rounds.CheckoutBusy("PC held by Hearth")), \
+             patch("rounds.report_failure") as report:
+            result = await engine._run_round(1, batch, "", rounds.key_of(batch), progress)
+        self.assertEqual(result["result"], "waiting")
+        self.assertEqual(result["key"], "")
+        self.assertEqual(engine.state.merge_excluded, {})
+        report.assert_not_called()
+        self.assertEqual(rounds.read_file(progress)["state"], "waiting")
+        self.assertFalse(any(s["state"] == "failed" for s in rounds.read_file(progress)["steps"]))
+        self.assertEqual(rounds.should_start(engine.cfg, result, False, False, False, batch), (True, ""))
 
     async def test_failed_dependency_lookup_holds_only_dependent_work_and_recovers(self):
         tasks = {1: Task(1, "Dependent", "Depends on: #90"), 2: Task(2, "Independent")}
@@ -154,6 +243,73 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         prompt = next(prompt for role, _, prompt in runtime.calls if role == "merger")
         self.assertIn("strict NavCheck", prompt)
         self.assertIn("Content/Town/map.uasset", prompt)
+
+
+class StatePersistenceTests(unittest.TestCase):
+    def test_failed_atomic_replace_preserves_previous_valid_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.json"
+            State(held=True).save(path)
+            previous = path.read_bytes()
+            with patch("loop.os.replace", side_effect=OSError("interrupted replacement")):
+                with self.assertRaises(OSError):
+                    State(held=False).save(path)
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertTrue(State.load(path).held)
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
+    def test_overlapping_saves_cannot_replace_newer_checkpoint_with_older_snapshot(self):
+        import os
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.json"
+            entered, release, second_started = threading.Event(), threading.Event(), threading.Event()
+            serialized_second = threading.Event()
+            original_replace, original_dumps = os.replace, json.dumps
+
+            def serialize(data, **kwargs):
+                if data.get("held"):
+                    serialized_second.set()
+                return original_dumps(data, **kwargs)
+
+            def replace(source, target):
+                if threading.current_thread().name == "old-checkpoint":
+                    entered.set()
+                    if not release.wait(2):
+                        raise RuntimeError("fixture save timed out")
+                original_replace(source, target)
+
+            def newer_save():
+                second_started.set()
+                State(held=True).save(path)
+
+            with patch("loop.os.replace", side_effect=replace), patch("loop.json.dumps", side_effect=serialize):
+                older = threading.Thread(target=lambda: State(held=False).save(path), name="old-checkpoint")
+                newer = threading.Thread(target=newer_save)
+                older.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    newer.start()
+                    self.assertTrue(second_started.wait(1))
+                    self.assertFalse(serialized_second.wait(0.1), "serialize must wait for the earlier save")
+                finally:
+                    release.set()
+                    older.join(2)
+                    if newer.ident is not None:
+                        newer.join(2)
+            self.assertFalse(older.is_alive())
+            self.assertFalse(newer.is_alive())
+            self.assertTrue(State.load(path).held)
+
+    def test_serialization_failure_does_not_truncate_checkpoint(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.json"
+            State(merge_held=True).save(path)
+            broken = State()
+            broken.merge_last = {"invalid": object()}
+            with self.assertRaises(TypeError):
+                broken.save(path)
+            self.assertTrue(State.load(path).merge_held)
 
 
 if __name__ == "__main__":
