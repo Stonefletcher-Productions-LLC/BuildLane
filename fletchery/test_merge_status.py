@@ -284,6 +284,33 @@ class MergeStatusTests(unittest.TestCase):
         self.assertEqual(checks[0]['started'],'13:00:03')
         self.assertEqual(checks[0]['message'],'(alone)')
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows dashboard scheduling')
+    def test_dashboard_thread_can_stay_responsive_without_raising_worker_process_priority(self):
+        import ctypes
+        import threading
+        from server import dashboard_thread_priority
+        k=ctypes.windll.kernel32
+        k.GetCurrentProcess.restype=ctypes.c_void_p
+        k.GetCurrentThread.restype=ctypes.c_void_p
+        k.GetPriorityClass.argtypes=[ctypes.c_void_p]
+        k.SetPriorityClass.argtypes=[ctypes.c_void_p,ctypes.c_uint]
+        k.GetThreadPriority.argtypes=[ctypes.c_void_p]
+        handle=k.GetCurrentProcess()
+        original=k.GetPriorityClass(handle)
+        results=[]
+        try:
+            self.assertTrue(k.SetPriorityClass(handle,0x00004000))
+            def serve():
+                dashboard_thread_priority()
+                results.append((k.GetPriorityClass(handle),k.GetThreadPriority(k.GetCurrentThread())))
+            thread=threading.Thread(target=serve)
+            thread.start();thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results,[(0x00004000,2)])
+            self.assertEqual(k.GetPriorityClass(handle),0x00004000)
+        finally:
+            k.SetPriorityClass(handle,original)
+
     def test_non_object_progress_is_ignored(self):
         self.progress.write_text("[]")
         self.assertFalse(merge.view(self.progress, self.lease)["active"])
