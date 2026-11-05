@@ -102,6 +102,21 @@ class MergeStatusTests(unittest.TestCase):
         self.assertIs(view["steps"][1]["required"], False)
         self.assertEqual(view["next"], "Game specs eight-PR candidate")
 
+    def test_dashboard_reads_progress_without_waiting_for_scheduler_or_git(self):
+        from types import SimpleNamespace
+        from server import live_merge_progress
+        fm = SimpleNamespace(state_dir=self.root, cfg=SimpleNamespace(
+            merge_round_file=str(self.progress), heavy_lease_file=str(self.lease)))
+        self.save(state="running", steps=[{"name": "Game specs", "state": "failed"}])
+        with patch("merge.in_branch") as git:
+            self.assertEqual(live_merge_progress(fm)["state"], "failed")
+            self.save(state="running", prs=[100], steps=[{"name": "Rebuild remainder", "state": "running"}])
+            current = live_merge_progress(fm)
+            self.assertEqual(current["prs"], [100])
+            self.assertIn("Rebuild remainder", current["headline"])
+            self.assertEqual(current["state"], "running")
+            git.assert_not_called()
+
     def test_invalid_historical_timestamps_do_not_invent_a_duration(self):
         for started, ended in [("bad", "also bad"), ("2026-11-05T02:00:00Z", "2026-11-05T01:00:00Z")]:
             with self.subTest(started=started):
