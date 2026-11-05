@@ -230,6 +230,12 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(next => { last = next; render(next); }, data);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
+    data.update_pending=true;
+    data.merge_auto.running = {};
+    await page.evaluate(next=>{last=next;render(next);},data);
+    assert.match(await page.locator('#holdBanner').innerText(),/Running sessions finish/);
+    assert.doesNotMatch(await page.locator('.merge-aside').innerText(),/current merge continues/);
+    data.update_pending=false;
     data.merge_auto.running = {};
     data.merge_auto.last = {round: 20, result: 'interrupted', summary: 'Machine checks passed', stop_reason: 'Physical Escape stopped acceptance'};
     data.merge_auto.resume = {round: 20, authorized: false};
