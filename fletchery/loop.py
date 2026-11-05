@@ -45,6 +45,9 @@ class State:
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
+    worker_handoffs: dict = field(default_factory=dict)     # task -> cooperative pause and checkpoint receipt
+    integration_queue: list = field(default_factory=list)     # durable merge windows and package requests
+    planned_integration: bool = False                        # opt-in: feature work until a queued window is due
     merge_held: bool = False                                  # Pause merging in the Merge section
     repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
     emergency_repairs: dict = field(default_factory=dict)      # task -> build/merge evidence; repair classification survives restart
@@ -157,6 +160,12 @@ class Engine:
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
         self.merge_why = ""             # why no round is starting, for the Merge section
+        from plans import Plans
+        self.plans = Plans(self)
+        from worker_handoff import WorkerHandoffs
+        self.handoffs = self.ctx.handoffs = WorkerHandoffs(self)
+        self._package_poll_job = None
+        self._package_poll_at = 0.0
         self._stats_cache: tuple[float, object] | None = None
         if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
             ctx.agents.paused = self.state.agent_paused
@@ -236,6 +245,8 @@ class Engine:
             self.round_job, self.round_info = None, {}
         if self._storage_job is not None:
             await self._storage_job
+        if self._package_poll_job is not None:
+            await self._package_poll_job
         self.publish(outcomes)
         # The one-shot command owns its event loop and exits next. Finish its
         # final status write before asyncio.run cancels pending tasks on shutdown.
@@ -347,7 +358,16 @@ class Engine:
             ready_resume = resume.get("authorized") and (not wait_for or ready_signal(self.state_dir, wait_for))
             if not ready_resume:
                 self._maybe_storage(tasks, draining)
+        if not self.dry_run and not draining:
+            import time
+            if (self._package_poll_job is None or self._package_poll_job.done()) and time.monotonic() >= self._package_poll_at:
+                self._package_poll_at = time.monotonic() + 30
+                self._package_poll_job = asyncio.ensure_future(asyncio.to_thread(self.plans.package_step))
         self._merge_round(draining)
+        if self.plans.active_merge and self.plans.active_merge["state"] == "draining" and not self.merge_priority:
+            self.plans.update(self.plans.active_merge, state="queued", reason=self.merge_why)
+        plan_draining = bool(self.merge_priority and self.plans.active_merge and self.plans.active_merge["state"] == "draining")
+        paused = paused or plan_draining
         worker_paused = paused or self.merge_priority
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         emergency_numbers = self.repair_numbers(tasks)
@@ -459,11 +479,14 @@ class Engine:
             reason = self.resource_wait_reason(number)
             if reason:
                 rd.waiting[number] = reason
+        from worker_ranks import configure as configure_worker_ranks
+        self.worker_rank_view = configure_worker_ranks(self, rd.ready)
         if pool is not None:  # a task whose agents are all off, paused or busy waits instead of starting and stopping
             stats = self.stats()
             free = []
             for t in rd.ready:
-                if pool.choose(t.title, t.body, t.labels, len(t.depends_on), stats) is not None:
+                choose = pool.choose_without_rank_limits if t.number in emergency_numbers and cfg.emergency_workers else pool.choose
+                if choose(t.title, t.body, t.labels, len(t.depends_on), stats) is not None:
                     free.append(t)
                 else:
                     from agents import override
@@ -506,6 +529,7 @@ class Engine:
             for t in chosen:
                 st.running[str(t.number)] = now()
                 t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
+                t.emergency_writer = t in emergency_chosen
                 self._start(run_task(t, self.ctx), t.number, None, None, emergency=t in emergency_chosen)
             st.save(self.state_dir / "state.json")
         # Merge eligibility must see this pass's issue dependencies, including on
@@ -538,6 +562,8 @@ class Engine:
             except ValueError:
                 pass
         protected = [self.cfg.project_root]
+        protected.extend(r["worktree"] for r in self.state.worker_handoffs.values()
+                         if r.get("state") == "checkpointed" and r.get("worktree"))
         checkpoint = self.state.merge_resume.get("checkpoint") or {}
         if checkpoint.get("worktree"):
             protected.append(checkpoint["worktree"])
@@ -567,6 +593,7 @@ class Engine:
     def _merge_round(self, draining: bool) -> None:
         import rounds
         cfg, st = self.cfg, self.state
+        self.plans.active_merge = None
         self.merge_priority = self.round_job is not None
         if not cfg.merge_rounds:
             self.merge_why = ""
@@ -577,14 +604,16 @@ class Engine:
             self.merge_why = "a round is running"
             return
         if st.merge_held:
-            self.merge_why = "merging is paused; feature work continues"
+            self.merge_why = "merging is paused"
             return
         resume = st.merge_resume
         if resume and not resume.get("authorized"):
             self.merge_why = "Merge interrupted; saved progress waits for Resume / Merge now. " + str(resume.get("stop_reason", ""))[:300]
             return
+        if not self.plans.merge_gate(draining):
+            return
         if self._storage_job and not self._storage_job.done():
-            self.merge_priority = True
+            self.merge_priority = bool(self.plans.active_merge) or not st.planned_integration
             self.merge_why = "Completed-task cleanup is finishing before the next merge"
             return
         if not self.dry_run and st.merge_last.get("result") in ("failed", "crashed", "checkout_failed") and not st.merge_last.get("failure_issue"):
@@ -660,6 +689,9 @@ class Engine:
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
             self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")
             return
+        ready = self.plans.select(ready)
+        if self.plans.active_merge and not ready:
+            return
         if resume:
             wanted = {int(n) for n in resume.get("prs", {})}
             ready = [p for p in ready if p.number in wanted]
@@ -691,7 +723,11 @@ class Engine:
             self.merge_priority = any(s.kind in ("claude", "codex", "opencode", "fake")
                                       and pool.available(s.name, "merger", ignore_capacity=True)
                                       for s in pool.specs.values())
+            if self.merge_priority and self.plans.drain():
+                return
             self.merge_why = "no agent can run a round now (enable a signed-in agent with the merger role that is not at a limit)"
+            return
+        if self.plans.drain():
             return
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
         if wt_root and not self.dry_run:
@@ -711,12 +747,13 @@ class Engine:
             return
         st.merge_round_no = max(st.merge_round_no, n)
         st.save(self.state_dir / "state.json")
-        self.round_info = {"round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
+        request_id = self.plans.started(n)
+        self.round_info = {"request_id": request_id, "round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
         self.merge_why = "a round is running"
-        self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file))
+        self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file, request_id))
         self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
 
-    async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str) -> dict:
+    async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str, request_id: str = "") -> dict:
         import clis
         import rounds
         import rules as rules_mod
@@ -848,6 +885,8 @@ class Engine:
         elif resume and res["result"] in ("failed", "crashed", "checkout_failed"):
             self.state.merge_resume["authorized"] = False
             self.state.merge_resume["stop_reason"] = res.get("stop_reason") or res["summary"]
+        if request_id:
+            res["request_id"] = request_id
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
         if res["result"] in ("failed", "crashed", "checkout_failed"):
@@ -856,6 +895,8 @@ class Engine:
                 self.state.save(self.state_dir / "state.json")
             except Exception as e:
                 self.ctx.log(f"merge round {n}: could not file repair issue: {type(e).__name__}: {e}")
+        if request_id:
+            self.plans.finish_merge(request_id, res)
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
                      + (f" ({res['summary'][:200]})" if res["summary"] else ""))
         return res
@@ -997,6 +1038,7 @@ class Engine:
                 o = job.result()
             if o.result == "waiting_resource":
                 st.resource_waits[str(o.task)] = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="seconds")
+            self.handoffs.settled(o)
             outcomes.append(o)
             st.running.pop(str(o.task), None)
             st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
@@ -1010,7 +1052,7 @@ class Engine:
             # Dispatch already recorded the newest feedback actually sent to
             # this fixer. Do not advance it to completion time: comments/checks
             # arriving during the repair still need to be handled next pass.
-            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix", "waiting_resource") and pr_n is not None:
+            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix", "waiting_resource", "handed_off") and pr_n is not None:
                 # A new concrete repair plan or resolved prerequisite needs a fresh fixer opportunity,
                 # including when the previous block was caused by exhausted fixer attempts.
                 st.fix_attempts[str(pr_n)] = (0 if o.result in ("waiting_dependencies", "retry_fix") else
@@ -1040,7 +1082,7 @@ class Engine:
         # entire queue or every PR's files before newly-created worker tasks can run.
         terminal = {"pr": PR, "fixed": PR, "blocked": BLOCKED,
                     "waiting_dependencies": QUEUED, "retry_fix": QUEUED}
-        temporary = {"requeue", "limited", "signed_out", "agent_paused", "waiting_agent", "waiting_resource"}
+        temporary = {"requeue", "limited", "signed_out", "agent_paused", "waiting_agent", "waiting_resource", "handed_off"}
         for o in outcomes:
             task = tasks.get(o.task)
             if task is None:
@@ -1114,6 +1156,8 @@ class Engine:
                 self.sync_error = f"{type(e).__name__}: {e}"
                 self.ctx.log(f"check failed: {self.sync_error}")
             if self._reload_draining and not self.jobs and self.round_job is None and not (self._storage_job and not self._storage_job.done()):
+                if self._package_poll_job is not None:
+                    await self._package_poll_job
                 return
             wait = min(30, self.cfg.poll_minutes * 60) if self.sync_error else self.cfg.poll_minutes * 60
             handoff = self.state.merge_resume.get("wait_for") or {}
@@ -1123,6 +1167,13 @@ class Engine:
                     wait = min(wait, max(1, 900 - elapsed))
                 except (ValueError, TypeError):
                     pass
+            future_windows = [(__import__("plans").utc(r["not_before"]) - datetime.now(timezone.utc)).total_seconds()
+                              for r in self.plans.rows if r["state"] == "queued"]
+            positive_windows = [seconds for seconds in future_windows if seconds > 0]
+            if positive_windows:
+                wait = min(wait, max(1, min(positive_windows)))
+            if any(r["kind"] == "package" and r["state"] not in __import__("plans").TERMINAL for r in self.plans.rows):
+                wait = min(wait, 30)
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
                                                        timezone.utc).isoformat(timespec="seconds")
             deadline = loop.time() + wait

@@ -640,7 +640,7 @@ try:
     assert _json.loads(call("/api/status")[1])["max_parallel"] == 3
     assert call("/api/workers", "POST", {"max_parallel": 10}, token=dash.token)[0] == 200
     assert call("/api/workers", "POST", {"max_parallel": -1}, token=dash.token)[0] == 400
-    assert call("/api/workers", "POST", {"max_parallel": 11}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 31}, token=dash.token)[0] == 400
     assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
 finally:
     dash.stop()
@@ -1181,7 +1181,7 @@ saved = _json_mod.loads(prof.read_text())
 assert saved["workers"]["maxParallel"] == 0 and saved["repo"] == "acme/desk" and saved["workers"]["codeFreeze"] is True
 assert "GitHub repository" in r["restart"] and "Workers at once" not in r["restart"]
 assert saved["workers"]["reviewerMaxTurns"] == 50, "keys the page doesn't show are kept"
-for bad in ({"max_parallel": 11}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
+for bad in ({"max_parallel": 31}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
     try:
         _pj.apply_settings(cfg_s, bad)
         raise AssertionError(f"bad setting accepted: {bad}")

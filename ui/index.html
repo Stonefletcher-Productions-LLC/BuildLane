@@ -690,6 +690,13 @@
   @media(max-width: 1000px) { .merge-layout { grid-template-columns: minmax(0, 1fr) minmax(185px, .4fr); gap: 12px; } }
   @media(max-width: 700px) { .merge-layout { display: block; } .merge-step > summary { gap: 6px; } .merge-side-card { padding: 10px; } }
 
+.ranked-workers #slotsBox {height:auto !important; max-height:none !important}
+.ranked-workers [data-key="workers"] {display:none}
+#allWorkerTotal {width:90px; display:inline-block; margin:0}
+.rank-section {border-top:1px solid var(--line); margin-top:12px; padding-top:8px}
+.rank-section .slot.free {min-height:0; padding:10px}
+#planRows {overflow-wrap:anywhere}
+#planPRChoices label {display:block}
 </style>
 </head>
 <body>
@@ -773,14 +780,18 @@
 
   <section class="now" id="workers" aria-labelledby="nowh">
     <div class="now-head">
-      <h2 id="nowh">Workers</h2>
+      <h2 id="nowh">All workers</h2>
+      <select id="allWorkerTotal" aria-label="All workers"></select>
       <span class="wcount" role="group" aria-label="Number of workers">
         <button type="button" class="step dark" id="wDown" aria-label="One worker fewer">−</button>
-        <b id="wVal">2</b>
+        <b id="wVal" hidden>2</b>
         <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
       </span>
+      <button type="button" id="handoffWorkers" hidden>Pause &amp; hand off</button>
       <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
+    <div id="handoffStatus" class="emergency-help" aria-live="polite" hidden></div>
+    <p id="rankMode" class="emergency-help" hidden></p>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
     <div id="storageStatus" class="emergency-help" hidden></div>
     <section class="emergency-workers" id="emergencyWorkers" aria-labelledby="emergencyHeading" hidden>
@@ -830,6 +841,16 @@
        aria-label="Resize Workers' PRs and Needs you: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </div>
 
+  <section class="card" id="integrationPlans" aria-labelledby="plansHeading" hidden>
+    <h3 id="plansHeading">Merge windows &amp; packages</h3>
+    <p id="plansMode"></p>
+    <div class="mauto-btns"><button type="button" id="planFeature">Use planned windows</button>
+      <button type="button" id="planMerge">Queue merge window</button>
+      <button type="button" id="planPackage">Queue package</button>
+      <button type="button" id="planAutomatic">Use automatic merging</button></div>
+    <div id="planRows" aria-live="polite"></div><p id="planMessage" role="status"></p>
+  </section>
+
   <section class="lane" id="lane" aria-labelledby="laneh" hidden>
     <div class="lane-head">
       <h2 id="laneh">Build Lane</h2>
@@ -855,6 +876,24 @@
   </div>
   <p class="foot" id="foot"></p>
 </main>
+
+<dialog id="planDlg" aria-labelledby="planTitle">
+  <form id="planForm">
+    <h2 id="planTitle">Queue merge window</h2>
+    <p>Feature work continues until the window is due. Active sessions finish before integration starts.</p>
+    <label for="planWhen">Start no earlier than (your local time; leave blank for now)</label>
+    <input id="planWhen" type="datetime-local">
+    <fieldset id="planPRs"><legend>Choose the ready PRs for this window</legend><div id="planPRChoices"></div></fieldset>
+    <div id="planPackageFields" hidden>
+      <label for="planVersion">Package version</label><input id="planVersion" placeholder="0.3.7" maxlength="64">
+      <label for="planAfter">Source</label><select id="planAfter"><option value="">Exact revision</option></select>
+      <label for="planTarget" id="planTargetLabel">Full source revision</label><input id="planTarget" maxlength="40" placeholder="40-character commit SHA">
+      <p>The release controller runs full tests and packaging for that source. A request is complete only when its package is verified.</p>
+    </div>
+    <p id="planError" role="alert"></p>
+    <div class="mauto-btns"><button type="button" id="planClose">Cancel</button><button type="submit" id="planSubmit">Add to queue</button></div>
+  </form>
+</dialog>
 
 <dialog id="weekDlg" aria-labelledby="weekh">
   <h2 id="weekh">Usage, last 7 days</h2>
@@ -1033,7 +1072,7 @@ const $ = id => document.getElementById(id);
 
 // Move existing controls once: their IDs, handlers and API contracts stay intact.
 $("workersMount").append($("workers"));
-$("mergeMount").append($("mergeNow"));
+$("mergeMount").append($("mergeNow"), $("integrationPlans"));
 $("tasksMount").append($("lane"));
 $("tasksMount").prepend($("queue"), $("boardBox"));
 $("agentsMount").append(document.querySelector(".usage"), $("agents"));
@@ -1208,6 +1247,7 @@ function workerMergeWait(d) {
 
 function render(d) {
   last = d;
+  renderPlans(d);
   const ordinary = normalWorkerSessions(d);
   const emergency = emergencyWorkerState(d);
   const storage = d.storage;
@@ -1337,7 +1377,7 @@ function render(d) {
       const meta = [total ? `${total} total` : "", previous.ended ? `ended ${clockTime(previous.ended)}` : ""].filter(Boolean).join(" · ");
       const lastLine = previous.round ? `<details class="mauto-last round-history" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Previous round ${esc(previous.round)} ${res}${total ? ` · ${esc(total)} total` : ""}</summary>${meta ? `<p class="history-time">${esc(meta)}</p>` : ""}<p>${esc(previous.summary || previous.note || "No additional details.")}</p>${previous.stop_reason ? `<p><b>Stopped:</b> ${esc(previous.stop_reason)}</p>` : ""}${previous.steps && previous.steps.length ? stepsHtml(previous.steps, "Previous round steps") : ""}</details>` : "";
       const btns = ma && ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
-        (!running && !ma.held ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
+        (!running && !ma.held && (!(d.integration_queue || {}).planned || (ma.resume && Object.keys(ma.resume).length)) ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
     const included = active ? mv.prs || [] : running ? running.prs || [] : [];
@@ -1393,7 +1433,7 @@ function render(d) {
 
   // history
   const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out",
-                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent",
+                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent", handed_off: "Checkpoint saved",
                  retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
@@ -1451,7 +1491,28 @@ function renderWorkers(d) {
   $("wVal").textContent = d.max_parallel;
   $("wDown").disabled = d.max_parallel <= 0;
   $("wDown").title = d.max_parallel === 1 ? "0 workers: pause normal writing; merging, builds and enabled emergency repairs continue" : "";
-  $("wUp").disabled = d.max_parallel >= 10;
+  $("wUp").disabled = d.max_parallel >= 30;
+  if (!$("allWorkerTotal").options.length) $("allWorkerTotal").innerHTML = Array.from({length: 31}, (_, n) => `<option value="${n}">${n}</option>`).join("");
+  if (document.activeElement !== $("allWorkerTotal")) $("allWorkerTotal").value = d.max_parallel;
+  $("handoffWorkers").hidden = !d.worker_handoffs;
+  $("handoffWorkers").disabled = !(d.live || []).length;
+  const handoffs = Object.values(d.worker_handoffs || {}).filter(r => ["requested", "checkpointed", "interrupted"].includes(r.state));
+  $("handoffStatus").hidden = !handoffs.length;
+  $("handoffStatus").innerHTML = handoffs.map(r => `<p><b>#${esc(r.task)} ${esc(r.state === "requested" ? "will pause at the next checkpoint" : r.state === "interrupted" ? "handoff interrupted" : "checkpoint saved")}</b>${r.phase ? ` · ${esc(r.phase)} · ${r.staged.length} staged` : ""}${r.note ? `<br>${esc(r.note)}` : ""}${r.worktree ? `<br><small>${esc(r.worktree)}</small>` : ""}</p>`).join("");
+  const ranks = d.worker_ranks;
+  $("rankMode").hidden = !ranks;
+  $("workers").classList.toggle("ranked-workers", !!ranks);
+  if (!ranks) return;
+  const counts = ranks.ready_levels || {};
+  $("rankMode").textContent = `${ranks.mode === "automatic" ? "Automatic allocation from All workers" : "Manual rank capacities"}. Ready tasks: ${counts.easy || 0} easy, ${counts.medium || 0} medium, ${counts.hard || 0} hard. ${ranks.unassigned ? ranks.unassigned + " slots have no eligible model or task." : ""} Existing task restrictions and review rules still apply.`;
+  const active = normalWorkerSessions(d);
+  const expanded = new Set([...$("slots").querySelectorAll("details[open]")].map(e => e.dataset.worker));
+  $("slots").style.display = "block";
+  $("slots").innerHTML = ["high", "medium", "low"].map(rank => {
+    const sessions = active.filter(a => ((ranks.assignments || {})[String(a.task)] || (ranks.agent_ranks || {})[a.agent] || "low") === rank);
+    const models = (ranks.models[rank] || []).map(n => `${n} (${ranks.scores[n]}${ranks.restrictions[n] ? "; " + ranks.restrictions[n].join("/") + " tasks" : ""})`).join(", ");
+    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · score ${esc(ranks.thresholds[rank])}</h3><label>${rank} capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${esc(models || "No enabled writing models in this rank.")}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
+  }).join("");
 }
 async function setWorkers(v) {
   try { await post("/api/workers", {max_parallel: v}); await refresh(); } catch (e) { alert(e.message); }
@@ -1922,6 +1983,59 @@ $("agRefresh").onclick = async () => {
 const PLAN_LABEL = {claude: "Claude plan", codex: "ChatGPT", opencode: "OpenCode sign-in"};
 const PLAN_NAME = {claude: "Your Claude plan (shares its limits with your own chats)", codex: "Your ChatGPT sign-in (codex login)",
                    opencode: "OpenCode's own sign-in, e.g. OpenCode Go (opencode auth login)"};
+let planKind = "merge";
+function renderPlans(d) {
+  const queue = d.integration_queue;
+  $("integrationPlans").hidden = !queue;
+  if (!queue) return;
+  $("plansMode").textContent = queue.planned ? "Planned windows: feature work continues between integrations." : "Automatic merging is enabled. Queuing a window switches to planned mode.";
+  $("planFeature").hidden = queue.planned;
+  $("planAutomatic").hidden = !queue.planned;
+  $("planRows").innerHTML = (queue.requests || []).map(r => {
+    const label = r.kind === "merge" ? `Merge ${Object.keys(r.heads || {}).map(n => "#" + n).join(", ")}` : `Package ${r.version}`;
+    const when = Number.isFinite(Date.parse(r.not_before)) ? new Date(r.not_before).toLocaleString() : "Now";
+    const cancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started ? `<button type="button" data-plan-cancel="${esc(r.id)}">Cancel request</button>` : "";
+    const run = r.receipt && r.receipt.worker && r.receipt.worker.runId;
+    const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(d.repo_url)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
+    return `<div class="mauto"><b>${esc(label)}</b> · ${esc(r.state)}<br><small>No earlier than ${esc(when)}</small><p>${esc(r.reason || "Queued")}</p>${r.target ? `<small>Source: ${esc(r.target)}</small>` : ""}${r.output ? `<p>Package: ${esc(r.output)}</p>` : ""}${link}${cancel}</div>`;
+  }).join("") || "<p>No merge windows or packages queued.</p>";
+}
+function openPlan(kind) {
+  planKind = kind;
+  $("planTitle").textContent = kind === "merge" ? "Queue merge window" : "Queue package";
+  $("planPRs").hidden = kind !== "merge";
+  $("planPackageFields").hidden = kind !== "package";
+  $("planWhen").value = ""; $("planError").textContent = "";
+  const ready = (last.merge || []).filter(r => r.ready);
+  $("planPRChoices").innerHTML = ready.map(r => `<label><input type="checkbox" name="planPR" value="${esc(r.pr)}" checked> #${esc(r.pr)} ${esc(r.title)}</label>`).join("") || "No ready PRs are available.";
+  const merges = ((last.integration_queue || {}).requests || []).filter(r => r.kind === "merge" && r.state !== "cancelled");
+  $("planAfter").innerHTML = '<option value="">Exact revision</option>' + merges.map(r => `<option value="${esc(r.id)}">After merge ${Object.keys(r.heads || {}).map(n => "#" + n).join(", ")} (${esc(r.state)})</option>`).join("");
+  $("planTarget").hidden = false; $("planTargetLabel").hidden = false;
+  $("planDlg").showModal();
+}
+$("planMerge").onclick = () => openPlan("merge");
+$("planPackage").onclick = () => openPlan("package");
+$("planClose").onclick = () => $("planDlg").close();
+$("planAfter").onchange = () => { $("planTarget").hidden = !!$("planAfter").value; $("planTargetLabel").hidden = !!$("planAfter").value; };
+$("planFeature").onclick = () => agentCall("/api/queue/mode", {planned: true});
+$("planAutomatic").onclick = () => agentCall("/api/queue/mode", {planned: false});
+$("planRows").onclick = e => { const b = e.target.closest("[data-plan-cancel]"); if (b) agentCall("/api/queue/cancel", {id: b.dataset.planCancel}); };
+$("planForm").onsubmit = async e => {
+  e.preventDefault(); $("planSubmit").disabled = true;
+  try {
+    const data = {kind: planKind, not_before: $("planWhen").value ? new Date($("planWhen").value).toISOString() : ""};
+    if (planKind === "merge") {
+      data.prs = [...document.querySelectorAll('input[name="planPR"]:checked')].map(i => Number(i.value));
+      if (!data.prs.length) throw new Error("Choose at least one ready PR.");
+    } else {
+      data.version = $("planVersion").value.trim(); data.after = $("planAfter").value;
+      data.target = data.after ? "" : $("planTarget").value.trim();
+    }
+    await post("/api/queue/add", data); $("planDlg").close(); await refresh();
+  } catch (error) { $("planError").textContent = error.message; }
+  finally { $("planSubmit").disabled = false; }
+};
+
 async function agentCall(path, body, msg) {
   try { const r = await post(path, body); if (r && r.message) $("state").textContent = r.message; await refresh(); return r; }
   catch (e) { alert(e.message); }
@@ -2034,6 +2148,14 @@ $("hold").onclick = async () => {
   try { await post(last && last.held ? "/api/resume" : "/api/pause"); await refresh(); }
   catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
+$("handoffWorkers").onclick = () => agentCall("/api/workers/handoff", {});
+$("allWorkerTotal").onchange = () => setWorkers(Number($("allWorkerTotal").value));
+$("slots").addEventListener("change", e => {
+  const rank = e.target.dataset.rankCap;
+  if (!rank || !last.worker_ranks) return;
+  const limits = {...last.worker_ranks.limits, [rank]: Number(e.target.value)};
+  agentCall("/api/workers/ranks", {limits});
+});
 $("wDown").onclick = () => setWorkers(last.max_parallel - 1);
 $("wUp").onclick = () => setWorkers(last.max_parallel + 1);
 $("eDown").onclick = () => setEmergencyWorkers(0);

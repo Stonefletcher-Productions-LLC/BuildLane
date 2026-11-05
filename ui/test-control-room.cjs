@@ -47,6 +47,15 @@ const server = http.createServer(async (req, res) => {
     if (req.url === '/api/settings/save' && body.changes && body.changes.emergency_workers != null) {
       data.emergency_workers.max_parallel = body.changes.emergency_workers;
     }
+    if (req.url === '/api/queue/add') {
+      const row = {...body, id: 'request-' + requests.length, state: 'queued', heads: body.kind === 'merge' ? {'1041': 'a'.repeat(40)} : undefined};
+      data.integration_queue.requests.push(row); data.integration_queue.planned = true;
+    }
+    if (req.url === '/api/queue/cancel') data.integration_queue.requests.find(r => r.id === body.id).state = 'cancelled';
+    if (req.url === '/api/queue/mode') data.integration_queue.planned = body.planned;
+    if (req.url === '/api/workers/handoff') { data.held = true; data.worker_handoffs = {'891': {task: 891, state: 'requested'}}; }
+    if (req.url === '/api/workers/ranks') { data.worker_ranks.limits = body.limits; data.worker_ranks.mode = 'manual'; data.max_parallel = Object.values(body.limits).reduce((a,b) => a+b,0); }
+    if (req.url === '/api/workers') { data.max_parallel = body.max_parallel; if (data.worker_ranks) data.worker_ranks.mode = 'automatic'; }
     if (req.url === '/api/pause') data.held = true;
     if (req.url === '/api/resume') data.held = false;
     if (req.url === '/api/storage/cleanup') data.storage.requested = true;
@@ -370,6 +379,58 @@ const server = http.createServer(async (req, res) => {
     await page.goto(url + '/?only=workers');
     assert.equal(await visible('#workers'), true);
     assert.equal(await visible('.sidebar'), false);
+    // Planned windows and score-ranked capacity use the real controls against the fixture.
+    data.integration_queue = {planned: false, requests: [], base: 'Test-Staging'};
+    data.worker_handoffs = {};
+    data.worker_ranks = {mode: 'automatic', limits: {low: 1, medium: 1, high: 1}, active: {}, models: {low: ['deepseek'], medium: [], high: ['expert']},
+      scores: {deepseek: 59, expert: 85}, restrictions: {deepseek: ['easy']}, ready_levels: {easy: 0, medium: 2, hard: 3},
+      thresholds: {low: 'below 60', medium: '60–74', high: '75–100'}, assignments: {}, agent_ranks: {sonnet: 'high', 'codex-sol': 'low'}};
+    data.merge = [{pr: 1041, title: 'Safe <preview>', ready: true, pr_url: '#1041', unblocks: [], flags: []}];
+    await page.goto(url + '/?view=overview');
+    await page.waitForFunction(() => document.querySelector('#integrationPlans').hidden === false);
+    assert.equal(await page.locator('#nowh').innerText(), 'All workers');
+    assert.equal(await page.locator('[data-rank]').count(), 3);
+    assert.match(await page.locator('#rankMode').innerText(), /0 easy/);
+    await page.selectOption('#allWorkerTotal', '12');
+    await page.waitForFunction(() => document.querySelector('#wVal').textContent === '12');
+    assert.deepEqual(requests.at(-1).body, {max_parallel: 12});
+    await page.selectOption('[data-rank-cap="low"]', '7');
+    await page.waitForFunction(() => document.querySelector('#rankMode').textContent.includes('Manual'));
+    assert.equal(requests.at(-1).url, '/api/workers/ranks');
+    assert.equal(requests.at(-1).body.limits.low, 7);
+    await page.locator('#planMerge').click();
+    await page.locator('#planWhen').fill('2030-11-05T19:30');
+    await page.locator('#planSubmit').click();
+    await page.waitForFunction(() => !document.querySelector('#planDlg').open);
+    assert.equal(requests.at(-1).url, '/api/queue/add');
+    assert.deepEqual(requests.at(-1).body.prs, [1041]);
+    assert.match(requests.at(-1).body.not_before, /2030-11/);
+    const mergeId = data.integration_queue.requests[0].id;
+    await page.locator('#planPackage').click();
+    await page.locator('#planVersion').fill('0.3.7');
+    await page.selectOption('#planAfter', mergeId);
+    assert.equal(await page.locator('#planTarget').isVisible(), false);
+    await page.locator('#planSubmit').click();
+    await page.waitForFunction(() => !document.querySelector('#planDlg').open);
+    assert.equal(requests.at(-1).body.after, mergeId);
+    assert.equal(requests.at(-1).body.target, '');
+    assert.equal(requests.at(-1).token, 'fixture-token');
+    await page.locator('[data-plan-cancel]').first().click();
+    await page.waitForFunction(() => document.querySelector('#planRows').textContent.includes('cancelled'));
+    assert.equal(requests.at(-1).url, '/api/queue/cancel');
+    await page.locator('#handoffWorkers').click();
+    await page.waitForFunction(() => document.querySelector('#handoffStatus').textContent.includes('next checkpoint'));
+    assert.equal(requests.at(-1).url, '/api/workers/handoff');
+    assert.equal(requests.at(-1).token, 'fixture-token');
+    data.worker_handoffs['891'] = {task: 891, state: 'checkpointed', phase: 'writing', staged: ['Source/Feature.cpp'], worktree: 'owned/task-891'};
+    await page.evaluate(() => refresh());
+    assert.match(await page.locator('#handoffStatus').innerText(), /checkpoint saved.*1 staged/);
+    await page.setViewportSize({width: 420, height: 900});
+    await page.screenshot({path: path.join(out, 'queue-and-worker-ranks-mobile.png'), fullPage: true});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2), 'queue/rank controls fit mobile width');
+    await page.setViewportSize({width: 1440, height: 1000});
+    await page.screenshot({path: path.join(out, 'queue-and-worker-ranks.png'), fullPage: true});
+    delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();
     await storageOff.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }}));
     const privatePage = await storageOff.newPage();

@@ -94,6 +94,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_emergency_workers.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_plans.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_worker_handoff.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_worker_ranks.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_merge_priority.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_merge_status.py

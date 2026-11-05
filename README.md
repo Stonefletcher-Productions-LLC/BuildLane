@@ -13,6 +13,12 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
+**All workers** now allocates writing capacity across score-based low (<60), medium (60–74) and high (75+) ranks using eligible ready tasks. Each rank can instead be set manually from 0–10; changing All workers (0–30) restores automatic allocation. Rank sections show models, scores, restrictions and ready task levels. Existing task eligibility, reviews, escalation and emergency repair policy remain in force.
+
+**Pause & hand off** stops new dispatch and saves active work at the next safe phase boundary. It stages the task changes, records the checkout and notes, and lets an eligible agent continue on Resume without skipping checks.
+
+**Merge windows & packages** queues durable, cancellable integration requests. Future windows leave feature work running; due windows drain active sessions and validate the selected PR heads before reserving capacity. Package requests name an exact revision or depend on a selected window, and use the existing staging release controller for full tests and verified artifact results. Queues survive restart and uncertain dispatches are not resent. [Operating guide](docs/WORK-MERGE-PACKAGE.md).
+
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
