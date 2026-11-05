@@ -42,6 +42,8 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
+    storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
+    storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
     merge_held: bool = False                                  # Pause merging in the Merge section
     repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
@@ -150,6 +152,7 @@ class Engine:
         self._waiting: dict = {}
         self._aloop: asyncio.AbstractEventLoop | None = None
         self.watcher = None
+        self._storage_job = None
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
@@ -231,6 +234,8 @@ class Engine:
         if self.round_job is not None:
             await self.round_job
             self.round_job, self.round_info = None, {}
+        if self._storage_job is not None:
+            await self._storage_job
         self.publish(outcomes)
         # The one-shot command owns its event loop and exits next. Finish its
         # final status write before asyncio.run cancels pending tasks on shutdown.
@@ -500,6 +505,56 @@ class Engine:
         # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
+        self._maybe_storage(tasks, draining)
+
+    def request_storage_cleanup(self) -> dict:
+        self.state.storage_requested = True
+        self.state.save(self.state_dir / "state.json")
+        self.wake()
+        return {"message": "Cleanup queued for a safe idle opportunity; protected work stays in place."}
+
+    def storage_view(self) -> dict:
+        return {"enabled": self.cfg.auto_cleanup, "retention_hours": self.cfg.cleanup_retention_hours,
+                "running": bool(self._storage_job and not self._storage_job.done()),
+                "requested": self.state.storage_requested, "last": dict(self.state.storage_last)}
+
+    def _maybe_storage(self, tasks: dict, draining: bool = False) -> None:
+        if (self.dry_run or draining or self.state.held or not hasattr(self.ctx.repo, "git") or self.jobs or self.round_job is not None
+                or (self._storage_job and not self._storage_job.done()) or (not self.cfg.auto_cleanup and not self.state.storage_requested)):
+            return
+        last = self.state.storage_last
+        if last.get("checked_at") and (last.get("error") or not self.state.storage_requested):
+            interval = 300 if last.get("error") else 3600
+            try:
+                if (datetime.now(timezone.utc) - datetime.fromisoformat(last["checked_at"].replace("Z", "+00:00"))).total_seconds() < interval:
+                    return
+            except ValueError:
+                pass
+        protected = [self.cfg.project_root]
+        checkpoint = self.state.merge_resume.get("checkpoint") or {}
+        if checkpoint.get("worktree"):
+            protected.append(checkpoint["worktree"])
+        progress = __import__("rounds").read_file(self.cfg.merge_round_file or str(self.state_dir / "merge-round.json"))
+        if progress.get("worktree"):
+            protected.append(progress["worktree"])
+        immediate = self.state.storage_requested
+        async def clean():
+            import storage
+            try:
+                result = await asyncio.to_thread(storage.maintain, self.ctx.repo, self.ctx.gh, self.state_dir,
+                    protected_paths=protected, open_tasks=list(tasks), lease_file=self.cfg.heavy_lease_file,
+                    retention_hours=0 if immediate else self.cfg.cleanup_retention_hours, limit=10)
+                __import__("rounds").write_file(str(self.state_dir / "storage-cleanup.json"), result)
+                self.state.storage_last = {**result, "eligible": result.get("eligible", [])[:10], "skipped": result.get("skipped", [])[:20]}
+                if not result.get("error"):
+                    self.state.storage_requested = False
+                if result.get("retired"):
+                    self.ctx.log(f"Storage: retired {len(result['retired'])} verified completed task copies ({result['freed_bytes'] / 1024**3:.2f} GiB logical)")
+            except Exception as exc:
+                self.state.storage_last = {"checked_at": now(), "error": str(exc)[:500], "freed_bytes": 0}
+            self.state.save(self.state_dir / "state.json")
+            self.wake()
+        self._storage_job = asyncio.ensure_future(clean())
 
     # ---- merge rounds: keep ready PRs merging without anyone (rounds.py) ----
     def _merge_round(self, draining: bool) -> None:
@@ -1021,7 +1076,7 @@ class Engine:
                 self.passing = False
                 self.sync_error = f"{type(e).__name__}: {e}"
                 self.ctx.log(f"check failed: {self.sync_error}")
-            if self._reload_draining and not self.jobs and self.round_job is None:
+            if self._reload_draining and not self.jobs and self.round_job is None and not (self._storage_job and not self._storage_job.done()):
                 return
             wait = min(30, self.cfg.poll_minutes * 60) if self.sync_error else self.cfg.poll_minutes * 60
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
@@ -1032,7 +1087,7 @@ class Engine:
                 if left <= 0:
                     break
                 waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs) + \
-                    ([self.round_job] if self.round_job is not None else [])
+                    ([self.round_job] if self.round_job is not None else []) + ([self._storage_job] if self._storage_job and not self._storage_job.done() else [])
                 done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
                 if waits[0] not in done:
                     waits[0].cancel()
@@ -1046,6 +1101,8 @@ class Engine:
                         self.publish(outcomes)
                     except Exception as e:
                         self.ctx.log(f"status update failed: {type(e).__name__}: {e}")
+                    break
+                if self._storage_job is not None and self._storage_job in done:
                     break
                 if self._wake.is_set():
                     break
@@ -1169,6 +1226,7 @@ class Engine:
                          "agent": st.task_agent.get(str(t.number), ""),
                          "pr_url": f"{url}/pull/{t.pr_number}" if t.pr_number else ""})
         return {"repo": cfg.repo, "repo_url": url, "project": cfg.name, "label": graph.PREFIX,
+                "storage": self.storage_view(),
                 "workers_enabled": cfg.workers_enabled, "last_pass": st.last_pass, "auth": cfg.auth,
                 "max_parallel": cfg.max_parallel, "emergency_workers": {"max_parallel": cfg.emergency_workers, "live": [], "why": self.emergency_why}, "poll_minutes": cfg.poll_minutes,
                 "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,

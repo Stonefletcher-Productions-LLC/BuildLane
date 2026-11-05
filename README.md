@@ -239,6 +239,14 @@ workers are marked.
 Releases, the integration mode, timing history and merge controls are still in the classic BuildLane app for now
 ([its guide](docs/BUILDLANE-CLASSIC.md)); they are moving into Fletchery next.
 
+## Keeping disk use under control
+
+New text-only task checkouts omit binary Art/Content files while keeping source, manifests and text data. Explicit asset tasks and merge candidates keep full files; existing workspaces are not shrunk. Settings > Storage can turn this off for projects whose worker checks need those binaries. Granting an existing small checkout an asset task expands it without cleaning or resetting user work.
+
+Automatic cleanup checks safe idle opportunities hourly, retaining completed task copies for 24 hours by default. It only retires ordinary task checkouts whose issue is verified closed and whose exact commit is contained in the verified remote base. Dirty, staged, untracked and unique ignored files, active or preserved attempts, all merge candidates and saved recovery checkpoints stay in place. Source-backed Python caches are regenerable. Hydrated LFS payloads require a matching verified object in the retained shared store. Branches and Git/LFS objects are never pruned.
+
+The Workers area shows cleanup status and **Clean eligible copies** queues a safety-checked pass without the age delay. Global Pause, active app jobs and heavy reservations defer cleanup. It runs outside the scheduler, at most ten checkouts per pass, and draining waits for an active cleanup to finish. Full receipts are in `storage-cleanup.json`. Logical bytes removed are reported separately from actual volume free space. Controls are `workers.autoCleanup`, `cleanupRetentionHours` and `thinTextWorkers`.
+
 ## Emergency workers
 
 A separate **Emergency workers** control reserves **0 or 1** extra slot for build and merge repairs. It defaults to 1 and applies immediately without a restart. Normal Workers at 0 pauses feature work while this slot can fix failed build checks, merge conflicts, excluded PRs and recorded merge failures. Ordinary feature tasks cannot use it. Turning Emergency workers to 0 stops new emergency sessions; existing sessions finish.

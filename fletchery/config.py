@@ -32,6 +32,7 @@ def default_state_dir(name: str) -> str:
 
 # profile key (in "workers") -> Config field
 WORKER_KEYS = {
+    "autoCleanup": "auto_cleanup", "cleanupRetentionHours": "cleanup_retention_hours", "thinTextWorkers": "thin_text_workers",
     "emergencyWorkers": "emergency_workers",
     "assetTasks": "asset_tasks",
     "autoPrerequisites": "auto_prerequisites",
@@ -67,6 +68,9 @@ class Config:
     state_dir: str = ""                      # "" = %LOCALAPPDATA%\Fletchery\<name>
     max_parallel: int = 2                    # on a Claude plan the limits are shared with your own sessions
     emergency_workers: int = 1              # dedicated build/merge repair slot, independently 0 or 1
+    auto_cleanup: bool = True                # retire verified closed/published task copies when idle
+    cleanup_retention_hours: float = 24
+    thin_text_workers: bool = True            # omit binary Art/Content only in newly created text task checkouts
     asset_tasks: dict = None                 # explicit per-task paths/mode; default remains text-only
     auto_prerequisites: bool = True          # turn actionable blocks into dependencies, not repeated human prompts
     poll_minutes: float = 10
