@@ -239,6 +239,14 @@ workers are marked.
 Releases, the integration mode, timing history and merge controls are still in the classic BuildLane app for now
 ([its guide](docs/BUILDLANE-CLASSIC.md)); they are moving into Fletchery next.
 
+## Emergency workers
+
+A separate **Emergency workers** control reserves **0 or 1** extra slot for build and merge repairs. It defaults to 1 and applies immediately without a restart. Normal Workers at 0 pauses feature work while this slot can fix failed build checks, merge conflicts, excluded PRs and recorded merge failures. Ordinary feature tasks cannot use it. Turning Emergency workers to 0 stops new emergency sessions; existing sessions finish.
+
+Emergency repairs use the existing branch, review and validation rules. Their required prerequisites and bounded blocker planning can use the same single slot. They still respect global Pause, draining/restarts, daily budgets, provider availability, repair limits and heavy-work reservations; they never release another job's reservation. Real decisions and exhausted repairs remain visible in Needs you. A merge failure creates a deduplicated diagnostic repair issue; filing it is not proof that the underlying cause was fixed.
+
+The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the dashboard report normal and emergency sessions separately.
+
 ## Merge rounds
 
 Ready merges take priority over new workers, fixers and prerequisite planners. Existing jobs finish normally;

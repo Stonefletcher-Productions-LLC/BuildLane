@@ -33,10 +33,16 @@ const data = {
 };
 const requests = [];
 const pageSource = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8').replace('__FLETCHERY_TOKEN__', 'fixture-token');
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (req.url === '/favicon.ico') { res.writeHead(204); return res.end(); }
   if (req.method === 'POST') {
-    requests.push({url: req.url, token: req.headers['x-fletchery-token']});
+    let rawBody = '';
+    for await (const chunk of req) rawBody += chunk;
+    const body = JSON.parse(rawBody || '{}');
+    requests.push({url: req.url, token: req.headers['x-fletchery-token'], body});
+    if (req.url === '/api/settings/save' && body.changes && body.changes.emergency_workers != null) {
+      data.emergency_workers.max_parallel = body.changes.emergency_workers;
+    }
     if (req.url === '/api/pause') data.held = true;
     if (req.url === '/api/resume') data.held = false;
     res.setHeader('Content-Type', 'application/json');
@@ -68,6 +74,7 @@ const server = http.createServer((req, res) => {
     assert.equal(await visible('#lowerBox'), false);
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
+    assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
     assert.match(await page.locator('.round-status').innerText(), /Game tests/);
     await page.locator('.round-detail summary').click();
     await page.evaluate(() => render(last));
@@ -166,6 +173,50 @@ const server = http.createServer((req, res) => {
     data.merge_auto.priority = false;
     await page.evaluate(d => render(d), data);
     assert.equal(await page.locator('.worker-wait').count(), 0, 'wait disappears when priority clears');
+    // Emergency repair is independent from zero normal workers and has its own hot control.
+    const normalMax = data.max_parallel;
+    data.max_parallel = 0;
+    const emergencySession = {task: 1054, title: 'Repair merge compile failure', agent: 'codex-sol',
+      kind: 'fix', stage: 'Fixing PR #988', since: now, actions: 3, emergency: true};
+    data.live = [emergencySession];
+    data.emergency_workers = {max_parallel: 1, live: [emergencySession], why: ''};
+    await page.evaluate(d => render(d), data);
+    assert.equal(await visible('#emergencyWorkers'), true);
+    assert.equal(await page.locator('#slots details').count(), 0, 'emergency job is absent from ordinary worker rows');
+    assert.match(await page.locator('#slots').innerText(), /Merging, builds and emergency repairs continue/);
+    assert.equal(await page.locator('#emergencySlots details').count(), 1);
+    assert.match(await page.locator('#emergencySlots').innerText(), /#1054 Repair merge compile failure[\s\S]*Fixing PR #988/);
+    assert.match(await page.locator('#overviewStats').innerText(), /0 active · writing paused/);
+    assert.match(await page.locator('#overviewStats').innerText(), /1 emergency repair/);
+    assert.doesNotMatch(await page.locator('#state').innerText(), /Writing pauses once 1/);
+    assert.match(await page.locator('#state').innerText(), /1 emergency repair running/);
+    await page.locator('#emergencySlots summary').click();
+    await page.evaluate(d => render(d), data);
+    assert.equal(await page.locator('#emergencySlots details[open]').count(), 1, 'polling preserves emergency repair details');
+    await page.locator('#workers').screenshot({path: path.join(out, 'workers-emergency-repair-light.png')});
+    await page.selectOption('#themeChoice', 'dark');
+    await page.setViewportSize({width: 420, height: 900});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'emergency repair fits a narrow window');
+    await page.locator('#workers').screenshot({path: path.join(out, 'workers-emergency-repair-dark-mobile.png')});
+    await page.setViewportSize({width: 1400, height: 1000});
+    await page.selectOption('#themeChoice', 'light');
+    await page.locator('#eDown').click();
+    await page.waitForFunction(() => document.querySelector('#eVal').textContent === '0');
+    assert(requests.some(r => r.url === '/api/settings/save' && r.token === 'fixture-token' && r.body.changes.emergency_workers === 0));
+    assert.equal(await page.locator('#emergencySlots details').count(), 1, 'turning emergency workers off does not hide a running repair');
+    assert.match(await page.locator('#emergencySlots').innerText(), /pause after the current session finishes/);
+    data.live = [];
+    data.emergency_workers.live = [];
+    await page.evaluate(d => render(d), data);
+    assert.match(await page.locator('#emergencySlots').innerText(), /repairs are paused/);
+    await page.locator('#eUp').click();
+    await page.waitForFunction(() => document.querySelector('#eVal').textContent === '1');
+    assert(requests.some(r => r.url === '/api/settings/save' && r.body.changes.emergency_workers === 1));
+    data.emergency_workers.why = 'Waiting for the PC reservation to clear';
+    await page.evaluate(d => render(d), data);
+    assert.match(await page.locator('#emergencySlots').innerText(), /Waiting for the PC reservation to clear/);
+    delete data.emergency_workers;
+    data.max_parallel = normalMax;
     data.live = [
       {task: 891, title: 'Shower interactions', agent: 'sonnet', stage: 'Reviewing', since: now, actions: 12},
       {task: 899, title: 'Preview reactions', agent: 'codex-sol', stage: 'Writing', since: now, actions: 4},

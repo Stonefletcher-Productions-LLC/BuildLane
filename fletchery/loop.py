@@ -43,6 +43,7 @@ class State:
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
     merge_held: bool = False                                  # Pause merging in the Merge section
+    emergency_repairs: dict = field(default_factory=dict)      # task -> build/merge evidence; repair classification survives restart
     resource_waits: dict = field(default_factory=dict)        # task -> earliest readiness check (ISO); survives restart
     blocker_checked: dict = field(default_factory=dict)       # task -> last planner dispatch; fair across deferred blocks
 
@@ -124,6 +125,8 @@ class Engine:
         self.passing = False
         self._wake: asyncio.Event | None = None
         self.active: set[int] = set()   # tasks a session of THIS process is working on right now
+        self.emergency_active: set[int] = set()
+        self.emergency_why = "No build or merge repairs waiting."
         self.jobs: dict = {}            # asyncio job -> (task number, PR number or None, the PR's last seen feedback)
         self.recent: list[Outcome] = []
         self._tasks: dict = {}
@@ -241,6 +244,16 @@ class Engine:
                     t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(QUEUED)]
                     st.running.pop(str(t.number), None)
                     self.ctx.log(f"#{t.number} was left running by an earlier Fletchery; back in the queue")
+        # Ready-only external PRs also need their existing-branch repair task.
+        repair_prs = {int(n) for n in st.merge_excluded if str(n).isdigit()}
+        repair_prs.update(int(n) for t in tasks.values() for n in
+                         re.findall(r"<!-- fletchery-repair-pr:(\d+) -->", t.body or ""))
+        if repair_prs - prs.keys():
+            try:
+                prs.update({p.number: p for p in gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch)
+                            if p.number in repair_prs})
+            except Exception as e:
+                self.ctx.log(f"merge repair PR lookup deferred: {e}")
         by_pr = _tasks_by_pr(tasks, prs)
         # A task whose PR merged into a non-default branch (Test-Staging) stays open: GitHub only acts on "Closes #n"
         # for the default branch. Close it here, or everything depending on it waits forever (round 7, 2026-11-03).
@@ -309,14 +322,23 @@ class Engine:
         self._merge_round(draining)
         worker_paused = paused or self.merge_priority
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
+        emergency_numbers = self.repair_numbers(tasks)
+        self.emergency_why = ("Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else
+                              "Fletchery is paused or restarting." if paused else
+                              "Daily budget spent." if not budget_left else "No build or merge repairs waiting.")
         # 1. feedback on open PRs -> fixers (one per task at a time)
         ordered_feedback = sorted(by_pr.items())
         ordered_feedback = [x for x in ordered_feedback if x[0] > st.feedback_cursor] + [x for x in ordered_feedback if x[0] <= st.feedback_cursor]
         inspected_feedback = 0
         for pr_num, task in ordered_feedback:
-            if worker_paused or not budget_left or self.free_slots() <= 0 or inspected_feedback >= 6:
+            if paused or not budget_left or inspected_feedback >= 6:
                 break
-            if task.number in self.active or self.resource_wait_reason(task.number):
+            if (worker_paused or self.free_slots() <= 0) and self.emergency_free() <= 0:
+                break
+            resource_reason = self.resource_wait_reason(task.number)
+            if resource_reason and task.number in emergency_numbers and cfg.emergency_workers and not paused and budget_left:
+                self.emergency_why = resource_reason
+            if task.number in self.active or resource_reason:
                 continue
             if any(d in tasks or not is_closed(d) for d in task.depends_on):
                 continue
@@ -332,8 +354,16 @@ class Engine:
             if excluded.get("head") == pr.head_sha and st.fix_attempts.get(str(pr_num), 0) < cfg.fixer_attempts:
                 if not st.seen.get(str(pr_num)) or excluded.get("at", "") > st.seen[str(pr_num)]:
                     fb.append(Feedback(pr_num, "merge", "Merge round left this PR out after its repair budget: " + excluded.get("why", ""), excluded["at"]))
-            if not fb or paused or self.free_slots() <= 0:
+            if not fb:
                 continue
+            repair = task.number in emergency_numbers or (bool(excluded) and excluded.get("head") == pr.head_sha) or any(
+                f.kind in ("check", "status", "conflict", "merge") for f in fb)
+            emergency = repair and self.emergency_free() > 0
+            if not emergency and (worker_paused or self.free_slots() <= 0):
+                continue
+            if repair and not self.dry_run:
+                st.emergency_repairs[str(task.number)] = pr_num
+                emergency_numbers.add(task.number)
             if self.watcher:  # a failure on the build PC: give the fixer the failing step's log
                 for f in fb:
                     if f.kind == "status":
@@ -345,17 +375,20 @@ class Engine:
             prior = st.seen.get(str(pr_num))
             st.seen[str(pr_num)] = max(f.at for f in fb)
             st.fix_attempts[str(pr_num)] = attempt
-            self._start(fix_pr(task, pr, fb, attempt, self.ctx), task.number, pr_num, prior)
+            self._start(fix_pr(task, pr, fb, attempt, self.ctx), task.number, pr_num, prior, emergency=emergency)
 
         # 2. ready tasks -> workers, within slots and budget
         # Existing Needs you tasks get the same bounded prerequisite planning as new blocks.
         # One planner per pass, counted against worker slots and the daily cap.
         blocker_busy = any(t.status == BLOCKED and t.number in self.active for t in tasks.values())
-        if cfg.auto_prerequisites and not blocker_busy and not worker_paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
+        if cfg.auto_prerequisites and not blocker_busy and not paused and budget_left and (self.emergency_free() > 0 or (not worker_paused and self.free_slots() > 0)):
             import blockers
             import rules as rules_mod
             for t in sorted(tasks.values(), key=lambda t: (st.blocker_checked.get(str(t.number), ""), t.created_at, t.number)):
-                if t.status != BLOCKED or t.number in self.active:
+                if t.status != BLOCKED or t.number in self.active or self.resource_wait_reason(t.number):
+                    continue
+                emergency = t.number in emergency_numbers and self.emergency_free() > 0
+                if not emergency and (worker_paused or self.free_slots() <= 0):
                     continue
                 try:
                     if not blockers.pending(gh.issue_thread(t.number)):
@@ -368,7 +401,7 @@ class Engine:
                     st.blocker_checked[str(t.number)] = now()
                     st.save(self.state_dir / "state.json")
                     t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
-                    self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
+                    self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None, emergency=emergency)
                 break
         rd = readiness(tasks, closed_deps)
         for number in rd.waiting:
@@ -403,7 +436,16 @@ class Engine:
             rd.ready = free
         spent = st.spent.get(today(), 0.0)
         budget_left = spent < cfg.daily_budget_usd
-        chosen = pick(rd.ready, self.free_slots()) if budget_left and not worker_paused else []
+        pending_repairs = [t for t in tasks.values() if t.number in emergency_numbers and t.status in (QUEUED, BLOCKED)]
+        if pending_repairs and cfg.emergency_workers and not paused and budget_left:
+            first = pending_repairs[0]
+            self.emergency_why = rd.waiting.get(first.number) or ("Repair needs bounded blocker planning or human input." if first.status == BLOCKED else "Waiting for a suitable repair agent.")
+        emergency_ready = [t for t in rd.ready if t.number in emergency_numbers]
+        if emergency_ready and cfg.emergency_workers and not paused and budget_left:
+            self.emergency_why = "Waiting for the emergency repair slot or a suitable agent."
+        emergency_chosen = pick(emergency_ready, self.emergency_free()) if budget_left and not paused else []
+        chosen = pick([t for t in rd.ready if t not in emergency_chosen], self.free_slots()) if budget_left and not worker_paused else []
+        chosen += emergency_chosen
         for t in rd.ready:
             if t in chosen:
                 self.last_plan.append(f"run #{t.number} {t.title} on {t.branch}")
@@ -415,6 +457,8 @@ class Engine:
                 rd.waiting[t.number] = "on hold: Fletchery is paused"
             elif paused:
                 rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
+            elif t.number in emergency_numbers and cfg.emergency_workers:
+                rd.waiting[t.number] = "waiting for the emergency repair slot"
             elif self.merge_priority:
                 rd.waiting[t.number] = "waiting for merge priority; existing jobs continue"
             else:
@@ -425,7 +469,7 @@ class Engine:
             for t in chosen:
                 st.running[str(t.number)] = now()
                 t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(RUNNING)]
-                self._start(run_task(t, self.ctx), t.number, None, None)
+                self._start(run_task(t, self.ctx), t.number, None, None, emergency=t in emergency_chosen)
             st.save(self.state_dir / "state.json")
         # Merge eligibility must see this pass's issue dependencies, including on
         # the very first pass after startup rather than the previous snapshot.
@@ -440,13 +484,13 @@ class Engine:
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
-        if not self.dry_run and st.merge_last.get("result") in ("crashed", "checkout_failed") and not st.merge_last.get("failure_issue"):
+        if not self.dry_run and st.merge_last.get("result") in ("failed", "crashed", "checkout_failed") and not st.merge_last.get("failure_issue"):
             try:
                 st.merge_last["failure_issue"] = rounds.report_failure(
                     self.ctx.gh, cfg, st.merge_last, st.merge_last.get("worktree") or str(rounds.checkout_path(self.ctx.repo)))
                 st.save(self.state_dir / "state.json")
             except Exception as e:
-                self.ctx.log(f"merge rounds: could not file prior crash: {type(e).__name__}: {e}")
+                self.ctx.log(f"merge rounds: could not file prior merge failure: {type(e).__name__}: {e}")
         if self.round_job is not None:
             self.merge_why = "a round is running"
             return
@@ -635,12 +679,12 @@ class Engine:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
-        if res["result"] in ("crashed", "checkout_failed"):
+        if res["result"] in ("failed", "crashed", "checkout_failed"):
             try:
                 res["failure_issue"] = rounds.report_failure(gh, cfg, res, res.get("worktree") or str(rounds.checkout_path(self.ctx.repo)))
                 self.state.save(self.state_dir / "state.json")
             except Exception as e:
-                self.ctx.log(f"merge round {n}: could not file crash issue: {type(e).__name__}: {e}")
+                self.ctx.log(f"merge round {n}: could not file repair issue: {type(e).__name__}: {e}")
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
                      + (f" ({res['summary'][:200]})" if res["summary"] else ""))
         return res
@@ -679,11 +723,31 @@ class Engine:
             self.ctx.log(f"lane watcher: {type(e).__name__}: {e}")
 
     def free_slots(self) -> int:
-        """0 workers: no new worker or fixer starts; merging, the Build Lane and issue closing are not slots."""
-        return max(0, self.cfg.max_parallel) - len(self.jobs)
+        """Normal capacity excludes the independently bounded emergency slot."""
+        return max(0, self.cfg.max_parallel) - (len(self.jobs) - len(self.emergency_active))
 
-    def _start(self, coro, task_no: int, pr_no: int | None, prior_seen) -> None:
+    def emergency_free(self) -> int:
+        return max(0, min(1, self.cfg.emergency_workers) - len(self.emergency_active))
+
+    def repair_numbers(self, tasks: dict) -> set[int]:
+        """Only recorded merge/build failures and prerequisites of those repairs use the extra slot."""
+        numbers = {int(n) for n in self.state.emergency_repairs if str(n).isdigit()}
+        numbers.update(t.number for t in tasks.values() if re.search(
+            r"<!-- fletchery-(?:merge-failure:|repair-pr:|failure sig=)", t.body or ""))
+        numbers.update(int(e["repair_task"]) for e in self.state.merge_excluded.values() if e.get("repair_task"))
+        if self.state.merge_last.get("failure_issue"):
+            numbers.add(int(self.state.merge_last["failure_issue"]))
+        while True:
+            deps = {d for n in numbers if n in tasks for d in tasks[n].depends_on}
+            if deps <= numbers:
+                return numbers
+            numbers.update(deps)
+
+    def _start(self, coro, task_no: int, pr_no: int | None, prior_seen, emergency: bool = False) -> None:
         self.active.add(task_no)
+        if emergency:
+            self.emergency_active.add(task_no)
+            self.emergency_why = "Repair in progress."
         job = asyncio.ensure_future(coro)
         self.jobs[job] = (task_no, pr_no, prior_seen)
 
@@ -700,6 +764,7 @@ class Engine:
         for job in done:
             n, pr_n, prior = self.jobs.pop(job)
             self.active.discard(n)
+            self.emergency_active.discard(n)
             exc = job.exception() if not job.cancelled() else asyncio.CancelledError()
             if exc is not None:  # a bug or a crash in one job must not lose the others' results
                 self.ctx.log(f"#{n} crashed: {type(exc).__name__}: {exc}")
@@ -977,7 +1042,7 @@ class Engine:
                          "pr_url": f"{url}/pull/{t.pr_number}" if t.pr_number else ""})
         return {"repo": cfg.repo, "repo_url": url, "project": cfg.name, "label": graph.PREFIX,
                 "workers_enabled": cfg.workers_enabled, "last_pass": st.last_pass, "auth": cfg.auth,
-                "max_parallel": cfg.max_parallel, "poll_minutes": cfg.poll_minutes,
+                "max_parallel": cfg.max_parallel, "emergency_workers": {"max_parallel": cfg.emergency_workers, "live": [], "why": self.emergency_why}, "poll_minutes": cfg.poll_minutes,
                 "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,
                 "usage_week": self.usage_week(),
                 "restarting": self.restart_status(), "update_pending": self.update_pending,
@@ -1136,7 +1201,7 @@ def _tasks_by_pr(tasks: dict[int, Task], prs: dict[int, PullRequest]) -> dict[in
     """Match open Fletchery PRs to their tasks by the `Closes #n` line (and the branch name as a fallback)."""
     out: dict[int, Task] = {}
     for pr in prs.values():
-        for t in tasks.values():
+        for t in sorted(tasks.values(), key=lambda t: t.status != PR):
             if re.search(r"\bcloses\s+#" + str(t.number) + r"\b", pr.body or "", re.I) or pr.head == t.branch:
                 t.pr_number = pr.number
                 if t.status == PR:

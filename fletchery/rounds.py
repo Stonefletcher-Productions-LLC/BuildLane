@@ -301,7 +301,7 @@ def prepare_worktree(repo, branch: str, lease_file: str = "") -> Path:
 
 
 def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
-    """One durable task per recurring crash, with a deduplicated occurrence for each round."""
+    """One durable task per recurring validation or orchestration failure, with a deduplicated occurrence for each round."""
     import graph
     summary = str(result.get("summary", ""))
     signature = re.sub(r"fletchery/merge-round-[\w-]+", "<round-branch>", summary.splitlines()[0] if summary else "unknown")
@@ -320,11 +320,11 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
         if occurrence not in thread.get("body", "") and not any(occurrence in c.get("body", "") for c in thread.get("comments", [])):
             gh.comment(number, "Fletchery: merge failure repeated\n\n" + evidence)
         return number
-    body = ("Fletchery's merge round crashed. Diagnose and fix the underlying harness or checkout failure; "
+    body = ("Fletchery's merge round failed. Diagnose and fix the underlying build, integration, harness or checkout failure; "
             "add a regression proving the failure is handled and the next round can start. Preserve generated "
             "content and other worktrees; never bypass leases, weaken checks or kill processes by name. "
             "Do not run an extra build or reset the active merge worktree from a worker.\n\n" + evidence + "\n\n" + marker)
-    return gh.create_issue("Fix merge-round crash: " + signature[:150], body, [graph.PREFIX, graph.label_for(graph.QUEUED)])
+    return gh.create_issue("Fix merge-round failure: " + signature[:150], body, [graph.PREFIX, graph.label_for(graph.QUEUED)])
 
 
 def without_failed_dependencies(ready: list, excluded: dict, tasks: dict, known_closed: set[int] | None = None) -> list:

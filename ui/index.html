@@ -546,6 +546,9 @@
   .mauto { font-size: 13px; }
   .mauto-last { font-size: 11px; color: var(--muted); }
   .mauto-last summary { cursor: pointer; }
+  .emergency-workers { border-top: 1px solid var(--rule); padding: 12px 0 4px; margin-top: 8px; }
+  .emergency-workers h3 { margin: 0; font-size: 14px; }
+  .emergency-help { margin: 4px 0 8px; font-size: 12px; color: var(--muted); }
   .worker-wait { background: var(--accent-bg); color: var(--ink); }
   .worker-wait p { margin: 5px 0; color: var(--muted); }
   .merge-priority { display: block; color: var(--muted); margin-top: 4px; }
@@ -710,6 +713,18 @@
       <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
+    <section class="emergency-workers" id="emergencyWorkers" aria-labelledby="emergencyHeading" hidden>
+      <div class="now-head">
+        <h3 id="emergencyHeading">Emergency workers</h3>
+        <span class="wcount" role="group" aria-label="Number of emergency workers">
+          <button type="button" class="step dark" id="eDown" aria-label="One emergency worker fewer">−</button>
+          <b id="eVal">1</b>
+          <button type="button" class="step dark" id="eUp" aria-label="One emergency worker more">+</button>
+        </span>
+      </div>
+      <p class="emergency-help">Repairs build and merge failures, even when Workers is 0. Does not start new feature work.</p>
+      <div id="emergencySlots" class="slots" aria-live="polite"></div>
+    </section>
     <div class="grip" data-resize="slotsBox" data-key="workers" role="separator" aria-orientation="horizontal" tabindex="0"
          aria-label="Resize Workers: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </section>
@@ -1029,6 +1044,52 @@ async function post(path, body) {
   return j;
 }
 
+function emergencyWorkerState(d) {
+  const e = d.emergency_workers;
+  const live = e && Array.isArray(e.live) ? e.live : (d.live || []).filter(a => a.emergency);
+  return {available: !!e, max: e && Number(e.max_parallel) > 0 ? 1 : 0, live, why: e && e.why || ""};
+}
+function normalWorkerSessions(d) {
+  const emergency = emergencyWorkerState(d);
+  const emergencyTasks = new Set(emergency.live.map(a => a.task));
+  return (d.live || []).filter(a => !a.emergency && !emergencyTasks.has(a.task));
+}
+function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
+  const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
+  const fixing = a.kind === "fix";
+  const track = fixing ? `<ol class="track"><li class="on">${esc(a.stage)}</li></ol>`
+    : `<ol class="track" aria-label="Progress">${STAGES.map((s, i) =>
+        `<li class="${i < idx ? "done" : i === idx ? "on" : ""}"${i === idx ? ' aria-current="step"' : ""}>${STAGE_LABEL[s]}</li>`).join("")}</ol>`;
+  const fresh = lastActions[a.task] !== undefined && lastActions[a.task] !== a.actions;
+  lastActions[a.task] = a.actions;
+  const row = d.tasks.find(t => t.number === a.task);
+  return `<details class="slot" ${attribute}="${a.task}"${expanded.has(String(a.task)) ? " open" : ""}>
+    <summary><span class="worker-title">#${a.task} ${esc(a.title)}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+    <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
+    ${track}<div class="what">${esc(explain(a))}</div>
+    <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
+    <div class="doing${fresh ? " fresh" : ""}">${a.last ? esc(a.last) + `<span class="ago">${ago(a.last_at)} ago</span>` : "Reading the issue and the code…"}</div>
+    <div class="count">${a.actions || 0} ${a.actions === 1 ? "step" : "steps"} in this session</div></div>
+  </details>`;
+}
+function renderEmergencyWorkers(d) {
+  const e = emergencyWorkerState(d);
+  $("emergencyWorkers").hidden = !e.available;
+  $("eVal").textContent = e.max;
+  $("eDown").disabled = !e.available || e.max === 0;
+  $("eUp").disabled = !e.available || e.max === 1;
+  $("eDown").title = "0 emergency workers: finish current repairs, then start no new repairs";
+  const open = new Set([...$("emergencySlots").querySelectorAll("details[open]")].map(el => el.dataset.emergencyWorker));
+  const rows = e.live.map(a => workerSessionHtml(a, d, open, "data-emergency-worker"));
+  if (!e.max) rows.push(`<div class="slot free">${e.live.length ? "Emergency repairs pause after the current session finishes." : "Emergency repairs are paused (0 emergency workers)."}</div>`);
+  else if (!rows.length) rows.push(`<div class="slot free">${esc(e.why || "Standing by for a build or merge failure.")}</div>`);
+  $("emergencySlots").innerHTML = rows.join("");
+}
+async function setEmergencyWorkers(v) {
+  try { await post("/api/settings/save", {changes: {emergency_workers: v}}); await refresh(); }
+  catch (e) { alert(e.message); }
+}
+
 function workerMergeWait(d) {
   const ma = d.merge_auto || {};
   if (d.held || d.max_parallel === 0 || d.restarting || d.update_pending || d.setup_needed || d.signed_out || d.limit_until || !ma.on || ma.held || !ma.priority) return null;
@@ -1046,18 +1107,23 @@ function workerMergeWait(d) {
 
 function render(d) {
   last = d;
-  const running = d.live.length;
+  const ordinary = normalWorkerSessions(d);
+  const emergency = emergencyWorkerState(d);
+  const running = ordinary.length;
   const mergeWait = workerMergeWait(d);
+  const zeroWorkerTail = emergency.available && emergency.max ? "merging, builds and emergency repairs continue" : "merging and builds carry on";
   // state line
   let state;
   if (d.max_parallel === 0) state = running
-      ? `<b>Writing pauses</b> once ${running} running ${running > 1 ? "sessions finish" : "session finishes"} (0 workers) · merging and builds carry on`
-      : `<b>Writing paused</b> (0 workers) · merging and builds carry on`;
+      ? `<b>Writing pauses</b> once ${running} running ${running > 1 ? "sessions finish" : "session finishes"} (0 workers) · ${zeroWorkerTail}`
+      : `<b>Writing paused</b> (0 workers) · ${zeroWorkerTail}`;
   else if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
   else if (mergeWait) state = `<b>${esc(mergeWait.title)}</b>`;
+  else if (emergency.live.length) state = "<b>Repairing a build or merge failure</b>";
   else if (d.passing) state = "Checking GitHub for work…";
   else if (d.held) state = "<b>Paused</b>";
   else state = `<b>Idle</b> · next check in ${until(d.next_pass_at) || "a moment"}`;
+  if (emergency.live.length) state += ` · ${emergency.live.length} emergency repair${emergency.live.length === 1 ? "" : "s"} running`;
   $("state").innerHTML = state;
 
   // usage
@@ -1086,28 +1152,12 @@ function render(d) {
   // now
   const openWorkers = new Set([...$("slots").querySelectorAll("details[open]")].map(el => el.dataset.worker));
   const slots = [];
-  for (const a of d.live) {
-    const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
-    const fixing = a.kind === "fix";
-    const track = fixing ? `<ol class="track"><li class="on">${esc(a.stage)}</li></ol>`
-      : `<ol class="track" aria-label="Progress">${STAGES.map((s, i) =>
-          `<li class="${i < idx ? "done" : i === idx ? "on" : ""}"${i === idx ? ' aria-current="step"' : ""}>${STAGE_LABEL[s]}</li>`).join("")}</ol>`;
-    const fresh = lastActions[a.task] !== undefined && lastActions[a.task] !== a.actions;
-    lastActions[a.task] = a.actions;
-    const row = d.tasks.find(t => t.number === a.task);
-    slots.push(`<details class="slot" data-worker="${a.task}"${openWorkers.has(String(a.task)) ? " open" : ""}>
-      <summary><span class="worker-title">#${a.task} ${esc(a.title)}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
-      <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
-      ${track}<div class="what">${esc(explain(a))}</div>
-      <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
-      <div class="doing${fresh ? " fresh" : ""}">${a.last ? esc(a.last) + `<span class="ago">${ago(a.last_at)} ago</span>` : "Reading the issue and the code…"}</div>
-      <div class="count">${a.actions} ${a.actions === 1 ? "step" : "steps"} in this session</div></div>
-    </details>`);
-  }
-  const free = Math.max(0, d.max_parallel - d.live.length);
+  for (const a of ordinary) slots.push(workerSessionHtml(a, d, openWorkers));
+  const free = Math.max(0, d.max_parallel - ordinary.length);
   if (mergeWait) slots.push(`<div class="slot worker-wait" role="status"><b>${esc(mergeWait.title)}</b><p>${esc(mergeWait.detail)}</p><a href="#overview">Merge progress is shown below ↓</a></div>`);
-  else if (free || !d.live.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? "New writing is paused. Merging and builds continue." : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
+  else if (free || !ordinary.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? (emergency.available && emergency.max ? "New writing is paused. Merging, builds and emergency repairs continue." : "New writing is paused. Merging and builds continue.") : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
   $("slots").innerHTML = slots.join("");
+  renderEmergencyWorkers(d);
 
   // board
   const cols = {pr: [], blocked: []};
@@ -1250,7 +1300,7 @@ function renderOverview(d) {
   const blocked = d.tasks.filter(t => t.status === "blocked");
   const queued = d.tasks.filter(t => t.status === "queued");
   const prs = d.merge ? d.merge.length : d.tasks.filter(t => t.status === "pr").length;
-  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${d.live.length}</b> active · writing paused` : `<b>${d.live.length}/${d.max_parallel}</b> workers`}</span><a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>`;
+  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>`;
   $("navTasks").textContent = blocked.length || queued.length || prs || "";
   $("navTasks").hidden = !blocked.length && !queued.length && !prs;
   $("navTasks").classList.toggle("attention", !!blocked.length);
@@ -1269,7 +1319,7 @@ const CAP_STEP = v => v < 20 ? 5 : 10;
 function renderWorkers(d) {
   $("wVal").textContent = d.max_parallel;
   $("wDown").disabled = d.max_parallel <= 0;
-  $("wDown").title = d.max_parallel === 1 ? "0 workers: write no new code; merging and builds carry on" : "";
+  $("wDown").title = d.max_parallel === 1 ? "0 workers: pause normal writing; merging, builds and enabled emergency repairs continue" : "";
   $("wUp").disabled = d.max_parallel >= 10;
 }
 async function setWorkers(v) {
@@ -1843,6 +1893,8 @@ $("hold").onclick = async () => {
 };
 $("wDown").onclick = () => setWorkers(last.max_parallel - 1);
 $("wUp").onclick = () => setWorkers(last.max_parallel + 1);
+$("eDown").onclick = () => setEmergencyWorkers(0);
+$("eUp").onclick = () => setEmergencyWorkers(1);
 $("capDown").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.max(0, v - CAP_STEP(v - 1))); };
 $("capUp").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.min(1000, v + CAP_STEP(v))); };
 async function switchAuth(to) {

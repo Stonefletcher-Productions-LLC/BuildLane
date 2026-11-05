@@ -88,7 +88,11 @@ class Dashboard:
         if cfg.lane_status_file:
             prs = {t["pr"] for t in snap.get("tasks", []) if t.get("pr")}
             lane_view = lane.read(cfg.lane_status_file, cfg.lane_pause_file, cfg.lane_drive, cfg.lane_min_free_gb, prs)
-        return {**snap, "lane": lane_view, "next_pass_at": fm.next_pass_at, "passing": fm.passing, "live": live["activity"],
+        activity = [{**row, "emergency": row.get("task") in fm.emergency_active} for row in live["activity"]]
+        snap["emergency_workers"] = {"max_parallel": cfg.emergency_workers,
+                                     "live": [row for row in activity if row["emergency"]],
+                                     "why": "Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else fm.emergency_why}
+        return {**snap, "lane": lane_view, "next_pass_at": fm.next_pass_at, "passing": fm.passing, "live": activity,
                 "log": live["log"][-200:], "history": ledger_tail(fm.state_dir / "ledger.jsonl", 40)}
 
     def add_task(self, data: dict) -> dict:
@@ -170,13 +174,13 @@ class Dashboard:
         except (TypeError, ValueError):
             raise ValueError("The number of workers is a whole number.")
         if not 0 <= v <= 10:
-            raise ValueError("Workers go from 0 (write no new code; merging and builds carry on) to 10. On a plan, more "
+            raise ValueError("Workers go from 0 (pause normal coding; merging, builds and emergency repairs carry on) to 10. On a plan, more "
                              "workers use its limits faster.")
         self.fm.cfg.save(max_parallel=v)
         if self.fm.snapshot:
             self.fm.snapshot["max_parallel"] = v
-        self.fm.ctx.log(f"workers set to {v} from the app" + (": no new code is written (running sessions finish); "
-                                                                  "merging, builds and issue closing carry on" if v == 0 else ""))
+        self.fm.ctx.log(f"workers set to {v} from the app" + (": normal writing is paused (running sessions finish); "
+                                                                  "merging, builds, enabled emergency repairs and issue closing carry on" if v == 0 else ""))
         self.fm.wake()  # more workers start now; fewer: running ones finish, no new one starts until below the limit
         return {"max_parallel": v}
 
