@@ -546,6 +546,8 @@
   .mauto { font-size: 13px; }
   .mauto-last { font-size: 11px; color: var(--muted); }
   .mauto-last summary { cursor: pointer; }
+  .merge-priority { display: block; color: var(--muted); margin-top: 4px; }
+  .round-history .history-time { color: var(--muted); }
   .mauto-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .merge-now .msteps { display: grid; gap: 7px; margin-top: 14px; }
   .merge-now .msteps li { border: 0; border-radius: 0; padding: 3px 0; opacity: 1; color: var(--muted); }
@@ -988,14 +990,17 @@ applyTheme();
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-function ago(iso) {
-  if (!iso) return "";
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+function durationText(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  const s = Math.round(seconds);
   if (s < 60) return s + "s";
   const m = Math.floor(s / 60);
   if (m < 60) return m + " min";
   const h = Math.floor(m / 60);
   return h + " h " + (m % 60) + " min";
+}
+function ago(iso) {
+  return iso ? durationText(Math.max(0, (Date.now() - Date.parse(iso)) / 1000)) : "";
 }
 function until(iso) {
   if (!iso) return "";
@@ -1096,48 +1101,68 @@ function render(d) {
   if (mergeRows) {
     cols.pr = [];
     const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
+    const ma = d.merge_auto;
+    const running = ma && ma.running && ma.running.round ? ma.running : null;
+    const terminal = new Set(["failed", "crashed", "closed", "done", "landed", "merged", "stopped", "interrupted", "cancelled", "canceled", "limited", "unreachable", "checkout_failed", "nothing"]);
+    const L = (ma && ma.last) || {};
+    const lastMatches = L.round && String(L.round) === String(mv.round);
+    // Old backends sent failed round steps as the current view. New backends
+    // explicitly separate previous; keep the hot-read UI safe with either shape.
+    const legacyFinished = mv.active == null && terminal.has(mv.state) && !(running && String(running.round) === String(mv.round));
+    const settled = ma && !running && lastMatches && (terminal.has(L.result) || L.result === "waiting");
+    const history = mv.previous || (legacyFinished || settled ? {...mv, result: L.result || mv.state, ended: mv.ended || mv.updated || ""} : null);
+    const active = mv.active !== false && !history && !settled && (mv.round || (mv.steps || []).length) && (!running || String(running.round) === String(mv.round));
     const box = $("mergeNow");
     const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
-    box.className = "merge-now " + (mv.stale ? "failed" : (mv.state || "idle"));
+    box.className = "merge-now " + (active ? (mv.stale ? "failed" : (mv.state || "running")) : "idle");
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
-    const currentStep = (mv.steps || []).find(s => ["running", "waiting", "failed"].includes(s.state));
-    box.innerHTML = currentStep ? `<div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div>` : esc(mv.headline || "No merge round running.");
+    const stepsHtml = (steps, label) => `<ol class="msteps" aria-label="${label}">${steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
+    const currentStep = active && (mv.steps || []).find(s => ["running", "waiting", "failed"].includes(s.state));
+    box.innerHTML = currentStep ? `<div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
-    if (mv.steps && mv.steps.length) box.insertAdjacentHTML("beforeend", `<ol class="msteps" aria-label="Round steps">${mv.steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`);
-    const ma = d.merge_auto;
-    if (ma) {
+    if (active && mv.steps && mv.steps.length) box.insertAdjacentHTML("beforeend", stepsHtml(mv.steps, "Current round steps"));
+    if (ma || history) {
       let line;
-      const L = ma.last || {};
-      if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
-      else if (ma.running && ma.running.round) line = `<b>${esc(ma.running.agent)}</b> · ${ma.running.prs.length} PRs · started ${esc(clockTime(ma.running.started))}`;
+      if (!ma) line = esc(mv.headline || "No merge round running.");
+      else if (running) line = `<b>${esc(running.agent)}</b> · ${(running.prs || []).length} PRs · started ${esc(clockTime(running.started))}`;
+      else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
+      else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {
+        const issue = /#(\d+)/.exec(mv.pc.what || "");
+        line = issue ? `Waiting for #${esc(issue[1])} to release the PC.` : "Waiting for the PC reservation to finish.";
+      }
       else line = ma.why ? `Next round waits: ${esc(ma.why)}.` : `A round starts whenever PRs labelled <b>${esc(ma.label)}</b> are waiting.`;
-      const res = {landed: `landed as <a href="${esc(d.repo_url)}/pull/${L.pr}" target="_blank" rel="noopener">#${L.pr}</a>`, nothing: "merged nothing",
-                   failed: "didn't land", crashed: "crashed", limited: "stopped at its agent's limit"}[L.result] || esc(L.result || "");
-      const lastLine = L.round ? `<details class="mauto-last" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Last round ${esc(L.round)} ${res}${L.at ? " at " + esc(clockTime(L.at)) : ""}</summary>${esc(L.summary || "No additional details.")}</details>` : "";
-      const btns = ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
-        (!ma.running.round && !ma.held ? `<button type="button" data-merge-now="1">Merge now</button>` : "") + `</span>` : "";
-      box.insertAdjacentHTML("afterbegin", `<div class="mauto">${line}${btns}${lastLine}</div>`);
+      if (ma && (running || (ma.on && !ma.held)) && (ma.priority || ma.merge_priority || d.merge_priority)) line += `<small class="merge-priority">New workers wait while merging has priority.</small>`;
+      const previous = history && (!L.round || String(history.round) === String(L.round)) ? {...L, ...history, result: L.result || history.result, summary: L.summary || history.note} : L;
+      const res = {landed: `landed as <a href="${esc(d.repo_url)}/pull/${previous.pr}" target="_blank" rel="noopener">#${previous.pr}</a>`, nothing: "merged nothing", done: "finished", closed: "closed",
+                   failed: "didn't land", crashed: "crashed", limited: "stopped at its agent's limit", interrupted: "was interrupted", stopped: "stopped", waiting: "was deferred"}[previous.result] || esc(previous.result || "finished");
+      const total = typeof previous.duration_seconds === "number" ? durationText(previous.duration_seconds) : durationText((Date.parse(previous.ended) - Date.parse(previous.started)) / 1000);
+      const meta = [total ? `${total} total` : "", previous.ended ? `ended ${clockTime(previous.ended)}` : ""].filter(Boolean).join(" · ");
+      const lastLine = previous.round ? `<details class="mauto-last round-history" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Previous round ${esc(previous.round)} ${res}${total ? ` · ${esc(total)} total` : ""}</summary>${meta ? `<p class="history-time">${esc(meta)}</p>` : ""}<p>${esc(previous.summary || previous.note || "No additional details.")}</p>${previous.steps && previous.steps.length ? stepsHtml(previous.steps, "Previous round steps") : ""}</details>` : "";
+      const btns = ma && ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
+        (!running && !ma.held ? `<button type="button" data-merge-now="1">Merge now</button>` : "") + `</span>` : "";
+      box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
-    const inRound = new Set(mv.prs || []);
+    const currentRound = active ? mv.round : running ? running.round : "";
+    const inRound = new Set(active ? (mv.prs || []) : running ? (running.prs || []) : []);
     $("n-pr").textContent = mergeRows.length || "";
     const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr))];
     let lastGroup = null;
     $("c-pr").innerHTML = ordered.length ? ordered.map(r => {
-      const g = inRound.has(r.pr) ? `In round ${mv.round || "?"}` : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
+      const g = inRound.has(r.pr) ? `In round ${currentRound || "?"}` : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
       const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
       lastGroup = g;
-      return head + mergeRow(r);
+      return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
     }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
   }
-  function mergeRow(r) {
+  function mergeRow(r, currentRound, membershipVerified) {
     const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
     {
       const bits = [];
       bits.push(r.unblocks.length ? `<b>Unblocks ${r.unblocks.length}</b>: ${r.unblocks.slice(0, 8).map(issue).join(", ")}${r.unblocks.length > 8 ? " …" : ""}` : "Unblocks nothing waiting");
-      if (r.in_round_branch) bits.push("<b>merged into the round branch</b>");
-      else if (r.round) bits.push(`round ${esc(r.round)}`);
+      if (currentRound && membershipVerified && r.in_round_branch) bits.push("<b>merged into the round branch</b>");
+      else if (currentRound) bits.push(`round ${esc(currentRound)}`);
       if (r.imports) bits.push(`imports: ${esc(r.imports)}`);
       for (const f of r.flags) bits.push(`<b>${esc(f)}</b>`);
       if (r.conflict) bits.push("<b>conflicts</b>");

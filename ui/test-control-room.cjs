@@ -82,6 +82,74 @@ const server = http.createServer((req, res) => {
     await page.selectOption('#themeChoice', 'dark');
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
     await page.screenshot({path: path.join(out, 'overview-dark.png'), fullPage: true});
+    // Terminal rounds belong in a collapsed history section, even when an older
+    // backend still sends their failed steps as the current merge_view.
+    const originalMergeView = JSON.parse(JSON.stringify(data.merge_view));
+    const originalMergeAuto = JSON.parse(JSON.stringify(data.merge_auto));
+    const started = '2026-11-05T00:03:45Z';
+    const ended = '2026-11-05T03:27:56Z';
+    const previous = {round: 19, result: 'failed', started, ended, duration_seconds: 12251,
+      note: 'Agent stopped; the candidate is preserved.', steps: [{name: 'Build', state: 'failed'}]};
+    data.merge_view = {active: false, round: '', state: 'idle', prs: [], steps: [], previous,
+      headline: 'No merge round running. The PC is busy with hair validation.',
+      pc: {what: '#992 official MCP house hair validation'}};
+    data.merge_auto = {on: true, held: false, running: {}, priority: true,
+      why: 'The PC heavy lease is held; merge checkout preparation waits', last: {round: 19, result: 'failed', at: started,
+      summary: 'Agent stopped; the candidate is preserved.'}};
+    data.merge[0].round = '19';
+    data.merge[0].in_round_branch = true;
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now idle');
+    assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
+    assert.match(await page.locator('#mergeNow .merge-current').innerText(), /Waiting for #992 to release the PC/);
+    assert.match(await page.locator('#mergeNow .merge-priority').innerText(), /New workers wait/);
+    assert.match(await page.locator('.round-history summary').innerText(), /Previous round 19 didn't land.*3 h 24 min total/);
+    assert.equal(await page.locator('.round-history').getAttribute('open'), null);
+    assert.equal(await visible('[aria-label="Previous round steps"]'), false);
+    assert.doesNotMatch(await page.locator('#c-pr').innerText(), /In round 19|merged into the round branch/);
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-waiting-history-dark.png')});
+    await page.selectOption('#themeChoice', 'light');
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-waiting-history-light.png')});
+    data.merge_auto.held = true;
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow .merge-priority').count(), 0, 'paused merging must not claim worker priority');
+    data.merge_auto.held = false;
+    await page.evaluate(next => { last = next; render(next); }, data);
+    const frozen = await page.locator('.round-history summary').innerText();
+    await page.evaluate(() => { window.fixtureNow = Date.now; Date.now = () => fixtureNow() + 3600000; render(last); });
+    assert.equal(await page.locator('.round-history summary').innerText(), frozen, 'finished duration must not keep ticking');
+    await page.locator('.round-history summary').click();
+    assert.match(await page.locator('[aria-label="Previous round steps"]').innerText(), /Build[\s\S]*failed/);
+    await page.evaluate(() => render(last));
+    assert.equal(await page.locator('.round-history').getAttribute('open'), '', 'polling preserves history expansion');
+    await page.locator('.round-history summary').click();
+    await page.evaluate(() => { Date.now = fixtureNow; delete window.fixtureNow; });
+    data.merge_view = {round: 19, state: 'failed', stale: true, started, updated: ended,
+      headline: 'Merging round 19: FAILED at Build', prs: [1041], steps: previous.steps};
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now idle', 'legacy terminal failures are historical too');
+    assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
+    assert.match(await page.locator('.round-history summary').innerText(), /3 h 24 min total/);
+    assert.doesNotMatch(await page.locator('#mergeNow').innerText(), /elapsed in this round/);
+    // A newly started round must not inherit old failed steps or old ancestry.
+    data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
+    assert.doesNotMatch(await page.locator('#c-pr').innerText(), /merged into the round branch|In round 19/);
+    assert.match(await page.locator('#c-pr').innerText(), /In round 20/);
+    data.merge_view = {active: true, round: 20, state: 'failed', started: now, prs: [1041],
+      headline: 'Current compile failed', steps: [{name: 'Build', state: 'failed'}]};
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed', 'a failure in a live round stays visible');
+    assert.match(await page.locator('.round-status').innerText(), /Build[\s\S]*failed/);
+    assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
+    data.merge_view = originalMergeView;
+    data.merge_auto = originalMergeAuto;
+    delete data.merge[0].round;
+    delete data.merge[0].in_round_branch;
+    await page.evaluate(next => { last = next; render(next); }, data);
+    await page.selectOption('#themeChoice', 'dark');
     await page.locator('[data-view="tasks"]').click();
     assert.equal(await visible('#queue'), true);
     assert.equal(await visible('#workers'), false);

@@ -240,6 +240,15 @@ Releases, the integration mode, timing history and merge controls are still in t
 
 ## Merge rounds
 
+Ready merges take priority over new workers, fixers and prerequisite planners. Existing jobs finish normally;
+when the PC reservation clears, the merger gets the next opportunity. New writing resumes when no eligible
+merge is pending or running. Pausing/disabling merging, unresolved dependencies, failed-round cooldowns and
+unavailable merger accounts do not hold unrelated writing. A busy merger agent reserves its next free slot.
+
+The Merge & build panel shows the current wait separately from collapsed previous-round results. Finished
+rounds have a fixed total duration and do not keep showing their failed steps or PR membership as current.
+
+
 Merge rounds can use any enabled, signed-in Claude, Codex or OpenCode agent allowed to take the merger role.
 The preferred merge agent wins when available; otherwise the best available C++ score wins, regardless of provider.
 Each round stops at confirmed validation failures and allows one small repair cycle per implicated PR

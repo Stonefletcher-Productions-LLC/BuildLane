@@ -24,12 +24,16 @@ from pathlib import Path
 
 STATES = ("todo", "running", "waiting", "done", "failed")
 STALE_HOURS = 2.0
+TERMINAL_STATES = {"done", "landed", "merged", "closed", "failed", "crashed", "cancelled",
+                   "canceled", "interrupted", "aborted", "stopped", "limited", "unreachable",
+                   "checkout_failed", "nothing"}
 
 
 def _read(path) -> dict:
     try:
         p = Path(path)
-        return json.loads(p.read_text(encoding="utf-8-sig")) if path and p.exists() else {}
+        data = json.loads(p.read_text(encoding="utf-8-sig")) if path and p.exists() else {}
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -79,17 +83,38 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     pc = pc_holder(lease_path)
     pc_text = f"the PC is busy with {pc['what']} (since {_short(pc['since'])})" if pc else "the PC is free"
     out = {"round": "", "prs": [], "in_branch": {}, "steps": [], "pc": pc, "pc_text": pc_text, "state": "idle",
-           "headline": "", "next": "", "started": "", "updated": "", "owner": "", "note": "", "stale": False}
-    active = r and str(r.get("state", "")).lower() not in ("done", "landed", "merged", "closed")
-    if not active:
-        out["headline"] = "No merge round running. Finished PRs below wait for the next one; " + pc_text + "."
-        return out
+           "headline": "", "next": "", "started": "", "updated": "", "owner": "", "note": "", "stale": False,
+           "active": False, "previous": None}
     steps = [{"name": str(s.get("name", "?")), "state": str(s.get("state", "todo")).lower()}
              for s in r.get("steps", []) if isinstance(s, dict)]
     for s in steps:
         if s["state"] not in STATES:
             s["state"] = "todo"
     prs = [int(n) for n in r.get("prs", []) if str(n).isdigit()]
+    state = str(r.get("state", "")).lower()
+    active = bool(r) and state not in TERMINAL_STATES
+    if not active:
+        if r:
+            # A finished round is history. Never query its branches or reuse its
+            # failed steps/PR membership as the current scheduler's status.
+            ended = r.get("ended") or r.get("finished") or r.get("updated") or ""
+            duration = None
+            try:
+                end = datetime.fromisoformat(str(ended).replace("Z", "+00:00"))
+                if end.tzinfo is None:
+                    end = end.replace(tzinfo=timezone.utc)
+                age = _age_h(r.get("started", ""), end)
+                if age is not None and age >= 0:
+                    duration = int(round(age * 3600))
+            except ValueError:
+                pass
+            out["previous"] = {"round": str(r.get("round", "")), "result": r.get("result") or state,
+                               "steps": steps, "prs": prs, "started": r.get("started", ""),
+                               "ended": ended, "duration_seconds": duration,
+                               "note": r.get("note", ""), "owner": r.get("owner", "")}
+        out["headline"] = "No merge round running. Finished PRs below wait for the next one; " + pc_text + "."
+        return out
+    out["active"] = True
     out.update(round=str(r.get("round", "")), prs=prs, steps=steps, started=r.get("started", ""),
                updated=r.get("updated", ""), owner=r.get("owner", ""), note=r.get("note", ""))
     for n in prs:

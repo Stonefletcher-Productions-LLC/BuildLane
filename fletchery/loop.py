@@ -133,6 +133,7 @@ class Engine:
         self.watcher = None
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
+        self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
         self.merge_why = ""             # why no round is starting, for the Merge section
         self._stats_cache: tuple[float, object] | None = None
         if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
@@ -295,13 +296,25 @@ class Engine:
                     self.ctx.log(f"#{number}: prerequisite lookup deferred: {e}")
             return dependency_closed[number]
 
+        external_dependencies = {d for t in tasks.values() for d in t.depends_on if d not in tasks}
+        external_dependencies.update(d for p in prs.values() for d in Task(0, "", p.body).depends_on
+                                     if d not in tasks and d not in prs)
+        closed_deps = {d for d in sorted(external_dependencies) if is_closed(d)}
+        # Merge scheduling runs first using this pass's verified task snapshot.
+        # Existing sessions continue, but new workers/fixers/planners must not
+        # claim the next free agent/PC opportunity ahead of a ready merge.
+        self._tasks, self._prs = tasks, prs
+        self._known_closed_dependencies = closed_deps
+        self._dependency_lookup = is_closed
+        self._merge_round(draining)
+        worker_paused = paused or self.merge_priority
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         # 1. feedback on open PRs -> fixers (one per task at a time)
         ordered_feedback = sorted(by_pr.items())
         ordered_feedback = [x for x in ordered_feedback if x[0] > st.feedback_cursor] + [x for x in ordered_feedback if x[0] <= st.feedback_cursor]
         inspected_feedback = 0
         for pr_num, task in ordered_feedback:
-            if paused or not budget_left or self.free_slots() <= 0 or inspected_feedback >= 6:
+            if worker_paused or not budget_left or self.free_slots() <= 0 or inspected_feedback >= 6:
                 break
             if task.number in self.active or self.resource_wait_reason(task.number):
                 continue
@@ -338,7 +351,7 @@ class Engine:
         # Existing Needs you tasks get the same bounded prerequisite planning as new blocks.
         # One planner per pass, counted against worker slots and the daily cap.
         blocker_busy = any(t.status == BLOCKED and t.number in self.active for t in tasks.values())
-        if cfg.auto_prerequisites and not blocker_busy and not paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
+        if cfg.auto_prerequisites and not blocker_busy and not worker_paused and st.spent.get(today(), 0.0) < cfg.daily_budget_usd and self.free_slots() > 0:
             import blockers
             import rules as rules_mod
             for t in sorted(tasks.values(), key=lambda t: (st.blocker_checked.get(str(t.number), ""), t.created_at, t.number)):
@@ -357,10 +370,6 @@ class Engine:
                     t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
                     self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None)
                 break
-        external_dependencies = {d for t in tasks.values() for d in t.depends_on if d not in tasks}
-        external_dependencies.update(d for p in prs.values() for d in Task(0, "", p.body).depends_on
-                                     if d not in tasks and d not in prs)
-        closed_deps = {d for d in sorted(external_dependencies) if is_closed(d)}
         rd = readiness(tasks, closed_deps)
         for number in rd.waiting:
             unknown = dependency_errors.intersection(tasks[number].depends_on)
@@ -394,7 +403,7 @@ class Engine:
             rd.ready = free
         spent = st.spent.get(today(), 0.0)
         budget_left = spent < cfg.daily_budget_usd
-        chosen = pick(rd.ready, self.free_slots()) if budget_left and not paused else []
+        chosen = pick(rd.ready, self.free_slots()) if budget_left and not worker_paused else []
         for t in rd.ready:
             if t in chosen:
                 self.last_plan.append(f"run #{t.number} {t.title} on {t.branch}")
@@ -406,6 +415,8 @@ class Engine:
                 rd.waiting[t.number] = "on hold: Fletchery is paused"
             elif paused:
                 rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
+            elif self.merge_priority:
+                rd.waiting[t.number] = "waiting for merge priority; existing jobs continue"
             else:
                 rd.waiting[t.number] = ("daily budget spent" if not budget_left else
                                         "writing paused: workers set to 0" if cfg.max_parallel <= 0 else
@@ -419,15 +430,13 @@ class Engine:
         # Merge eligibility must see this pass's issue dependencies, including on
         # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
-        self._known_closed_dependencies = closed_deps
-        self._dependency_lookup = is_closed
-        self._merge_round(draining)
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
     # ---- merge rounds: keep ready PRs merging without anyone (rounds.py) ----
     def _merge_round(self, draining: bool) -> None:
         import rounds
         cfg, st = self.cfg, self.state
+        self.merge_priority = self.round_job is not None
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
@@ -490,18 +499,6 @@ class Engine:
         self.merge_why = why
         if not ok:
             return
-        pool = self.ctx.agents
-        agent = pool.merger(cfg.merge_agent) if pool is not None else ""
-        if pool is not None and not agent:
-            self.merge_why = "no agent can run a round now (enable a signed-in agent with the merger role that is not at a limit)"
-            return
-        wt_root = getattr(self.ctx.repo, "worktree_root", None)
-        if wt_root and not self.dry_run:
-            try:
-                rounds.checkout_guard(rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
-            except RuntimeError as e:
-                self.merge_why = str(e)
-                return
         limit = max(1, int(cfg.merge_round_max or 12))
         batch = []
         for offset in range(0, len(ready), limit):
@@ -511,6 +508,24 @@ class Engine:
         if not batch:
             self.merge_why = "ready PRs wait for prerequisite PRs to become eligible"
             return
+        self.merge_priority = True
+        pool = self.ctx.agents
+        agent = pool.merger(cfg.merge_agent) if pool is not None else ""
+        if pool is not None and not agent:
+            # Reserve the next slot for a busy merger, but let unrelated workers
+            # proceed when all merger agents are off, signed out or rate-limited.
+            self.merge_priority = any(s.kind in ("claude", "codex", "opencode", "fake")
+                                      and pool.available(s.name, "merger", ignore_capacity=True)
+                                      for s in pool.specs.values())
+            self.merge_why = "no agent can run a round now (enable a signed-in agent with the merger role that is not at a limit)"
+            return
+        wt_root = getattr(self.ctx.repo, "worktree_root", None)
+        if wt_root and not self.dry_run:
+            try:
+                rounds.checkout_guard(rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
+            except RuntimeError as e:
+                self.merge_why = str(e)
+                return
         round_file = cfg.merge_round_file or str(self.state_dir / "merge-round.json")
         try:
             last_no = int(str(rounds.read_file(round_file).get("round", "0")).strip() or 0)
@@ -535,7 +550,9 @@ class Engine:
         from runtime import role_prompt
         cfg, gh, pool = self.cfg, self.ctx.gh, self.ctx.agents
         branch = f"fletchery/merge-round-{n}-{datetime.now(timezone.utc).strftime('%m%d%H%M')}"
-        res = {"round": n, "result": "failed", "at": now(), "key": key, "summary": "", "pr": 0, "agent": agent}
+        started = now()
+        res = {"round": n, "result": "failed", "at": started, "started": started,
+               "key": key, "summary": "", "pr": 0, "agent": agent}
         if pool is not None and agent:
             pool.acquire(agent)
         try:
@@ -604,6 +621,8 @@ class Engine:
         finally:
             if pool is not None and agent:
                 pool.release(agent)
+        # History and retry cooldowns use completion time, even for long rounds.
+        res["at"] = res["ended"] = now()
         rounds.finish_file(round_file, res["result"], (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
         if res["result"] in ("unreachable", "checkout_failed"):
             res["key"] = ""  # try the same PRs again at once on another agent
@@ -966,7 +985,7 @@ class Engine:
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
-                "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "running": dict(self.round_info),
+                "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority, "running": dict(self.round_info),
                                "why": self.merge_why, "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
