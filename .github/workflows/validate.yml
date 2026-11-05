@@ -84,6 +84,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_dispatch_resilience.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_storage.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_storage_integration.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_interruption_results.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_interruption_recovery.py

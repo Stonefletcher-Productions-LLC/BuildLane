@@ -45,6 +45,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.url === '/api/pause') data.held = true;
     if (req.url === '/api/resume') data.held = false;
+    if (req.url === '/api/storage/cleanup') data.storage.requested = true;
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify(req.url === '/api/issue/get' ? {body: 'Missing access', comments: []} : {ok: true}));
   }
@@ -274,6 +275,14 @@ const server = http.createServer(async (req, res) => {
     }
     await page.locator('[data-view="overview"]').click();
     await page.screenshot({path: path.join(out, 'overview-mobile.png'), fullPage: true});
+    data.storage = {enabled: true, retention_hours: 24, requested: false, last: {freed_bytes: 1024 ** 3, retired: [{path: 'old-task'}]}};
+    await page.evaluate(d => render(d), data);
+    assert.match(await page.locator('#storageStatus').innerText(), /1 completed copies retired/);
+    assert.match(await page.locator('#storageStatus').innerText(), /1.0 GiB removed/);
+    await page.locator('#storageStatus button').click();
+    await page.waitForFunction(() => document.querySelector('#storageStatus').textContent.includes('cleanup queued'));
+    assert.equal(requests.at(-1).url, '/api/storage/cleanup');
+    delete data.storage;
     await page.goto(url + '/?only=workers');
     assert.equal(await visible('#workers'), true);
     assert.equal(await visible('.sidebar'), false);

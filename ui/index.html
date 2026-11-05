@@ -713,6 +713,7 @@
       <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
     </div>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
+    <div id="storageStatus" class="emergency-help" hidden></div>
     <section class="emergency-workers" id="emergencyWorkers" aria-labelledby="emergencyHeading" hidden>
       <div class="now-head">
         <h3 id="emergencyHeading">Emergency workers</h3>
@@ -1085,6 +1086,10 @@ function renderEmergencyWorkers(d) {
   else if (!rows.length) rows.push(`<div class="slot free">${esc(e.why || "Standing by for a build or merge failure.")}</div>`);
   $("emergencySlots").innerHTML = rows.join("");
 }
+async function cleanStorage() {
+  try { await post("/api/storage/cleanup"); await refresh(); }
+  catch (e) { alert(e.message); }
+}
 async function setEmergencyWorkers(v) {
   try { await post("/api/settings/save", {changes: {emergency_workers: v}}); await refresh(); }
   catch (e) { alert(e.message); }
@@ -1109,6 +1114,14 @@ function render(d) {
   last = d;
   const ordinary = normalWorkerSessions(d);
   const emergency = emergencyWorkerState(d);
+  const storage = d.storage;
+  $("storageStatus").hidden = !storage;
+  if (storage) {
+    const lastCleanup = storage.last || {};
+    const count = (lastCleanup.retired || []).length;
+    const freed = Number(lastCleanup.freed_bytes || 0) / (1024 ** 3);
+    $("storageStatus").innerHTML = `Storage: ${storage.running ? "checking completed task copies…" : storage.requested ? "cleanup queued for a safe idle opportunity" : count ? `${count} completed copies retired · ${freed.toFixed(1)} GiB removed` : storage.enabled ? "automatic cleanup on" : "automatic cleanup off"}. <button type="button" class="linkbtn" onclick="cleanStorage()">Clean eligible copies</button>${lastCleanup.error ? `<br>${esc(lastCleanup.error)}` : ""}`;
+  }
   const running = ordinary.length;
   const mergeWait = workerMergeWait(d);
   const zeroWorkerTail = emergency.available && emergency.max ? "merging, builds and emergency repairs continue" : "merging and builds carry on";

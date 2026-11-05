@@ -15,12 +15,13 @@ _TASK_CHECKOUT_LOCK = threading.RLock()
 
 
 class Repo:
-    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin", asset_tasks: dict | None = None):
+    def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin", asset_tasks: dict | None = None, thin_text_workers: bool = False):
         self.root = Path(root)
         self.worktree_root = Path(worktree_root)
         self.base = base
         self.remote = remote
         self.asset_tasks = asset_tasks or {}
+        self.thin_text_workers = thin_text_workers
         self.env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
@@ -122,16 +123,38 @@ class Repo:
             path, local_branch = self._task_location(number, slug, branch, state)
             if path.exists():
                 self._assert_owned_checkout(path, local_branch, lease_file)
+                if self.asset_tasks.get(str(number)) and self.git("config", "--bool", "core.sparseCheckout", cwd=path, check=False) == "true":
+                    self.git("sparse-checkout", "disable", cwd=path)
                 return path
             if branch in state["active"] or path.resolve() in self._registered_worktrees():
                 raise RuntimeError("Registered task checkout is missing; prior work and registration are preserved")
             self.worktree_root.mkdir(parents=True, exist_ok=True)
             branches = self.git("branch", "--list", local_branch)
             if branches:
-                self.git("worktree", "add", str(path), local_branch)
+                self._create_task_checkout(number, path, local_branch)
             else:
-                self.git("worktree", "add", "-b", local_branch, str(path), f"{self.remote}/{self.base}")
+                self._create_task_checkout(number, path, local_branch, f"{self.remote}/{self.base}")
             return path
+
+    def _create_task_checkout(self, number: int, path: Path, branch: str, start: str = "") -> None:
+        """Sparse materialization is allowed only in a brand-new, empty text checkout."""
+        small = self.thin_text_workers and not self.asset_tasks.get(str(number))
+        args = ["worktree", "add"] + (["--no-checkout"] if small else [])
+        args += ["-b", branch, str(path), start] if start else [str(path), branch]
+        self.git(*args)
+        if not small:
+            return
+        if path.resolve().parent != self.worktree_root.resolve() or any(p.name != ".git" for p in path.iterdir()):
+            raise RuntimeError("New text checkout is not empty; preserved without changing materialization")
+        extensions = ("uasset", "umap", "blend", "blend1", "fbx", "glb", "png", "jpg", "jpeg", "tga", "tif", "tiff", "exr", "hdr", "wav", "ogg", "mp3", "flac", "mp4", "mov", "zip", "7z", "npy", "npz")
+        patterns = "/*\n" + "".join(f"!/{folder}/**/*.{ext}\n" for folder in ("Art", "Content") for ext in extensions)
+        p = subprocess.run(["git", "sparse-checkout", "set", "--no-cone", "--stdin"], cwd=path,
+                           input=patterns, text=True, capture_output=True, env=self.env, timeout=120)
+        if p.returncode:
+            raise RuntimeError("Cannot configure new text checkout; preserved: " + p.stderr[:400])
+        # Populate a fresh empty index respecting the sparse rules. Never apply
+        # read-tree to an existing task or an artist's generated working files.
+        self.git("read-tree", "-mu", "HEAD", cwd=path)
 
     def ensure_task_checkout(self, number: int, slug: str, branch: str, path: Path,
                              lease_file: str = "", require_clean: bool = False) -> None:
@@ -159,7 +182,7 @@ class Repo:
             attempt = uuid.uuid4().hex[:12]
             replacement = self.worktree_root / f"{number}-{slug}-attempt-{attempt}"
             candidate_branch = f"fletchery/task-{number}-attempt-{attempt}"
-            self.git("worktree", "add", "-b", candidate_branch, str(replacement), f"{self.remote}/{self.base}")
+            self._create_task_checkout(number, replacement, candidate_branch, f"{self.remote}/{self.base}")
             state["preserved"].append({"path": str(path.resolve()), "local_branch": local_branch,
                                        "head": self.head(path), "reason": reason[:4000], "at": now_iso()})
             state["active"][branch] = {"path": str(replacement.resolve()), "local_branch": candidate_branch}
@@ -197,7 +220,7 @@ class Repo:
         else:
             self.worktree_root.mkdir(parents=True, exist_ok=True)
             local = f"fletchery/repair-{number}-{head_sha[:12]}"
-            self.git("worktree", "add", "-b", local, str(path), head_sha)
+            self._create_task_checkout(number, path, local, head_sha)
         return path
 
     def ensure_repair_checkout(self, path: Path, branch: str, head_sha: str,
