@@ -204,6 +204,12 @@ class StorageTests(unittest.TestCase):
         with patch('storage._reparse',side_effect=lambda p: p==self.path or original(p)):
             self.assert_preserved(self.run_maintenance())
 
+    def test_disabled_age_limit_ignores_clock_skew_but_configured_retention_preserves(self):
+        with patch('storage.time.time', return_value=0):
+            result=self.run_maintenance(dry_run=True)
+            self.assertEqual(len(result['eligible']),1,result)
+            self.assert_preserved(self.run_maintenance(retention_hours=24))
+
     def test_retention_keeps_recent_sources(self):
         self.assert_preserved(self.run_maintenance(retention_hours=24))
 
@@ -250,7 +256,8 @@ class StorageTests(unittest.TestCase):
         self.repo.lfs_files=[{"name":"asset.blend","oid":oid,"size":12345}]
         pointer=self.path/"asset.blend"
         pointer.write_bytes(("version https://git-lfs.github.com/spec/v1\noid sha256:"+oid+"\nsize 12345\n").encode())
-        self.assertEqual(len(self.run_maintenance(dry_run=True)["eligible"]),1)
+        result=self.run_maintenance(dry_run=True)
+        self.assertEqual(len(result["eligible"]),1,result)
         pointer.write_bytes(("version https://git-lfs.github.com/spec/v1\noid sha256:"+"b"*64+"\nsize 12345\n").encode())
         self.assert_preserved(self.run_maintenance())
 
