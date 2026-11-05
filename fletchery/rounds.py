@@ -57,7 +57,7 @@ def should_start(cfg, last: dict, held: bool, draining: bool, running: bool, rea
         return False, "merging is paused"
     if not ready:
         return False, f"no PR labelled `{cfg.merge_label or 'ready'}` into {cfg.base_branch}"
-    if last and last.get("result") != "landed" and last.get("key") == key_of(ready) and last.get("at"):
+    if last and last.get("result") not in ("landed", "waiting") and last.get("key") == key_of(ready) and last.get("at"):
         now = now or datetime.now(timezone.utc)
         try:
             at = datetime.fromisoformat(str(last["at"]).replace("Z", "+00:00"))
@@ -95,7 +95,13 @@ def finish_file(path: str, result: str, note: str) -> None:
     d = read_file(path)
     if not d:
         return
-    d["state"] = "done" if result in ("landed", "nothing") else "failed"
+    d["state"] = "waiting" if result == "waiting" else "done" if result in ("landed", "nothing") else "failed"
+    if d["state"] == "waiting":
+        running = [step for step in d.get("steps", []) if step.get("state") == "running"]
+        for step in running:
+            step["state"] = "waiting"
+        if not any(step.get("state") == "waiting" for step in d.get("steps", [])):
+            d.setdefault("steps", []).insert(0, {"name": "Prepare merge checkout", "state": "waiting"})
     if d["state"] == "failed":
         running = [step for step in d.get("steps", []) if step.get("state") in ("running", "waiting")]
         for step in running:
@@ -163,6 +169,10 @@ def worktree_busy(path) -> list[str]:
     return [l.strip() for l in out.splitlines() if l.strip()]
 
 
+class CheckoutBusy(RuntimeError):
+    """A confirmed process or PC lease owns the checkout; defer without blaming a PR."""
+
+
 class CheckoutRecovery(RuntimeError):
     """The failed checkout stays in place; a subsequent round uses next_path."""
     def __init__(self, path: Path, next_path: Path, error: str):
@@ -207,7 +217,7 @@ def checkout_guard(path: Path, lease_file: str = "") -> None:
     from merge import pc_holder
     busy = worktree_busy(path)
     if busy:
-        raise RuntimeError("Merge checkout still owned by running processes: " + ", ".join(busy[:3]))
+        raise CheckoutBusy("Merge checkout still owned by running processes: " + ", ".join(busy[:3]))
     if lease_file:
         # pc_holder's forgiving UI reader intentionally ignores malformed files. Checkout
         # preparation must not interpret unreadable/mid-write lease data as a free PC.
@@ -220,7 +230,7 @@ def checkout_guard(path: Path, lease_file: str = "") -> None:
         if not isinstance(lease, dict):
             raise RuntimeError("Cannot verify the PC heavy lease: invalid lease data")
         if lease.get("token") or pc_holder(lease_file):
-            raise RuntimeError("The PC heavy lease is held; merge checkout preparation waits")
+            raise CheckoutBusy("The PC heavy lease is held; merge checkout preparation waits")
 
 
 def quarantine_checkout(repo, path: Path, reason: str) -> Path:

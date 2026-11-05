@@ -184,14 +184,14 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         gh.set_status(task.number, RUNNING)
     else:
         ctx.log(f"#{task.number} escalated to {agent}")
-    _load_notes(ctx, task)
+    await asyncio.to_thread(_load_notes, ctx, task)
     try:
         await asyncio.to_thread(repo.fetch_base)
         wt = await asyncio.to_thread(repo.worktree, task.number, task.slug, task.branch, cfg.heavy_lease_file)
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
     except Exception as e:
         return _block(ctx, out, f"could not make the worktree: {e}")
-    local_branch = _branch_at(repo, wt, task.branch)
+    local_branch = await asyncio.to_thread(_branch_at, repo, wt, task.branch)
     task.rules = rules_mod.load(wt, cfg.project_root)
     async def fail(why, infra=False):
         return await asyncio.to_thread(_fail, ctx, task, out, wt, agent, why, infra)
@@ -207,23 +207,23 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     if r.output.get("gave_up"):
         return await fail(f"worker gave up: {r.output['gave_up']}")
     await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
-    if repo.dirty(wt):
-        repo.commit_all(wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
-    if not repo.has_commits(wt):
+    if await asyncio.to_thread(repo.dirty, wt):
+        await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
+    if not await asyncio.to_thread(repo.has_commits, wt):
         return await fail("worker made no commits")
     worker_report = r.output
 
     # 2. gates (a failure goes back to the worker once)
-    results = _gates(ctx, task, wt)
+    results = await asyncio.to_thread(_gates, ctx, task, wt)
     if not all(g.passed for g in results):
         fix_prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch,
                                  freeze=freeze) + "\n\n## Gate failures to fix\n" + _gate_output(results)
         r2 = await rt.run("worker", fix_prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r2)
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
-        if repo.dirty(wt):
-            repo.commit_all(wt, f"Fletchery: #{task.number} gate fixes")
-        results = _gates(ctx, task, wt)
+        if await asyncio.to_thread(repo.dirty, wt):
+            await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} gate fixes")
+        results = await asyncio.to_thread(_gates, ctx, task, wt)
         if not all(g.passed for g in results):
             return await fail("gates still fail after one fix pass:\n" + gates_mod.summary(results))
 
@@ -235,9 +235,9 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         r3 = await rt.run("worker", back, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r3)
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
-        if repo.dirty(wt):
-            repo.commit_all(wt, f"Fletchery: #{task.number} review fixes")
-        results = _gates(ctx, task, wt)
+        if await asyncio.to_thread(repo.dirty, wt):
+            await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} review fixes")
+        results = await asyncio.to_thread(_gates, ctx, task, wt)
         if not all(g.passed for g in results):
             return await fail("gates fail after the review fixes:\n" + gates_mod.summary(results))
         review = await _review(ctx, task, wt, out, agent, issue)
@@ -256,7 +256,7 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         pr = gh.create_pr(task.branch, cfg.base_branch, f"#{task.number} {task.title}", body, [graph.PREFIX, "ready"],
                           cfg.assignee or None)
     except Exception as e:
-        return _requeue_or_block(ctx, task, out, f"push or PR failed: {e}")
+        return await asyncio.to_thread(_requeue_or_block, ctx, task, out, f"push or PR failed: {e}")
     gh.set_status(task.number, PR)
     out.attempts.append({"agent": agent or "", "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": True})
     by = f" Written by {agent}, reviewed by {out.reviewer}." if pool is not None and pool.multi else ""
@@ -296,26 +296,29 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
     if pool is not None and agent is None:
         out.result, out.detail = "agent_paused", "no agent free to fix it"
         return out
-    _load_notes(ctx, task)
     if attempt > cfg.fixer_attempts:
         gh.set_status(task.number, BLOCKED)
         gh.comment(task.number, f"Fletchery: PR #{pr.number} came back {attempt - 1} times; stopping. Last feedback:\n\n"
                                 + "\n".join(f"> {f.text[:300]}" for f in feedback))
         out.detail = "fixer attempts exhausted"
         return out
-    await asyncio.to_thread(repo.fetch_base)
-    wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
-    await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
-    task.rules = rules_mod.load(wt, cfg.project_root)
-    fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
-    rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")
-    out.agent = agent or ""
+    # Reserve before the first await: concurrent fixes must see this capacity
+    # during checkout setup, and setup failures must release it as well.
     if pool is not None:
         pool.acquire(agent)
-        ctx.task_agents[str(task.number)] = agent
-        if pool.multi:
-            ctx.log(f"PR #{pr.number} fix attempt {attempt} by {agent}")
     try:
+        await asyncio.to_thread(_load_notes, ctx, task)
+        await asyncio.to_thread(repo.fetch_base)
+        wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
+        await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
+        task.rules = rules_mod.load(wt, cfg.project_root)
+        fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
+        rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")
+        out.agent = agent or ""
+        if pool is not None:
+            ctx.task_agents[str(task.number)] = agent
+            if pool.multi:
+                ctx.log(f"PR #{pr.number} fix attempt {attempt} by {agent}")
         return await _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent)
     finally:
         if pool is not None:
@@ -345,7 +348,7 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
 
 async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcome:
     cfg, gh, repo = ctx.cfg, ctx.gh, ctx.repo
-    local_branch = _branch_at(repo, wt, task.branch)
+    local_branch = await asyncio.to_thread(_branch_at, repo, wt, task.branch)
     fb += f"\n\nThe local repair branch is `{local_branch}`. The controller alone pushes the checked fix to existing PR branch `{pr.head}`; do not push or recreate its branch."
     prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
                          feedback=fb, freeze=_freeze_text(cfg))
@@ -357,9 +360,9 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}) could not fix PR #{pr.number}: {out.detail}")
         return out
     await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
-    if repo.dirty(wt):
-        repo.commit_all(wt, f"Fletchery: #{task.number} fix after lane feedback")
-    results = _gates(ctx, task, wt)
+    if await asyncio.to_thread(repo.dirty, wt):
+        await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} fix after lane feedback")
+    results = await asyncio.to_thread(_gates, ctx, task, wt)
     if not all(g.passed for g in results):
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
@@ -463,7 +466,7 @@ async def _review(ctx: Context, task: Task, wt: Path, out: Outcome, worker: str 
     """A fresh, read-only session. With several agents the reviewer comes from another vendor than the worker
     (agents.AgentPool.reviewer_for), so no model marks its own homework."""
     cfg, pool = ctx.cfg, ctx.agents
-    prompt = role_prompt("reviewer", task.rules, project=cfg.name, issue=issue or _issue_text(task), branch=_branch_at(ctx.repo, wt, task.branch), base=cfg.base_branch)
+    prompt = role_prompt("reviewer", task.rules, project=cfg.name, issue=issue or _issue_text(task), branch=await asyncio.to_thread(_branch_at, ctx.repo, wt, task.branch), base=cfg.base_branch)
     failed: dict[str, str] = {}  # reviewers whose session failed to run on this task -> why
     while True:
         name = ""
@@ -517,8 +520,13 @@ def _requeue_or_block(ctx: Context, task: Task, out: Outcome, why: str) -> Outco
     """Infrastructure failures (a crashed session, a push that bounced) are not verdicts on the task: back to the
     queue once, blocked the second time so a broken setup cannot burn budget in a loop."""
     marker = "Fletchery requeued"
-    prior = sum(1 for c in getattr(ctx.gh, "comments", {}).get(task.number, []) if c.startswith(marker)) \
-        if hasattr(ctx.gh, "comments") else 0
+    try:
+        # Use the same durable interface in production and tests. GitHub's real
+        # client has no in-memory .comments dictionary, and retries survive restart.
+        thread = ctx.gh.issue_thread(task.number)
+        prior = sum(1 for c in thread.get("comments", []) if str(c.get("body", "")).startswith(marker))
+    except Exception as e:
+        return _block(ctx, out, why + f"\n\n(could not verify infrastructure retry history: {e}; not retrying)")
     if prior >= 1:
         return _block(ctx, out, why + "\n\n(second infrastructure failure; not retrying)")
     ctx.gh.set_status(task.number, QUEUED)

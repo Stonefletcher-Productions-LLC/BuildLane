@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
+import threading
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -13,6 +16,9 @@ import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task, readiness, pick
 from github import PullRequest, Feedback
 from pipeline import Context, Outcome, fix_pr, run_task
+
+
+_STATE_SAVE_LOCK = threading.RLock()
 
 
 @dataclass
@@ -49,7 +55,22 @@ class State:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.__dict__, indent=2), encoding="utf-8")
+        with _STATE_SAVE_LOCK:
+            # Serialize before touching the previous checkpoint. Unique same-directory
+            # files also keep overlapping UI/engine saves from sharing a temp name.
+            payload = json.dumps(self.__dict__, indent=2)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                                 prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
 
 
 def today() -> str:
@@ -529,6 +550,10 @@ class Engine:
                 res["result"] = "unreachable"
                 pool.pause(agent, 360, f"model unreachable: {(r.error or '')[:160]}", shared=False)
                 pool.accounts.setdefault(agent, {})["ok"] = False
+        except rounds.CheckoutBusy as e:
+            # A reservation can appear while fetch is running. This is a normal
+            # wait, not a broken PR/harness or a 45-minute failed-round backoff.
+            res.update(result="waiting", summary=str(e), key="")
         except rounds.CheckoutRecovery as e:
             rounds.start_file(round_file, n, branch, str(e.path), agent or "claude", batch, cfg.base_branch)
             res.update(result="checkout_failed", summary=str(e), key="", worktree=str(e.path), next_worktree=str(e.next_path))
@@ -699,13 +724,16 @@ class Engine:
             except RuntimeError:
                 gh.write_status(text)
             else:
+                self._status_pending = text
                 previous = getattr(self, "_status_job", None)
                 if previous is None or previous.done():
                     async def send_status():
-                        try:
-                            await asyncio.to_thread(gh.write_status, text)
-                        except Exception as e:
-                            self.ctx.log(f"status issue update deferred: {e}")
+                        while self._status_pending is not None:
+                            pending, self._status_pending = self._status_pending, None
+                            try:
+                                await asyncio.to_thread(gh.write_status, pending)
+                            except Exception as e:
+                                self.ctx.log(f"status issue update deferred: {e}")
                     self._status_job = aloop.create_task(send_status())
             (self.state_dir / "status.md").parent.mkdir(parents=True, exist_ok=True)
             (self.state_dir / "status.md").write_text(text, encoding="utf-8")
