@@ -1210,9 +1210,9 @@ function render(d) {
                    failed: "didn't land", crashed: "crashed", limited: "stopped at its agent's limit", interrupted: "was interrupted", stopped: "stopped", waiting: "was deferred"}[previous.result] || esc(previous.result || "finished");
       const total = typeof previous.duration_seconds === "number" ? durationText(previous.duration_seconds) : durationText((Date.parse(previous.ended) - Date.parse(previous.started)) / 1000);
       const meta = [total ? `${total} total` : "", previous.ended ? `ended ${clockTime(previous.ended)}` : ""].filter(Boolean).join(" · ");
-      const lastLine = previous.round ? `<details class="mauto-last round-history" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Previous round ${esc(previous.round)} ${res}${total ? ` · ${esc(total)} total` : ""}</summary>${meta ? `<p class="history-time">${esc(meta)}</p>` : ""}<p>${esc(previous.summary || previous.note || "No additional details.")}</p>${previous.steps && previous.steps.length ? stepsHtml(previous.steps, "Previous round steps") : ""}</details>` : "";
+      const lastLine = previous.round ? `<details class="mauto-last round-history" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Previous round ${esc(previous.round)} ${res}${total ? ` · ${esc(total)} total` : ""}</summary>${meta ? `<p class="history-time">${esc(meta)}</p>` : ""}<p>${esc(previous.summary || previous.note || "No additional details.")}</p>${previous.stop_reason ? `<p><b>Stopped:</b> ${esc(previous.stop_reason)}</p>` : ""}${previous.steps && previous.steps.length ? stepsHtml(previous.steps, "Previous round steps") : ""}</details>` : "";
       const btns = ma && ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
-        (!running && !ma.held ? `<button type="button" data-merge-now="1">Merge now</button>` : "") + `</span>` : "";
+        (!running && !ma.held ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
     const currentRound = active ? mv.round : running ? running.round : "";

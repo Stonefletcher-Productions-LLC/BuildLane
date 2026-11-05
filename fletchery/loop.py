@@ -42,6 +42,7 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
+    merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
     merge_held: bool = False                                  # Pause merging in the Merge section
     repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
     emergency_repairs: dict = field(default_factory=dict)      # task -> build/merge evidence; repair classification survives restart
@@ -120,6 +121,20 @@ class Engine:
         self.state_dir = state_dir
         self.state = State.load(state_dir / "state.json")
         self.dry_run = dry_run
+        # Migrate old interrupted/incomplete-only exclusions without touching
+        # confirmed failed heads or spending another repair attempt.
+        import rounds
+        corrected = []
+        for number, entry in list(self.state.merge_excluded.items()):
+            if rounds.deferred(entry):
+                corrected.append({"pr": int(number), **entry})
+                del self.state.merge_excluded[number]
+        if corrected:
+            current = [item for item in corrected if item.get("round") == self.state.merge_last.get("round")]
+            if current:
+                self.state.merge_last.setdefault("deferred", []).extend(current)
+            if not dry_run:
+                self.state.save(state_dir / "state.json")
         self.last_plan: list[str] = []  # what a dry run would have done
         self.snapshot: dict = {}        # the last pass, structured, for the dashboard
         self.next_pass_at: str = ""
@@ -501,6 +516,20 @@ class Engine:
                 st.save(self.state_dir / "state.json")
             except Exception as e:
                 self.ctx.log(f"merge rounds: could not file prior merge failure: {type(e).__name__}: {e}")
+        resume = st.merge_resume
+        if resume and not resume.get("authorized"):
+            self.merge_priority = False
+            self.merge_why = "Merge interrupted; saved progress waits for Resume / Merge now. " + str(resume.get("stop_reason", ""))[:300]
+            return
+        wait_for = resume.get("wait_for") if resume else None
+        if wait_for:
+            from recovery import ready_signal
+            if not ready_signal(self.state_dir, wait_for):
+                self.merge_priority = False
+                self.merge_why = "Saved round waits for " + str(wait_for.get("name") or "required acceptance") + " to finish"
+                return
+            resume.pop("wait_for", None)
+            st.save(self.state_dir / "state.json")
         if self.round_job is not None:
             self.merge_why = "a round is running"
             return
@@ -549,11 +578,17 @@ class Engine:
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
             self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")
             return
+        if resume:
+            wanted = {int(n) for n in resume.get("prs", {})}
+            ready = [p for p in ready if p.number in wanted]
+            if {p.number for p in ready} != wanted:
+                self.merge_why = "Saved merge candidate waits for its recorded PRs/dependencies to be eligible; preserved progress is unchanged"
+                return
         ok, why = rounds.should_start(cfg, st.merge_last, st.merge_held, draining, False, ready)
         self.merge_why = why
         if not ok:
             return
-        limit = max(1, int(cfg.merge_round_max or 12))
+        limit = len(ready) if resume else max(1, int(cfg.merge_round_max or 12))
         batch = []
         for offset in range(0, len(ready), limit):
             batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
@@ -576,7 +611,7 @@ class Engine:
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
         if wt_root and not self.dry_run:
             try:
-                rounds.checkout_guard(rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
+                rounds.checkout_guard(Path(resume["checkpoint"]["worktree"]) if resume else rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
             except RuntimeError as e:
                 self.merge_why = str(e)
                 return
@@ -585,11 +620,11 @@ class Engine:
             last_no = int(str(rounds.read_file(round_file).get("round", "0")).strip() or 0)
         except ValueError:
             last_no = 0
-        n = max(st.merge_round_no, last_no) + 1
+        n = int(resume["round"]) if resume else max(st.merge_round_no, last_no) + 1
         self.last_plan.append(f"merge round {n}: " + ", ".join(f"#{p.number}" for p in batch) + (f" on {agent}" if agent else ""))
         if self.dry_run:
             return
-        st.merge_round_no = n
+        st.merge_round_no = max(st.merge_round_no, n)
         st.save(self.state_dir / "state.json")
         self.round_info = {"round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
         self.merge_why = "a round is running"
@@ -603,16 +638,27 @@ class Engine:
         from pipeline import _LimitGuard, Limited
         from runtime import role_prompt
         cfg, gh, pool = self.cfg, self.ctx.gh, self.ctx.agents
-        branch = f"fletchery/merge-round-{n}-{datetime.now(timezone.utc).strftime('%m%d%H%M')}"
+        resume = dict(self.state.merge_resume) if self.state.merge_resume.get("authorized") else {}
+        branch = resume["checkpoint"]["branch"] if resume else f"fletchery/merge-round-{n}-{datetime.now(timezone.utc).strftime('%m%d%H%M')}"
         started = now()
         res = {"round": n, "result": "failed", "at": started, "started": started,
                "key": key, "summary": "", "pr": 0, "agent": agent}
         if pool is not None and agent:
             pool.acquire(agent)
         try:
-            rounds.start_file(round_file, n, branch, str(rounds.checkout_path(self.ctx.repo)), agent or "claude", batch, cfg.base_branch)
-            wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch, cfg.heavy_lease_file)
-            rounds.start_file(round_file, n, branch, str(wt), agent or "claude", batch, cfg.base_branch)
+            if resume:
+                from recovery import resume_worktree
+                wt = await asyncio.to_thread(resume_worktree, self.ctx.repo, resume["checkpoint"], cfg.heavy_lease_file)
+                progress = dict(resume.get("progress") or rounds.read_file(round_file))
+                progress.update(round=str(n), branch=branch, worktree=str(wt), state="running", result="", ended="",
+                                updated=now(), owner=f"Fletchery ({agent or 'claude'})",
+                                note="Resuming saved candidate; verify fingerprints and continue unfinished acceptance.")
+                rounds.write_file(round_file, progress)
+            else:
+                rounds.start_file(round_file, n, branch, str(rounds.checkout_path(self.ctx.repo)), agent or "claude", batch, cfg.base_branch)
+                wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch, cfg.heavy_lease_file)
+                rounds.start_file(round_file, n, branch, str(wt), agent or "claude", batch, cfg.base_branch)
+            res["worktree"] = str(wt)
             rules = rules_mod.load(wt, cfg.project_root)
             flags_cfg = [f for f in (cfg.merge_flags or []) if f.get("paths") and f.get("flag")]
 
@@ -633,12 +679,23 @@ class Engine:
                                  round_file=round_file, validation=validation, additions=rounds.notes_text(rules, cfg) or "(none: use the "
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
+            if resume:
+                prompt += ("\n\n## Explicitly authorized interrupted-round recovery\n"
+                           "The user authorized continuing final acceptance after the PC reservation clears. "
+                           "Work IN THIS SAVED CHECKOUT on its existing branch; do not reset, clean, prune, recreate the batch or remerge unchanged PRs. "
+                           "Read the recorded progress and Saved/MergeRound" + str(n) + " receipts first. "
+                           "Verify source/content/external-input and binary fingerprints before reusing successful checks. "
+                           "Only rerun checks invalidated by an actual input change; record the reason. Compare current PR heads and base against the checkpoint; "
+                           "reconcile differences safely and revalidate affected checks, rather than certifying mismatched evidence. "
+                           "Keep unverified PRs deferred, never broken. Complete the remaining named visual/runtime and packaged checks, then land. "
+                           "A new physical Escape/user stop revokes this continuation and must return interrupted with an updated checkpoint.\n"
+                           + json.dumps(resume, indent=2))
             rt = pool.runtime(agent) if pool is not None and agent else self.ctx.runtime
             guard = _LimitGuard(rt, self.ctx, 0, agent or "")
             r = await guard.run("merger", prompt, wt, cfg.merge_budget_usd, cfg.merge_max_turns)
             self._spend(agent or "claude", r.cost_usd)
             for _ in range(2):  # stopped part way with a progress note: carry on in the same session
-                if r.ok or not r.session_id or "no JSON answer" not in (r.error or "") or not hasattr(rt, "command"):
+                if r.ok or rounds.operator_interruption(r.error or "") or not r.session_id or "no JSON answer" not in (r.error or "") or not hasattr(rt, "command"):
                     break
                 self.ctx.log(f"merge round {n}: {agent} stopped before the end; asking it to carry on")
                 rt.resume_session = r.session_id
@@ -648,11 +705,23 @@ class Engine:
                     rt.resume_session = ""
                 self._spend(agent or "claude", r.cost_usd)
             out = r.output or {}
-            res["result"] = rounds.result_of(out) if r.ok else "failed"
+            res["result"] = rounds.result_of(out) if r.ok else ("interrupted" if rounds.operator_interruption(r.error or "") else "failed")
+            res["stop_reason"] = str(out.get("stop_reason") or out.get("gave_up") or r.error or "")[:7000]
             res["pr"] = int(out.get("landed_pr") or 0)
             res["summary"] = (out.get("summary") or out.get("gave_up") or r.error or "")[:600]
             res["merged"] = [int(x) for x in out.get("merged") or [] if str(x).isdigit()]
-            res["left_out"] = out.get("left_out") or []
+            left_out = [item for item in out.get("left_out") or [] if isinstance(item, dict)]
+            res["deferred"] = [item for item in left_out if rounds.deferred(item)] + list(out.get("deferred") or [])
+            res["left_out"] = [item for item in left_out if not rounds.deferred(item)]
+            if res["result"] == "interrupted":
+                progress = rounds.read_file(round_file)
+                checkpoint = out.get("checkpoint") or {"worktree": str(wt), "branch": branch, "head": ""}
+                res["resume_authorized"] = not rounds.operator_interruption(res["stop_reason"])
+                self.state.merge_resume = {"round": n, "authorized": res["resume_authorized"], "stop_reason": res["stop_reason"],
+                    "checkpoint": checkpoint, "prs": {str(p.number): p.head_sha for p in batch
+                        if p.number not in {int(item["pr"]) for item in res["left_out"] if str(item.get("pr", "")).isdigit()}},
+                    "progress": progress}
+                res["checkpoint"] = checkpoint
             if not r.ok and clis.unreachable(r.error or "") and pool is not None and agent:
                 # the model itself can't be reached: not this round's fault. Take the agent out until its next
                 # sign-in check and run the round again on the next agent, without waiting out mergeRetryMinutes.
@@ -677,7 +746,9 @@ class Engine:
                 pool.release(agent)
         # History and retry cooldowns use completion time, even for long rounds.
         res["at"] = res["ended"] = now()
-        rounds.finish_file(round_file, res["result"], (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
+        rounds.finish_file(round_file, res["result"],
+                           (res.get("stop_reason", "") + " " + res["summary"]) if res["result"] == "interrupted" else
+                           (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
         if res["result"] in ("unreachable", "checkout_failed"):
             res["key"] = ""  # try the same PRs again at once on another agent
             self.wake()
@@ -687,6 +758,11 @@ class Engine:
             p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
             if p is not None:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
+        if resume and res["result"] in ("landed", "nothing"):
+            self.state.merge_resume = {}
+        elif resume and res["result"] in ("failed", "crashed", "checkout_failed"):
+            self.state.merge_resume["authorized"] = False
+            self.state.merge_resume["stop_reason"] = res.get("stop_reason") or res["summary"]
         self.state.merge_last = res
         self.state.save(self.state_dir / "state.json")
         if res["result"] in ("failed", "crashed", "checkout_failed"):
@@ -707,10 +783,52 @@ class Engine:
         day = st.spent_by_agent.setdefault(today(), {})
         day[agent] = round(day.get(agent, 0.0) + usd, 4)
 
+    def recover_interrupted(self, data: dict) -> dict:
+        """Adopt an older saved round after explicit operator recovery authorization."""
+        import rounds
+        from recovery import resume_worktree
+        last = self.state.merge_last
+        if self.round_job is not None or int(data.get("round", -1)) != int(last.get("round", -2)):
+            raise ValueError("Recovery must name the current stopped round and cannot replace an active merge")
+        reason = str(data.get("stop_reason", ""))
+        if not rounds.operator_interruption(reason):
+            raise ValueError("Recovery requires the actual recorded operator interruption reason")
+        checkpoint = data.get("checkpoint") or {}
+        resume_worktree(self.ctx.repo, checkpoint)  # read-only metadata; heavy work still waits for the lease
+        deferred = list({int(item["pr"]): item for item in list(last.get("left_out", [])) + list(last.get("deferred", []))
+                         if rounds.deferred(item)}.values())
+        numbers = {int(item["pr"]) for item in deferred}
+        heads = {str(n): str(h) for n, h in (data.get("prs") or {}).items()}
+        if not numbers or {int(n) for n in heads} != numbers or any(not re.fullmatch(r"[a-f0-9]{40}", h) for h in heads.values()):
+            raise ValueError("Recovery PR heads must match exactly the stopped round's deferred PRs")
+        if any(item.get("head") and item["head"] != heads[str(item["pr"])] for item in deferred):
+            raise ValueError("Recovery heads differ from the recorded deferred heads")
+        progress = data.get("progress") or {}
+        if str(progress.get("round")) != str(last["round"]) or progress.get("branch") != checkpoint["branch"]:
+            raise ValueError("Recovery progress does not match the stopped round and branch")
+        wait_for = data.get("wait_for") or {}
+        if wait_for and not re.fullmatch(r"[a-f0-9]{32}", str(wait_for.get("request_id", ""))):
+            raise ValueError("External acceptance needs a unique recovery request id")
+        last.update(result="interrupted", stop_reason=reason, resume_authorized=True, key="", checkpoint=checkpoint,
+                    deferred=deferred, left_out=[item for item in last.get("left_out", []) if not rounds.deferred(item)])
+        self.state.merge_resume = {"round": last["round"], "authorized": True, "stop_reason": reason,
+                                  "checkpoint": checkpoint, "prs": heads, "progress": progress, "wait_for": wait_for}
+        for number in numbers:
+            old = self.state.merge_excluded.get(str(number))
+            if old and rounds.deferred(old):
+                del self.state.merge_excluded[str(number)]
+        self.state.save(self.state_dir / "state.json")
+        self.wake()
+        return {"round": last["round"], "resume_authorized": True, "message": "Saved round queued; heavy work waits for the PC reservation."}
+
     def merge_now(self) -> None:
         """Try the same PRs again now, without waiting out mergeRetryMinutes."""
         if self.state.merge_last:
             self.state.merge_last["key"] = ""
+            self.state.merge_last["resume_authorized"] = True
+        if self.state.merge_resume:
+            self.state.merge_resume["authorized"] = True
+        self.state.save(self.state_dir / "state.json")
         self.wake()
 
     def hold_merging(self, on: bool) -> None:
@@ -1061,7 +1179,7 @@ class Engine:
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
                 "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority, "running": dict(self.round_info),
-                               "why": self.merge_why, "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
+                               "why": self.merge_why, "resume": dict(st.merge_resume), "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],
                 "watch": {"on": bool(self.watcher), "source": getattr(getattr(self.watcher, "source", None), "label", ""),

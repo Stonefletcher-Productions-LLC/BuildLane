@@ -249,6 +249,14 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 ## Merge rounds
 
+Recoverable non-operator interruptions automatically queue their saved checkpoint and wait for resources. An operator interruption (including physical Escape during computer control) pauses the saved round until an explicit **Resume saved round / Merge now** request. It does not mark untested PRs broken, consume their repair attempts, or file a code-failure issue. The stop reason remains visible alongside the summary. Confirmed compile/test failures still keep their exact heads excluded, even when another part of the round is interrupted.
+
+An explicitly queued recovery can wait for another project's final acceptance receipt, bound to a unique request id. A short PC-lease gap or stale completion receipt does not start it early.
+
+On startup, legacy exclusions that only describe interrupted or incomplete acceptance become deferred; confirmed failures remain excluded. The authenticated local recovery API can adopt an older interrupted candidate after validating its round, branch, full commit and exact deferred PR set.
+
+A saved checkpoint records the real candidate path, branch, full commit, PR heads and completed progress. Resumption waits for the normal PC reservation and verifies checkout registration, ownership, branch and commit without resetting or cleaning generated files. The merger must verify source/content/external-input/binary fingerprints before reusing successful checks and continue only the remaining acceptance; changed inputs require the affected checks again.
+
 Ready merges take priority over normal workers, fixers and prerequisite planners. The independently enabled emergency slot can still repair build/merge failures. Existing jobs finish normally;
 when the PC reservation clears, the merger gets the next opportunity. New writing resumes when no eligible
 merge is pending or running. Pausing/disabling merging, unresolved dependencies, failed-round cooldowns and

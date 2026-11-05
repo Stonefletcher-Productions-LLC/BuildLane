@@ -59,10 +59,24 @@ PRs labelled `{label}` into `{base}`, oldest first:
 
 # Your answer
 
-Exactly this JSON, no prose outside it: `state` ("landed" when the round PR merged, "nothing" when no PR could be
-merged, "failed" when you stopped part way), `landed_pr` (the round PR's number, or 0), `merged` (the PR numbers that
-landed), `left_out` (a list of `{"pr": N, "why": "..."}`), `summary` (what you merged, fixed and ran, in a few
-sentences), and `gave_up` only if you stopped early (why).
+Exactly this JSON, no prose outside it: `state` ("landed" when the round PR merged, "nothing" when no eligible PR
+could be merged, "failed" for a confirmed validation or orchestration failure, "interrupted" when the user/operator
+stopped the session), `landed_pr` (the round PR's number, or 0), `merged` (the PR numbers that landed), `left_out`
+(only confirmed broken PR heads, each `{"pr": N, "why": "actionable failure evidence", "disposition": "failed"}`),
+and `summary` (what you merged, fixed and ran, in a few sentences). If stopped early, report the actual reason in
+`stop_reason` and `gave_up`; do not hide it behind a summary of passing checks.
+
+Put healthy but unattempted PRs, interrupted acceptance and incomplete acceptance in the optional `deferred` array,
+each `{"pr": N, "why": "remaining verification", "disposition": "deferred"}`. An interrupted or incomplete check
+is not evidence that its PR is broken. Preserve genuine compile/test failures separately even in an interrupted round.
+When preserving a candidate, include optional `checkpoint`: `{"worktree": "actual absolute saved path", "branch":
+"actual branch", "head": "full actual HEAD"}`. Preserve existing generated assets, reports and progress. Do not
+invent checkpoint paths or claim validation can be reused before checking its source/content fingerprints.
+
+If Computer Use reports a physical Escape or the user/operator stops automation, stop the session without restarting
+that automation. Report `interrupted`; another merger must wait for explicit user authorization to resume. Preserve
+completed checks and record remaining acceptance as pending, not failed. Never reclassify interrupted PRs as defects
+merely because this round did not land.
 
 # Blender: official Blender Lab MCP required
 

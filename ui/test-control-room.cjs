@@ -151,6 +151,17 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('.round-status').innerText(), /Build[\s\S]*failed/);
     assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
+    data.merge_auto.running = {};
+    data.merge_auto.last = {round: 20, result: 'interrupted', summary: 'Machine checks passed', stop_reason: 'Physical Escape stopped acceptance'};
+    data.merge_auto.resume = {round: 20, authorized: false};
+    data.merge_view = {active: false, state: 'idle', previous: {round: 20, result: 'interrupted', steps: [{name: 'Build', state: 'done'}, {name: 'Acceptance', state: 'waiting'}]}};
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.match(await page.locator('[data-merge-now]').innerText(), /Resume saved round/);
+    await page.locator('.round-history summary').click();
+    assert.match(await page.locator('.round-history').innerText(), /Physical Escape stopped acceptance/);
+    assert.doesNotMatch(await page.locator('.round-history summary').innerText(), /failed/);
+    delete data.merge_auto.resume;
+    data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
     // Worker availability explains merge scheduling, without presenting it as a manual pause.
     data.live = [];
     data.merge_auto.priority = true;
