@@ -125,8 +125,8 @@ class InterruptedRoundTests(unittest.IsolatedAsyncioTestCase):
     async def test_external_completion_waits_through_lease_gaps_and_ignores_stale_receipt(self):
         engine, gh, rt = await self.stopped()
         wait={'name':'Hearth final acceptance','request_id':'a'*32}
-        engine.state.merge_resume['wait_for']=wait
         engine.merge_now()
+        engine.state.merge_resume['wait_for']=wait
         before=len(rt.calls)
         await engine.once()
         self.assertEqual(len(rt.calls),before)
@@ -138,8 +138,72 @@ class InterruptedRoundTests(unittest.IsolatedAsyncioTestCase):
         receipt.write_text(json.dumps({'request_id':'a'*32,'complete':True}))
         self.assertTrue(ready_signal(engine.state_dir,wait))
 
+    async def test_expired_handoff_resumes_saved_candidate_with_unverified_evidence(self):
+        engine, gh, rt = await self.stopped()
+        engine.merge_now()
+        engine.state.merge_resume['wait_for'] = {'name':'Hearth', 'request_id':'a'*32,
+                                                'started_at':'2000-01-01T00:00:00+00:00'}
+        saved = Path(engine.state.merge_resume['checkpoint']['worktree'])
+        rt.script[('merger',0)] = {'state':'landed','merged':[13], 'summary':'Verified directly'}
+        with patch('recovery.resume_worktree',return_value=saved), patch('rounds.prepare_worktree',side_effect=AssertionError('no reset')):
+            await engine.once()
+        prompts = [call[2] for call in rt.calls if call[0]=='merger']
+        self.assertIn('UNCONFIRMED', prompts[-1])
+        self.assertIn('do not treat this timeout as a passing check', prompts[-1])
+        self.assertEqual(engine.state.merge_last['result'],'landed')
+
+    async def test_expired_handoff_still_waits_for_real_machine_owner(self):
+        engine, gh, rt = await self.stopped()
+        engine.merge_now()
+        engine.state.merge_resume['wait_for'] = {'name':'Hearth','request_id':'a'*32,
+                                                'started_at':'2000-01-01T00:00:00+00:00'}
+        lease=Path(engine.cfg.project_root)/'heavy.json'
+        lease.write_text(json.dumps({'token':'current-owner','purpose':'Native validation'}))
+        engine.cfg.heavy_lease_file=str(lease)
+        before=len(rt.calls)
+        await engine.once()
+        self.assertEqual(len(rt.calls),before)
+        self.assertIn('lease',engine.merge_why)
+        self.assertFalse(engine.state.merge_resume.get('wait_for'))
+        self.assertFalse(engine.state.merge_resume['handoff_verification']['verified'])
+
+    async def test_merge_now_releases_handoff_but_does_not_claim_acceptance(self):
+        engine, gh, rt = await self.stopped()
+        engine.state.merge_resume['wait_for']={'name':'Hearth','request_id':'a'*32}
+        engine.merge_now()
+        self.assertFalse(engine.state.merge_resume.get('wait_for'))
+        self.assertIn('unconfirmed',engine.state.merge_resume['progress']['note'])
+        self.assertFalse(engine.state.merge_resume['handoff_verification']['verified'])
+
+    async def test_deadline_survives_restart_without_authorizing_operator_stop(self):
+        engine, gh, rt = await self.stopped()
+        from recovery import handoff_status
+        wait={'name':'Hearth','request_id':'a'*32}
+        self.assertFalse(handoff_status(engine.state_dir,wait)[0])
+        engine.state.merge_resume['wait_for']=wait
+        engine.state.save(engine.state_dir/'state.json')
+        restarted=Engine(engine.ctx,engine.state_dir)
+        self.assertEqual(restarted.state.merge_resume['wait_for']['started_at'],wait['started_at'])
+        self.assertFalse(restarted.state.merge_resume['authorized'])
+
+
 
 class SavedCheckoutGuardTests(unittest.TestCase):
+    def test_handoff_deadline_is_exact_and_missing_signal_never_becomes_a_pass(self):
+        from datetime import datetime, timezone, timedelta
+        from recovery import handoff_status
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            started=datetime(2026,11,5,tzinfo=timezone.utc)
+            wait={'name':'External review','request_id':'a'*32}
+            self.assertFalse(handoff_status(root,wait,started)[0])
+            self.assertFalse(handoff_status(root,wait,started+timedelta(seconds=899))[0])
+            ready,reason=handoff_status(root,wait,started+timedelta(seconds=900))
+            self.assertTrue(ready)
+            self.assertIn('UNCONFIRMED',reason)
+            self.assertEqual(wait['started_at'],started.isoformat())
+
     def test_registered_dirty_candidate_is_read_only_and_keeps_generated_files(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
