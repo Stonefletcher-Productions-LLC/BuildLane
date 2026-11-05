@@ -1277,7 +1277,7 @@ function render(d) {
   }
   const empty = {pr: "None yet. A worker's PR appears here once it is opened.", blocked: "Nothing needs you."};
   // the Merge column: one row per finished PR, in the order that frees the most waiting tasks
-  const mergeRows = d.merge || null;
+  const mergeRows = Array.isArray(d.merge) ? d.merge : (d.merge_auto || d.merge_view ? [] : null);
   if (mergeRows) {
     cols.pr = [];
     const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
@@ -1356,7 +1356,7 @@ function render(d) {
       const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
       lastGroup = g;
       return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
-    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+    }).join("") : `<li class="empty">${Array.isArray(d.merge) ? "Nothing waiting to merge." : "GitHub PR queue is not available yet. Local merge progress is shown above."}</li>`;
   }
   function mergeRow(r, currentRound, membershipVerified) {
     const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;

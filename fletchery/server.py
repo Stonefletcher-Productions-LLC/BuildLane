@@ -37,6 +37,7 @@ rebinding)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import threading
@@ -50,6 +51,25 @@ from live import ledger_tail
 HERE = Path(__file__).parent
 UI = HERE.parent / "ui"
 MAX_BODY = 64 * 1024
+
+
+def dashboard_thread_priority() -> None:
+    """Keep HTTP threads schedulable while the controller and agents run below normal."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.GetCurrentThread.restype = ctypes.c_void_p
+        kernel.GetPriorityClass.argtypes = [ctypes.c_void_p]
+        kernel.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if kernel.GetPriorityClass(kernel.GetCurrentProcess()) == 0x00004000:
+            # BELOW_NORMAL's base 6 plus HIGHEST's 2 equals ordinary priority 8.
+            # No process/child priority change and no time-critical scheduling.
+            kernel.SetThreadPriority(kernel.GetCurrentThread(), 2)
+    except (AttributeError, OSError):
+        pass  # Status remains usable when the OS does not support this hint.
 
 
 def live_merge_progress(fm) -> dict:
@@ -568,6 +588,10 @@ class Dashboard:
         class Handler(BaseHTTPRequestHandler):
             server_version = "Fletchery"
 
+            def handle(self):
+                dashboard_thread_priority()
+                super().handle()
+
             def log_message(self, *a):  # quiet: the dashboard polls every few seconds
                 pass
 
@@ -675,7 +699,10 @@ class Dashboard:
 
         self.server = ThreadingHTTPServer((self.host, self.port), Handler)
         self.server.daemon_threads = True
-        threading.Thread(target=self.server.serve_forever, name="fletchery-server", daemon=True).start()
+        def serve():
+            dashboard_thread_priority()
+            self.server.serve_forever()
+        threading.Thread(target=serve, name="fletchery-server", daemon=True).start()
 
     def stop(self) -> None:
         if self.server:
