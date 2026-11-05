@@ -52,6 +52,13 @@ UI = HERE.parent / "ui"
 MAX_BODY = 64 * 1024
 
 
+def live_merge_progress(fm) -> dict:
+    import merge
+    progress = fm.cfg.merge_round_file or str(fm.state_dir / "merge-round.json")
+    cached = (getattr(fm, "snapshot", None) or {}).get("merge_view") or {}
+    return merge.refresh(progress, fm.cfg.heavy_lease_file, cached, getattr(fm.cfg, "worktree_root", None))
+
+
 class Dashboard:
     def __init__(self, foreman, port: int, host: str = "127.0.0.1"):
         self.fm = foreman
@@ -78,6 +85,10 @@ class Dashboard:
                               "held": fm.state.merge_held, "running": dict(fm.round_info),
                               "last": dict(fm.state.merge_last), "resume": dict(fm.state.merge_resume),
                               "why": "merging is paused" if fm.state.merge_held else fm.merge_why}
+        # Progress changes independently of scheduler/GitHub polling, including
+        # while a settings restart drains a long-running merger. No ancestry
+        # subprocesses on this request path: membership is unknown until polled.
+        snap["merge_view"] = live_merge_progress(fm)
         snap["storage"] = fm.storage_view()
         snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
@@ -86,10 +97,6 @@ class Dashboard:
         snap["update_pending"] = getattr(fm, "update_pending", False)
         snap["sync_error"] = getattr(fm, "sync_error", "")
         cfg = fm.cfg
-        import merge
-        snap["merge_view"] = merge.refresh(
-            cfg.merge_round_file or str(fm.state_dir / "merge-round.json"),
-            cfg.heavy_lease_file, snap.get("merge_view") or {}, cfg.worktree_root)
         lane_view = None
         if cfg.lane_status_file:
             prs = {t["pr"] for t in snap.get("tasks", []) if t.get("pr")}

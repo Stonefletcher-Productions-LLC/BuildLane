@@ -69,6 +69,55 @@ class MergeStatusTests(unittest.TestCase):
         self.assertEqual(view["prs"], [100, 101])
         self.assertIn("FAILED at Build", view["headline"])
 
+    def test_failure_blocks_landing_despite_other_reported_activity(self):
+        for activity in ("running", "waiting"):
+            with self.subTest(activity=activity):
+                self.save(state="running", steps=[
+                    {"name": "Package", "state": activity},
+                    {"name": "Game specs", "state": "failed"},
+                    {"name": "Landing", "state": "todo"}])
+                view = merge.view(self.progress, self.lease, now=self.now)
+                self.assertEqual(view["state"], "failed")
+                self.assertEqual(view["failed_steps"], ["Game specs"])
+                self.assertIn("FAILED at Game specs", view["headline"])
+                self.assertIn("revalidate", view["next"])
+                self.assertEqual(view["reported_activity"], ["Package"] if activity == "running" else [])
+
+    def test_revalidation_clears_failure_only_when_progress_changes(self):
+        self.save(state="running", steps=[{"name": "Game specs", "state": "running"},
+                                          {"name": "Landing", "state": "todo"}])
+        view = merge.view(self.progress, self.lease, now=self.now)
+        self.assertEqual(view["state"], "running")
+        self.assertEqual(view["failed_steps"], [])
+        self.assertEqual(view["next"], "Landing")
+
+    def test_excluded_candidate_failure_stays_visible_without_blocking_revalidation(self):
+        self.save(state="running", steps=[
+            {"name": "Build eight-PR candidate", "state": "running"},
+            {"name": "Low-VRAM old candidate", "state": "failed", "required": False},
+            {"name": "Game specs eight-PR candidate", "state": "todo"}])
+        view = merge.view(self.progress, self.lease, now=self.now)
+        self.assertEqual(view["state"], "running")
+        self.assertEqual(view["failed_steps"], [])
+        self.assertEqual(view["steps"][1]["state"], "failed")
+        self.assertIs(view["steps"][1]["required"], False)
+        self.assertEqual(view["next"], "Game specs eight-PR candidate")
+
+    def test_dashboard_reads_progress_without_waiting_for_scheduler_or_git(self):
+        from types import SimpleNamespace
+        from server import live_merge_progress
+        fm = SimpleNamespace(state_dir=self.root, cfg=SimpleNamespace(
+            merge_round_file=str(self.progress), heavy_lease_file=str(self.lease)))
+        self.save(state="running", steps=[{"name": "Game specs", "state": "failed"}])
+        with patch("merge.in_branch") as git:
+            self.assertEqual(live_merge_progress(fm)["state"], "failed")
+            self.save(state="running", prs=[100], steps=[{"name": "Rebuild remainder", "state": "running"}])
+            current = live_merge_progress(fm)
+            self.assertEqual(current["prs"], [100])
+            self.assertIn("Rebuild remainder", current["headline"])
+            self.assertEqual(current["state"], "running")
+            git.assert_not_called()
+
     def test_invalid_historical_timestamps_do_not_invent_a_duration(self):
         for started, ended in [("bad", "also bad"), ("2026-11-05T02:00:00Z", "2026-11-05T01:00:00Z")]:
             with self.subTest(started=started):
@@ -208,6 +257,32 @@ class MergeStatusTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as wrong_round:
             urlopen(url.replace('round=19','round=20'),timeout=3)
         self.assertEqual(wrong_round.exception.code,404)
+
+    def test_parallel_and_isolated_retry_results_update_the_same_check(self):
+        checks=merge._checks((
+            'START group RunM4bTest, RunM5aTest at 13:23:40 (in parallel)',
+            'START RunM4bTest at 13:23:43 (in parallel)',
+            'START RunM5aTest at 13:23:44 (in parallel)',
+            'FAIL RunM4bTest (68s) (alone, second try)',
+            'PASS RunM5aTest (72s) (rerun alone)',
+        ))
+        self.assertEqual([c['name'] for c in checks],['RunM4bTest','RunM5aTest'])
+        self.assertEqual([c['state'] for c in checks],['failed','done'])
+        self.assertEqual(checks[0]['duration_seconds'],68)
+        self.assertEqual(checks[0]['message'],'(alone, second try)')
+        self.assertEqual(checks[0]['started'],'13:23:43')
+        self.assertEqual(checks[1]['message'],'(rerun alone)')
+
+    def test_check_parser_preserves_punctuation_and_latest_retry_outcome(self):
+        name='Reconnect: player #2 / save-load [host]'
+        checks=merge._checks((f'START {name} at 13:00:00',f'FAIL {name} (2s)',
+            f'START {name} at 13:00:03 (alone, second try)',f'PASS {name} (2.5s) (alone)'))
+        self.assertEqual(len(checks),1)
+        self.assertEqual(checks[0]['name'],name)
+        self.assertEqual(checks[0]['state'],'done')
+        self.assertEqual(checks[0]['duration_seconds'],2.5)
+        self.assertEqual(checks[0]['started'],'13:00:03')
+        self.assertEqual(checks[0]['message'],'(alone)')
 
     def test_non_object_progress_is_ignored(self):
         self.progress.write_text("[]")

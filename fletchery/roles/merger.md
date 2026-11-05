@@ -34,6 +34,17 @@ PRs labelled `{label}` into `{base}`, oldest first:
    Preserve generated assets and diagnostics before constructing the remaining candidate; use a separate
    owned candidate if rebuilding in place would discard work. Never reset a checkout with active processes
    or a heavy lease. Revalidate the final candidate: results from an earlier source/content tree do not count.
+   On a confirmed failure, immediately mark that check failed and stop unrelated validation. Set any later
+   running checks back to todo and add a running recovery step naming the implicated PR and current attempt.
+   Keep the failure visible during diagnosis. When repair or exclusion changes the candidate, reset affected
+   checks to todo and run them again; only an actual passing result on matching inputs may mark them done.
+   If retaining a failed step solely as evidence from an excluded candidate, explicitly set its `required`
+   field to false and name that candidate/PR; it remains failed history, never a pass. Only do this after
+   verifying its culprit and dependent PRs are absent. Keep every check required by the remaining candidate
+   as a separate required step (the default). Never mark a still-applicable check non-required.
+   Excluding a PR from the progress list alone does not remove its code: verify the remaining candidate also
+   excludes its changes and excludes or defers PRs depending on it. Do not land while any required check is
+   failed, waiting, running or todo. Preserve the original failure evidence in the note and final result.
    Never skip, disable or weaken a test to get green. Fletchery holds excluded heads out of later rounds and
    sends worker PRs to the bounded fixer queue; a changed head becomes eligible again.
 
@@ -47,7 +58,8 @@ PRs labelled `{label}` into `{base}`, oldest first:
 5. Keep the round's progress file up to date after every step, so the Merge section shows it: `{round_file}`. It is JSON;
    change only `steps` (a list of `{"name": ..., "state": "todo|running|waiting|done|failed"}`, rename or add steps to
    match what you actually run), `prs` (the PR numbers still in the round), `note` (one short line) and `updated`
-   (UTC ISO time). Fletchery writes `state` itself when you finish.
+   (UTC ISO time). Steps may also carry `required: false` for excluded-candidate evidence as above.
+   Fletchery writes `state` itself when you finish.
    Keep step details useful for the expandable progress view: optional `started`, `updated`, `ended` UTC timestamps,
    `duration_seconds` only when measured, `message` (plain-language activity or wait reason), and `checks`
    (`name`, `state`, optional measured duration). Record outcomes as passed, failed, pending or reused in the message;

@@ -89,6 +89,8 @@ def _text(value, limit=1600) -> str:
 def _step(raw: dict) -> dict:
     state = str(raw.get("state", "todo")).lower()
     out = {"name": _text(raw.get("name", "?"), 160), "state": state if state in STATES else "todo"}
+    if raw.get("required") is False:
+        out["required"] = False
     for key in ("started", "updated", "ended"):
         if raw.get(key):
             out[key] = _text(raw[key], 64)
@@ -135,18 +137,36 @@ def _tail(path: str, size: int, modified_ns: int) -> tuple[str, ...]:
 def _checks(lines: tuple[str, ...]) -> list[dict]:
     result = {}
     for line in lines:
-        match = re.match(r"^(START|PASS|FAIL|FAILED)\s+(.+?)(?:\s+at\s+(\d\d:\d\d:\d\d)|\s+\((\d+(?:\.\d+)?)s\))?$", line.strip())
+        match = re.match(r"^(START|PASS|FAIL|FAILED)\s+(.+)$", line.strip())
         if not match:
             continue
-        kind, name, started, duration = match.groups()
-        if len(name) > 160:
+        kind, rest = match.groups()
+        name, started, duration, message = rest, None, None, ""
+        if kind == "START":
+            detail = re.match(r"^(.+?)\s+at\s+(\d\d:\d\d:\d\d)(?:\s+(.*))?$", rest)
+            if detail:
+                name, started, message = detail.groups()
+                # Group banners have no matching result and are not a check.
+                if name.startswith("group ") and message == "(in parallel)":
+                    continue
+        else:
+            detail = re.match(r"^(.+?)\s+\((\d+(?:\.\d+)?)s\)(?:\s*(.*))?$", rest)
+            if detail:
+                name, duration, message = detail.groups()
+        name = name.strip()
+        if not name or len(name) > 160:
             continue
+        previous = result.get(name, {})
         item = {"name":name,"state":"running" if kind == "START" else "done" if kind == "PASS" else "failed"}
         if started:
             item["started"] = started  # Local clock text, not an invented date/zone.
+        elif kind != "START" and previous.get("started"):
+            item["started"] = previous["started"]
         if duration:
             item["duration_seconds"] = float(duration)
-        result[name] = item
+        if message:
+            item["message"] = _text(message, 500)
+        result[name] = item  # An explicit retry/result supersedes its earlier state.
     return list(result.values())[-60:]
 
 
@@ -322,9 +342,9 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     merged = sum(1 for v in out["in_branch"].values() if v)
     known = sum(1 for v in out["in_branch"].values() if v is not None)
     out["activity"], out["files"] = _activity(r, steps, worktree_root, now)
-    out["failed_steps"] = [s["name"] for s in steps if s["state"] == "failed"]
+    out["failed_steps"] = [s["name"] for s in steps if s["state"] == "failed" and s.get("required") is not False]
     out["reported_activity"] = [s["name"] for s in steps if s["state"] == "running"]
-    cur = next((i for i, s in enumerate(steps) if s["state"] == "failed"), None)
+    cur = next((i for i, s in enumerate(steps) if s["state"] == "failed" and s.get("required") is not False), None)
     if cur is None:
         cur = next((i for i, s in enumerate(steps) if s["state"] in ("running", "waiting")), None)
     if cur is None:

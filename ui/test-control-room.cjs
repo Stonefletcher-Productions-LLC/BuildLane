@@ -204,6 +204,22 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
     data.merge_auto.running = {};
+    assert.match(await page.locator('.round-recovery').innerText(), /Landing blocked[\s\S]*repair or exclude[\s\S]*rerun affected checks/);
+    // A later failure must stay visible even with an older backend.
+    data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
+    data.merge_view.state = 'running';
+    data.merge_view.steps = [{name: '<Package>', state: 'running'}, {name: 'Game specs', state: 'failed'}];
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed');
+    assert.match(await page.locator('.round-status').innerText(), /Game specs[\s\S]*failed/);
+    assert.match(await page.locator('.round-recovery').innerText(), /Reported activity: <Package>[\s\S]*does not clear/);
+    assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
+    data.merge_view.steps = [{name: 'Game specs', state: 'running'}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
+    await page.evaluate(next => { last = next; render(next); }, data);
+    assert.equal(await page.locator('.round-recovery').count(), 0);
+    assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
+    data.merge_auto.running = {};
     data.merge_auto.last = {round: 20, result: 'interrupted', summary: 'Machine checks passed', stop_reason: 'Physical Escape stopped acceptance'};
     data.merge_auto.resume = {round: 20, authorized: false};
     data.merge_view = {active: false, state: 'idle', previous: {round: 20, result: 'interrupted', steps: [{name: 'Build', state: 'done'}, {name: 'Acceptance', state: 'waiting'}]}};
