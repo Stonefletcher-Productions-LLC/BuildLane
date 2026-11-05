@@ -73,6 +73,8 @@ then `/login`), the Codex CLI (`codex login`) or [OpenCode](https://opencode.ai)
 3. **Open Fletchery** and fill in your project in **Settings** ([First ten minutes](#first-ten-minutes)). To update later, pull this repository and run the installer again. Fletchery picks up the new
    version between tasks, never in the middle of one.
 
+Development roles use CLI, connected APIs/MCP and isolated browser sessions by default. Desktop apps and existing browsers require an explicit user request; an unavailable allowed route is reported as a blocker rather than replaced with desktop control.
+
 ## First ten minutes
 
 **1. Point it at your project.** Clone your repository somewhere on this PC first, for example
