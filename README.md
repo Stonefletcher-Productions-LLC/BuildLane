@@ -14,7 +14,7 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
-**Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
+**Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
 Open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
@@ -255,6 +255,14 @@ A separate **Emergency workers** control reserves **0 or 1** extra slot for buil
 Emergency repairs use the existing branch, review and validation rules. Their required prerequisites and bounded blocker planning can use the same single slot. They still respect global Pause, draining/restarts, daily budgets, provider availability, repair limits and heavy-work reservations; they never release another job's reservation. Real decisions and exhausted repairs remain visible in Needs you. A merge failure creates a deduplicated diagnostic repair issue; filing it is not proof that the underlying cause was fixed.
 
 The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the dashboard report normal and emergency sessions separately.
+
+## Merge progress
+
+Open **Merge & build** for the current round's expandable steps, individual check results, elapsed times, recent activity and output files. The active step opens automatically; your expansion and detail-tab choices survive status refreshes. The overview keeps a compact version of the same panel. Both light and dark themes work at narrow window widths.
+
+The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards.
+
+Status reads the current checkpoint on each dashboard poll and tails only bounded, approved round logs. **Open full log** serves plain text from the current saved round, capped at the latest 1 MiB with a truncation notice. Step timings and check results are reported only when the runner supplied them; source progress and generated captures do not imply visual acceptance.
 
 ## Merge rounds
 

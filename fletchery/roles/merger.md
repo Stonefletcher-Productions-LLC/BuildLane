@@ -60,6 +60,13 @@ PRs labelled `{label}` into `{base}`, oldest first:
    match what you actually run), `prs` (the PR numbers still in the round), `note` (one short line) and `updated`
    (UTC ISO time). Steps may also carry `required: false` for excluded-candidate evidence as above.
    Fletchery writes `state` itself when you finish.
+   Keep step details useful for the expandable progress view: optional `started`, `updated`, `ended` UTC timestamps,
+   `duration_seconds` only when measured, `message` (plain-language activity or wait reason), and `checks`
+   (`name`, `state`, optional measured duration). Record outcomes as passed, failed, pending or reused in the message;
+   do not invent progress percentages or treat capture-only output as visual approval. Keep logs under
+   `Saved/MergeRound{round}/` with bounded readable START/PASS/FAIL lines for each subcheck. Update after each
+   subcheck or phase transition, and record the next automatic action when waiting. Required failed steps stay failed
+   until a matching repaired candidate passes; another running test never clears the failure.
 
 {freeze}
 
