@@ -43,6 +43,7 @@ class State:
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
     merge_held: bool = False                                  # Pause merging in the Merge section
+    repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
     emergency_repairs: dict = field(default_factory=dict)      # task -> build/merge evidence; repair classification survives restart
     resource_waits: dict = field(default_factory=dict)        # task -> earliest readiness check (ISO); survives restart
     blocker_checked: dict = field(default_factory=dict)       # task -> last planner dispatch; fair across deferred blocks
@@ -354,6 +355,11 @@ class Engine:
             if excluded.get("head") == pr.head_sha and st.fix_attempts.get(str(pr_num), 0) < cfg.fixer_attempts:
                 if not st.seen.get(str(pr_num)) or excluded.get("at", "") > st.seen[str(pr_num)]:
                     fb.append(Feedback(pr_num, "merge", "Merge round left this PR out after its repair budget: " + excluded.get("why", ""), excluded["at"]))
+            plans = re.findall(r"<!-- fletchery-blocker-applied:([a-f0-9]+) -->", task.body or "")
+            if task.status == QUEUED and plans and st.repair_continuations.get(str(pr_num)) != plans[-1]:
+                # The planner explicitly authorized a bounded continuation on an
+                # existing PR. Reuse its branch and reset this plan's attempt once.
+                fb.append(Feedback(pr_num, "merge", "Apply the saved automatic continuation/prerequisites on the existing PR branch. Read the current issue and comments.", now()))
             if not fb:
                 continue
             repair = task.number in emergency_numbers or (bool(excluded) and excluded.get("head") == pr.head_sha) or any(
@@ -368,7 +374,11 @@ class Engine:
                 for f in fb:
                     if f.kind == "status":
                         f.text = self.watcher.enrich(f.text, f.text.split("`")[1] if f.text.count("`") >= 2 else "")
-            attempt = st.fix_attempts.get(str(pr_num), 0) + 1
+            continuation = task.status == QUEUED and plans and st.repair_continuations.get(str(pr_num)) != plans[-1]
+            if continuation and not self.dry_run:
+                st.repair_continuations[str(pr_num)] = plans[-1]
+                st.fix_attempts[str(pr_num)] = 0
+            attempt = (0 if continuation else st.fix_attempts.get(str(pr_num), 0)) + 1
             self.last_plan.append(f"fix PR #{pr_num} (task #{task.number}, attempt {attempt}): {fb[0].text[:80]}")
             if self.dry_run:
                 continue
@@ -1204,7 +1214,7 @@ def _tasks_by_pr(tasks: dict[int, Task], prs: dict[int, PullRequest]) -> dict[in
         for t in sorted(tasks.values(), key=lambda t: t.status != PR):
             if re.search(r"\bcloses\s+#" + str(t.number) + r"\b", pr.body or "", re.I) or pr.head == t.branch:
                 t.pr_number = pr.number
-                if t.status == PR:
+                if t.status == PR or (t.status == QUEUED and "<!-- fletchery-blocker-applied:" in (t.body or "")):
                     out[pr.number] = t
                 break
     return out

@@ -249,7 +249,7 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 ## Merge rounds
 
-Ready merges take priority over new workers, fixers and prerequisite planners. Existing jobs finish normally;
+Ready merges take priority over normal workers, fixers and prerequisite planners. The independently enabled emergency slot can still repair build/merge failures. Existing jobs finish normally;
 when the PC reservation clears, the merger gets the next opportunity. New writing resumes when no eligible
 merge is pending or running. Pausing/disabling merging, unresolved dependencies, failed-round cooldowns and
 unavailable merger accounts do not hold unrelated writing. A busy merger agent reserves its next free slot.

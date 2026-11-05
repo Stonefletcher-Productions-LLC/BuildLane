@@ -166,6 +166,22 @@ class EmergencyWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('failure_issue', engine.state.merge_last)
         self.assertEqual(engine.state.merge_excluded['12']['head'], 'a'*40)
 
+    async def test_bounded_continuation_repairs_existing_pr_without_duplicate(self):
+        task = Task(1, 'Existing feature', '<!-- fletchery-blocker-applied:abc123 -->')
+        engine, gh, rt = self.engine({1: task}, max_parallel=0)
+        gh.prs = [PullRequest(12, 'PR', task.branch, 'Test-Staging', 'a'*40, [], 'Closes #1')]
+        engine.state.emergency_repairs['1'] = 12
+        engine.state.fix_attempts['12'] = 2
+        result = await engine.once()
+        self.assertEqual(result[0].result, 'fixed', result[0].detail)
+        self.assertEqual(len(gh.prs), 1)
+        self.assertEqual(engine.state.fix_attempts['12'], 1)
+        self.assertEqual(engine.state.repair_continuations['12'], 'abc123')
+        task.labels = [label_for('queued')]
+        gh.feedback[12] = [Feedback(12, 'check', 'Still failing', '2099-01-01T00:00:00Z')]
+        await engine.once()
+        self.assertEqual(engine.state.fix_attempts['12'], 2, 'same plan cannot reset repair attempts again')
+
 
 if __name__ == '__main__':
     unittest.main()
