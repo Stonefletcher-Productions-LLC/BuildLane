@@ -262,6 +262,8 @@ Open **Merge & build** for the current round's expandable steps, individual chec
 
 The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards.
 
+On Windows, the dashboard listener and request threads receive ordinary scheduling priority while worker sessions retain their lower priority. This keeps the progress panel responsive during heavy validation without stopping a merge.
+
 Status reads the current checkpoint on each dashboard poll and tails only bounded, approved round logs. **Open full log** serves plain text from the current saved round, capped at the latest 1 MiB with a truncation notice. Step timings and check results are reported only when the runner supplied them; source progress and generated captures do not imply visual acceptance.
 
 ## Merge rounds
