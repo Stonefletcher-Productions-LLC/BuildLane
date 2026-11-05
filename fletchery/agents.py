@@ -379,7 +379,8 @@ class AgentPool:
         return o[-1] if o else None
 
     # ---- availability ----
-    def available(self, name: str, role: str = "worker", at: datetime | None = None) -> bool:
+    def available(self, name: str, role: str = "worker", at: datetime | None = None,
+                  *, ignore_capacity: bool = False) -> bool:
         s = self.specs.get(name)
         if not s or not s.can(role):
             return False
@@ -388,7 +389,7 @@ class AgentPool:
             return False
         if self.accounts.get(name, {}).get("ok") is False:  # its last sign-in check failed
             return False
-        if role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
+        if not ignore_capacity and role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
             return False
         return True
 

@@ -110,6 +110,9 @@ def finish_file(path: str, result: str, note: str) -> None:
             d.setdefault("steps", []).append({"name": "Round stopped", "state": "failed"})
     d["note"] = note[:400]
     d["updated"] = now_iso()
+    d["result"] = result
+    if result != "waiting":
+        d["ended"] = d["updated"]
     write_file(path, d)
 
 
