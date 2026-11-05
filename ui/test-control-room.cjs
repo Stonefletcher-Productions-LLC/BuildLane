@@ -135,9 +135,12 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('.merge-subline').innerText(),/Status updated/);
     await page.locator('[data-view="merge"]').click();
     assert.match(await page.locator('.merge-aside').innerText(),/App update ready/);
+    data.merge_view.stale=true;
     data.merge_view.activity.health='possibly_stuck';
     await page.evaluate(next => {last=next;render(next);},data);
     assert.match(await page.locator('.merge-health').innerText(),/May be stuck/);
+    assert.equal(await page.locator('#mergeNow').getAttribute('class'),'merge-now running','quiet output is not a confirmed failure');
+    delete data.merge_view.stale;
     data.update_pending=false;
     data.merge_view.activity={updated:now,source:'Auto-Game.log',health:'active'};
     await page.locator('[data-view="overview"]').click();

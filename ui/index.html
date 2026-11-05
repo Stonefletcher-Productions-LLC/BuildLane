@@ -1295,7 +1295,7 @@ function render(d) {
     const box = $("mergeNow");
     const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
     const mergeFocus = box.contains(document.activeElement) ? document.activeElement.dataset.mergeFocus : null;
-    box.className = "merge-now " + (active ? (mv.stale ? "failed" : (mv.state || "running")) : "idle");
+    box.className = "merge-now " + (active ? (mv.state || "running") : "idle");
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
     const stepsHtml = (steps, label, expand = false) => `<ol class="msteps" aria-label="${label}">${steps.map((s, i) => expand ? mergeStepHtml(s, i, mv, currentStep, mark, word) : `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
@@ -1307,7 +1307,7 @@ function render(d) {
     const activeCheck = currentStep && (currentStep.checks || []).find(c => c.state === "running");
     const requiredSteps = steps.filter(s => s.required !== false);
     const completed = requiredSteps.filter(s => s.state === "done").length;
-    const health = failedSteps.length ? "failed" : activity.health || "unknown";
+    const health = failedSteps.length ? "failed" : activity.health || (mv.stale ? "possibly_stuck" : "unknown");
     const checkpointOnly = activity.source === "Progress checkpoint";
     const healthText = {active: checkpointOnly ? "Recent update" : "Active", quiet: "Quiet · check activity", possibly_stuck: "May be stuck", unknown: "Activity not reported", failed: "Landing blocked"}[health] || "Activity not reported";
     if (failedSteps.length) box.className = "merge-now failed";

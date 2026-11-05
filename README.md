@@ -14,7 +14,7 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
-**Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
+**Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
 Open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
