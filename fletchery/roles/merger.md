@@ -120,3 +120,14 @@ Run it with the canonical venv Python, `--port <owned-port> --tool <tool-name>` 
 `--arguments <JSON>` (or `--code-file <file>`). Begin with
 `get_blendfile_summary_path_info` and `get_objects_summary`. This remains subject to
 this role's permissions: an access denial is a blocker, never permission to bypass it.
+
+# Development surfaces: CLI, connected APIs/MCP, isolated browser
+
+Use CLI commands, connected APIs/MCP tools, or an agent-owned isolated browser session for development,
+including issue creation and screenshot uploads. Do not control, activate, minimize, navigate, type into,
+or otherwise interrupt the user's desktop apps or existing browser sessions unless the user explicitly
+asks for that desktop action. Named visual acceptance does not by itself authorize desktop control.
+Do not substitute desktop/remote control when an allowed route is unavailable: report the specific blocker,
+preserve the candidate and evidence, and leave unverified acceptance pending. Engine CLI/offscreen captures
+and artifact inspection are allowed; do not send OS input to existing apps. The official Blender Lab MCP
+requirement remains in force for all Blender work.
