@@ -24,8 +24,12 @@ const data = {
     {number: 900, title: 'Missing <asset> access', status: 'blocked', url: '#900'},
   ],
   merge: [{pr: 1041, task: 1036, title: 'Save purchased bike details', head: 'abc123', unblocks: [840], flags: [], ready: true, pr_url: '#1041'}],
-  merge_view: {round: 16, state: 'running', headline: 'Game tests running · 47 min elapsed', prs: [1041], steps: [
-    {name: 'Compile', state: 'done'}, {name: 'Imports', state: 'done'}, {name: 'Game tests', state: 'running'}, {name: 'Land', state: 'todo'},
+  merge_view: {round: 16, state: 'running', activity: {updated: now, source: 'Auto-Game.log', health: 'active'}, headline: 'Game tests running · 47 min elapsed', prs: [1041], steps: [
+    {name: 'Compile', state: 'done', duration_seconds: 372}, {name: 'Imports', state: 'done'},
+    {name: 'Game tests', state: 'running', started: now, message: 'Verify the rebuilt game before landing.',
+      checks: [{name: 'M1 Commands', state: 'done', duration_seconds: 56}, {name: 'M4b Reconnect', state: 'running'}],
+      activity: [{at: now, line: 'Both clients connected'}, {line: '<script>unsafe()</script>'}],
+      files: [{name: 'Auto-Game.log', url: '/api/merge/log?round=16&name=Auto-Game.log'}]}, {name: 'Land', state: 'todo'},
   ]},
   merge_auto: {on: true, held: false, running: {round: 16, agent: 'codex-sol', started: now, prs: [1041]}, last: {}},
   history: [{task: 840, result: 'waiting_dependencies', at: now, agent: 'codex-sol', cost_usd: 0}],
@@ -90,6 +94,53 @@ const server = http.createServer(async (req, res) => {
     await page.selectOption('#themeChoice', 'dark');
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
     await page.screenshot({path: path.join(out, 'overview-dark.png'), fullPage: true});
+    // Each step expands independently; polling preserves explicit choices and keyboard focus.
+    await page.locator('[data-view="merge"]').click();
+    assert.equal(await visible('#view-merge'), true);
+    assert.equal(await visible('#mergeCard .merge-aside'), true);
+    assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
+    assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
+    assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4/);
+    const activeStep=page.locator('.merge-step').nth(2);
+    assert.equal(await activeStep.getAttribute('open'), '', 'current step expands automatically');
+    assert.match(await activeStep.innerText(), /M4b Reconnect/);
+    assert.equal(await page.locator('#mergeNow script').count(), 0, 'log lines are text, never markup');
+    await activeStep.locator('[data-step-tab="activity"]').click();
+    await page.evaluate(() => render(last));
+    assert.equal(await activeStep.locator('[data-step-tab="activity"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.mergeFocus), 'step-2-activity');
+    assert.match(await activeStep.locator('[data-step-panel="activity"]').innerText(), /Both clients connected/);
+    await activeStep.locator('[data-step-tab="files"]').click();
+    assert.equal(await activeStep.locator('[data-step-panel="files"] a').getAttribute('href'), '/api/merge/log?round=16&name=Auto-Game.log');
+    await activeStep.locator('summary').click();
+    await page.evaluate(() => render(last));
+    assert.equal(await activeStep.getAttribute('open'), null, 'polling respects a manually collapsed active step');
+    await activeStep.locator('summary').click();
+    await activeStep.locator('[data-step-tab="progress"]').click();
+    data.merge_view.steps[2].activity[1].line='Checking reconnect state';
+    await page.evaluate(next=>{last=next;render(next);},data);
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-expanded-dark.png')});
+    await page.selectOption('#themeChoice', 'light');
+    await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-expanded-light.png')});
+    await page.setViewportSize({width:420,height:900});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true,'expanded merge fits narrow windows');
+    await page.screenshot({path:path.join(out,'merge-expanded-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1400,height:1000});
+    await page.locator('[data-view="overview"]').click();
+    await page.selectOption('#themeChoice', 'dark');
+    data.merge_view.activity={updated:now,source:'Progress checkpoint',health:'active'};
+    data.update_pending=true;
+    await page.evaluate(next => {last=next;render(next);},data);
+    assert.match(await page.locator('.merge-health').innerText(),/Recent update/);
+    assert.match(await page.locator('.merge-subline').innerText(),/Status updated/);
+    await page.locator('[data-view="merge"]').click();
+    assert.match(await page.locator('.merge-aside').innerText(),/App update ready/);
+    data.merge_view.activity.health='possibly_stuck';
+    await page.evaluate(next => {last=next;render(next);},data);
+    assert.match(await page.locator('.merge-health').innerText(),/May be stuck/);
+    data.update_pending=false;
+    data.merge_view.activity={updated:now,source:'Auto-Game.log',health:'active'};
+    await page.locator('[data-view="overview"]').click();
     // Terminal rounds belong in a collapsed history section, even when an older
     // backend still sends their failed steps as the current merge_view.
     const originalMergeView = JSON.parse(JSON.stringify(data.merge_view));
@@ -269,7 +320,7 @@ const server = http.createServer(async (req, res) => {
     await page.emulateMedia({colorScheme: 'dark'});
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.setViewportSize({width: 420, height: 900});
-    for (const view of ['overview', 'tasks', 'agents', 'activity']) {
+    for (const view of ['overview', 'merge', 'tasks', 'agents', 'activity']) {
       await page.locator(`[data-view="${view}"]`).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${view} fits mobile width`);
     }

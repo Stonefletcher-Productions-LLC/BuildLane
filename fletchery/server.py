@@ -42,6 +42,7 @@ import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import lane
 from live import ledger_tail
@@ -85,6 +86,10 @@ class Dashboard:
         snap["update_pending"] = getattr(fm, "update_pending", False)
         snap["sync_error"] = getattr(fm, "sync_error", "")
         cfg = fm.cfg
+        import merge
+        snap["merge_view"] = merge.refresh(
+            cfg.merge_round_file or str(fm.state_dir / "merge-round.json"),
+            cfg.heavy_lease_file, snap.get("merge_view") or {}, cfg.worktree_root)
         lane_view = None
         if cfg.lane_status_file:
             prs = {t["pr"] for t in snap.get("tasks", []) if t.get("pr")}
@@ -580,6 +585,7 @@ class Dashboard:
                 self._send(code, json.dumps(obj).encode("utf-8"))
 
             def do_GET(self):
+                query = parse_qs(urlsplit(self.path).query)
                 self.path = self.path.split("?", 1)[0].split("#", 1)[0]  # the page reads its own query (?open=, ?only=)
                 if not self._host_ok():
                     return self._json(403, {"error": "Open the dashboard at http://127.0.0.1:%d" % dash.port})
@@ -587,6 +593,15 @@ class Dashboard:
                     return self._send(200, dash.page(), "text/html; charset=utf-8")
                 if self.path == "/api/status":
                     return self._json(200, dash.status())
+                if self.path == "/api/merge/log":
+                    import merge
+                    try:
+                        cfg = dash.fm.cfg
+                        text = merge.log_text(cfg.merge_round_file or str(dash.fm.state_dir / "merge-round.json"),
+                                              cfg.worktree_root, query.get("round", [""])[0], query.get("name", [""])[0])
+                        return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
+                    except (OSError, ValueError, TypeError):
+                        return self._json(404, {"error": "Current round log is unavailable"})
                 if self.path == "/favicon.ico":  # the app window's taskbar icon
                     return self._send(200, (UI / "Fletchery.ico").read_bytes(), "image/x-icon")
                 return self._json(404, {"error": "not found"})

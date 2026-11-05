@@ -255,6 +255,14 @@ Emergency repairs use the existing branch, review and validation rules. Their re
 
 The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the dashboard report normal and emergency sessions separately.
 
+## Merge progress
+
+Open **Merge & build** for the current round's expandable steps, individual check results, elapsed times, recent activity and output files. The active step opens automatically; your expansion and detail-tab choices survive status refreshes. The overview keeps a compact version of the same panel. Both light and dark themes work at narrow window widths.
+
+The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards.
+
+Status reads the current checkpoint on each dashboard poll and tails only bounded, approved round logs. **Open full log** serves plain text from the current saved round, capped at the latest 1 MiB with a truncation notice. Step timings and check results are reported only when the runner supplied them; source progress and generated captures do not imply visual acceptance.
+
 ## Merge rounds
 
 Recoverable non-operator interruptions automatically queue their saved checkpoint and wait for resources. An operator interruption (including physical Escape during computer control) pauses the saved round until an explicit **Resume saved round / Merge now** request. It does not mark untested PRs broken, consume their repair attempts, or file a code-failure issue. The stop reason remains visible alongside the summary. Confirmed compile/test failures still keep their exact heads excluded, even when another part of the round is interrupted.
