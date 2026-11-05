@@ -62,3 +62,71 @@ def release_handoff(resume: dict, reason: str) -> None:
         progress = resume.setdefault("progress", {})
         progress["note"] = str(progress.get("note", "")) + "\n" + reason
         resume["handoff_verification"] = {"wait_for": wait_for, "reason": reason, "verified": False}
+
+
+def reconcile_runtime_resume(engine, data: dict) -> dict:
+    """Explicitly adopt a verified current checkpoint after a transport-lost merger session."""
+    import copy
+    last = engine.state.merge_last
+    reason = str(last.get("stop_reason") or last.get("summary") or "")
+    if engine.round_job is not None or int(data.get("round", -1)) != int(last.get("round", -2)):
+        raise ValueError("Runtime recovery must name the current stopped round")
+    if last.get("result") not in ("failed", "crashed", "unreachable", "interrupted") or not re.search(
+            r"workspace routing discovery timed out|Reconnecting\.\.\.|connection reset|transport error", reason, re.I):
+        raise ValueError("Runtime recovery requires a recorded transport interruption, not a validation failure")
+    if data.get("stop_reason") != reason:
+        raise ValueError("Runtime recovery must preserve the actual recorded interruption")
+    checkpoint = dict(data.get("checkpoint") or {})
+    previous = engine.state.merge_resume
+    old_path = (previous.get("checkpoint") or {}).get("worktree") or last.get("worktree")
+    if not old_path or Path(checkpoint.get("worktree") or "").resolve() != Path(old_path).resolve():
+        raise ValueError("Runtime recovery cannot replace the preserved checkout")
+    path = resume_worktree(engine.ctx.repo, checkpoint)
+    progress = rounds.read_file(engine.cfg.merge_round_file or str(engine.state_dir / "merge-round.json"))
+    heads = {str(n): str(h) for n, h in (data.get("prs") or {}).items()}
+    if (str(progress.get("round")) != str(last["round"]) or progress.get("branch") != checkpoint["branch"]
+            or not heads or set(heads) != {str(n) for n in progress.get("prs", [])}
+            or not set(heads).issubset(previous.get("prs") or {})
+            or any(not n.isdigit() or not re.fullmatch(r"[a-f0-9]{40}", h) for n, h in heads.items())):
+        raise ValueError("Runtime recovery heads must match the preserved round's current progress")
+    excluded = list(data.get("left_out") or [])
+    removed = set(previous.get("prs") or {}) - set(heads)
+    if {str(item.get("pr")) for item in excluded} != removed or any(
+            not item.get("why") or item.get("disposition") != "failed" for item in excluded):
+        raise ValueError("Every removed PR requires explicit confirmed-failure evidence")
+    ready = {str(p.number): p for p in engine.ctx.gh.labelled_prs(engine.cfg.merge_label or "ready", engine.cfg.base_branch)}
+    for item in excluded:
+        if not re.fullmatch(r"[a-f0-9]{40}", str(item.get("head", ""))):
+            raise ValueError("Removed PR evidence requires an exact head")
+    for head in list(heads.values()) + [item["head"] for item in excluded]:
+        engine.ctx.repo.git("cat-file", "-e", head + "^{commit}", cwd=path)
+    for number, head in heads.items():
+        if number not in ready or ready[number].head_sha != head:
+            raise ValueError("Runtime recovery head changed or is no longer ready")
+        engine.ctx.repo.git("merge-base", "--is-ancestor", head, "HEAD", cwd=path)
+    for item in excluded:
+        number = str(item["pr"])
+        if number not in ready or item.get("head") != ready[number].head_sha:
+            raise ValueError("Removed PR evidence must bind its current ready head")
+        try:
+            engine.ctx.repo.git("merge-base", "--is-ancestor", item["head"], "HEAD", cwd=path)
+        except RuntimeError:
+            pass
+        else:
+            raise ValueError("Removed PR head is still included in the saved candidate")
+    deferred = [{"pr": int(n), "head": h, "why": "Transport interrupted; continue matching-input checks and remaining acceptance",
+                 "disposition": "deferred"} for n, h in heads.items()]
+    # No state or checkout writes precede these ownership, head and inclusion checks.
+    for item in excluded:
+        engine.state.merge_excluded[str(item["pr"])] = {"head": item["head"], "why": str(item["why"])[:4000],
+                                                       "round": last["round"], "at": rounds.now_iso()}
+    last.update(result="interrupted", resume_authorized=True, key="", checkpoint=checkpoint,
+                deferred=deferred, left_out=excluded)
+    progress = copy.deepcopy(progress)
+    progress["note"] = str(progress.get("note", "")) + "\nRuntime checkpoint metadata verified only. Verify source/content/external-input/binary fingerprints before reusing completed checks; remaining acceptance is pending."
+    engine.state.merge_resume = {"round": last["round"], "authorized": True, "stop_reason": reason,
+                                "checkpoint": checkpoint, "prs": heads, "progress": progress}
+    engine.state.save(engine.state_dir / "state.json")
+    engine.wake()
+    return {"round": last["round"], "resume_authorized": True,
+            "message": "Current saved candidate verified; remaining acceptance queued without resetting assets."}
