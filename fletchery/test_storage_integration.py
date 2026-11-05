@@ -119,6 +119,22 @@ class StorageSchedulingTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await asyncio.wait_for(running,3)
 
+    async def test_manual_cleanup_gets_bounded_idle_opportunity_before_new_batch(self):
+        from github import PullRequest
+        engine,gh,_=self.engine(max_parallel=0,merge_rounds=True)
+        engine.ctx.repo.git=lambda *args,**kwargs:''
+        gh.prs=[PullRequest(12,'Ready','ready','Test-Staging','a'*40,['ready'])]
+        engine.request_storage_cleanup()
+        with patch('storage.maintain',return_value=self.result()):
+            engine.dispatch()
+            self.assertIsNone(engine.round_job)
+            self.assertIn('cleanup',engine.merge_why)
+            await engine._storage_job
+        engine.cfg.auto_cleanup=False
+        engine.dispatch()
+        self.assertIsNotNone(engine.round_job)
+        await engine.round_job
+
 
 if __name__=='__main__':
     unittest.main()

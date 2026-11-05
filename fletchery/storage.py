@@ -180,7 +180,9 @@ def maintain(repo, gh, state_dir, protected_paths=(), open_tasks=(), lease_file=
     if not root.is_dir() or limit <= 0:
         return summary
     try:
-        if _reparse(root) or root.resolve() != root:
+        # Resolve harmless Windows 8.3 aliases only after checking every
+        # original path component for junctions/symlinks.
+        if any(_reparse(part) for part in (root, *root.parents)):
             raise RuntimeError("Worktree root is linked; cleanup deferred")
         root = root.resolve()
         protected = {Path(p).resolve() for p in protected_paths}

@@ -102,6 +102,24 @@ class StorageTests(unittest.TestCase):
         self.assertIn((("merge-base","--is-ancestor","a"*40,"b"*40),None),self.repo.calls)
         self.assertGreaterEqual(self.guard_mock.call_count,3)
 
+    def test_linked_root_ancestor_defers_cleanup(self):
+        original = storage._reparse
+        with patch('storage._reparse', side_effect=lambda path: path == self.root.parent or original(path)):
+            result = self.run_maintenance()
+        self.assert_preserved(result)
+        self.assertIn('root is linked', result['error'])
+
+    @unittest.skipUnless(__import__('os').name == 'nt', 'Windows short paths')
+    def test_windows_short_path_alias_is_safe(self):
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(self.root), buffer, len(buffer))
+        self.assertGreater(length, 0)
+        self.repo.worktree_root = Path(buffer.value)
+        result = self.run_maintenance(dry_run=True)
+        self.assertFalse(result['error'], result)
+        self.assertEqual(len(result['eligible']), 1, result)
+
     def test_dry_run_is_non_mutating_and_counts_eligible_bytes(self):
         result=self.run_maintenance(dry_run=True)
         self.assert_preserved(result)

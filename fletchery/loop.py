@@ -340,6 +340,13 @@ class Engine:
         self._tasks, self._prs = tasks, prs
         self._known_closed_dependencies = closed_deps
         self._dependency_lookup = is_closed
+        if st.storage_requested:
+            resume = st.merge_resume
+            wait_for = resume.get("wait_for") if resume else None
+            from recovery import ready_signal
+            ready_resume = resume.get("authorized") and (not wait_for or ready_signal(self.state_dir, wait_for))
+            if not ready_resume:
+                self._maybe_storage(tasks, draining)
         self._merge_round(draining)
         worker_paused = paused or self.merge_priority
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
@@ -563,6 +570,10 @@ class Engine:
         self.merge_priority = self.round_job is not None
         if not cfg.merge_rounds:
             self.merge_why = ""
+            return
+        if self._storage_job and not self._storage_job.done():
+            self.merge_priority = True
+            self.merge_why = "Completed-task cleanup is finishing before the next merge"
             return
         if not self.dry_run and st.merge_last.get("result") in ("failed", "crashed", "checkout_failed") and not st.merge_last.get("failure_issue"):
             try:
