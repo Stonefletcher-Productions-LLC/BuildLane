@@ -193,6 +193,13 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
     assert.match(await page.locator('.round-history summary').innerText(), /3 h 24 min total/);
     assert.doesNotMatch(await page.locator('#mergeNow').innerText(), /elapsed in this round/);
+    // Current progress/history remains visible before GitHub has supplied queue rows.
+    const cachedQueue=data.merge;
+    delete data.merge;
+    await page.evaluate(next=>{last=next;render(next);},data);
+    assert.match(await page.locator('.round-history summary').innerText(),/Previous round 19/);
+    assert.match(await page.locator('#mergeNow').innerText(),/PC heavy lease is held/);
+    data.merge=cachedQueue;
     // A newly started round must not inherit old failed steps or old ancestry.
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
     await page.evaluate(next => { last = next; render(next); }, data);

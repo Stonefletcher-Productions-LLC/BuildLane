@@ -1277,7 +1277,7 @@ function render(d) {
   }
   const empty = {pr: "None yet. A worker's PR appears here once it is opened.", blocked: "Nothing needs you."};
   // the Merge column: one row per finished PR, in the order that frees the most waiting tasks
-  const mergeRows = d.merge || null;
+  const mergeRows = Array.isArray(d.merge) ? d.merge : (d.merge_auto || d.merge_view ? [] : null);
   if (mergeRows) {
     cols.pr = [];
     const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
