@@ -546,6 +546,8 @@
   .mauto { font-size: 13px; }
   .mauto-last { font-size: 11px; color: var(--muted); }
   .mauto-last summary { cursor: pointer; }
+  .worker-wait { background: var(--accent-bg); color: var(--ink); }
+  .worker-wait p { margin: 5px 0; color: var(--muted); }
   .merge-priority { display: block; color: var(--muted); margin-top: 4px; }
   .round-history .history-time { color: var(--muted); }
   .mauto-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -1027,15 +1029,32 @@ async function post(path, body) {
   return j;
 }
 
+function workerMergeWait(d) {
+  const ma = d.merge_auto || {};
+  if (d.held || d.max_parallel === 0 || d.restarting || d.update_pending || d.setup_needed || d.signed_out || d.limit_until || !ma.on || ma.held || !ma.priority) return null;
+  const round = ma.running && ma.running.round;
+  const mv = d.merge_view || {};
+  const step = mv.active && String(mv.round) === String(round)
+    ? (mv.steps || []).find(s => s.state === "running") : null;
+  return {
+    title: round ? `New coding waits for merge round ${round}` : "New coding waits for merging",
+    detail: round
+      ? `${step ? `Current merge step: ${step.name}. ` : ""}Merging has priority. Coding resumes automatically when merge priority clears; existing workers can finish.`
+      : `${ma.why || "A ready merge is waiting for the PC or an agent."} Coding resumes automatically when merge priority clears.`
+  };
+}
+
 function render(d) {
   last = d;
   const running = d.live.length;
+  const mergeWait = workerMergeWait(d);
   // state line
   let state;
   if (d.max_parallel === 0) state = running
       ? `<b>Writing pauses</b> once ${running} running ${running > 1 ? "sessions finish" : "session finishes"} (0 workers) · merging and builds carry on`
       : `<b>Writing paused</b> (0 workers) · merging and builds carry on`;
   else if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
+  else if (mergeWait) state = `<b>${esc(mergeWait.title)}</b>`;
   else if (d.passing) state = "Checking GitHub for work…";
   else if (d.held) state = "<b>Paused</b>";
   else state = `<b>Idle</b> · next check in ${until(d.next_pass_at) || "a moment"}`;
@@ -1057,6 +1076,7 @@ function render(d) {
   else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
   else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
+  else if (mergeWait) { hb.innerHTML = `${esc(mergeWait.title)}. <span>${esc(mergeWait.detail)}</span>`; hb.classList.add("show"); }
   else hb.classList.remove("show");
   if (d.sync_error) {
     $("downBanner").innerHTML = "GitHub refresh delayed. <span>Showing the last queue snapshot; retrying shortly. Workers already running continue.</span>";
@@ -1085,7 +1105,8 @@ function render(d) {
     </details>`);
   }
   const free = Math.max(0, d.max_parallel - d.live.length);
-  if (free || !d.live.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? "New writing is paused. Merging and builds continue." : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
+  if (mergeWait) slots.push(`<div class="slot worker-wait" role="status"><b>${esc(mergeWait.title)}</b><p>${esc(mergeWait.detail)}</p><a href="#overview">Merge progress is shown below ↓</a></div>`);
+  else if (free || !d.live.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? "New writing is paused. Merging and builds continue." : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
   $("slots").innerHTML = slots.join("");
 
   // board

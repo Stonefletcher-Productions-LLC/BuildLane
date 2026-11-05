@@ -15,7 +15,8 @@ Workers and fixers that report heavy-work reservation contention keep their exis
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
-open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
+When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
+Open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
 available across views. Choose **System**, **Light** or **Dark** in the sidebar; your
 theme and last view are remembered on this machine.
 

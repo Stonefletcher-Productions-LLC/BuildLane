@@ -144,6 +144,32 @@ const server = http.createServer((req, res) => {
     assert.match(await page.locator('.round-status').innerText(), /Build[\s\S]*failed/);
     assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
+    // Worker availability explains merge scheduling, without presenting it as a manual pause.
+    data.live = [];
+    data.merge_auto.priority = true;
+    data.merge_view = {active: true, round: 20, steps: [{name: 'Build', state: 'running'}]};
+    await page.evaluate(d => render(d), data);
+    assert.match(await page.locator('#slots').innerText(), /New coding waits for merge round 20/);
+    assert.match(await page.locator('#slots').innerText(), /Current merge step: Build/);
+    assert.match(await page.locator('#holdBanner').innerText(), /resumes automatically/);
+    assert.doesNotMatch(await page.locator('#state').innerText(), /Idle/);
+    assert.equal(await page.locator('#slots .free').count(), 0);
+    await page.locator('#workers').screenshot({path: path.join(out, 'workers-merge-wait-light.png')});
+    data.merge_auto.running = {};
+    data.merge_auto.why = 'The PC is reserved by another build';
+    await page.evaluate(d => render(d), data);
+    assert.match(await page.locator('#slots').innerText(), /PC is reserved by another build/);
+    data.held = true;
+    await page.evaluate(d => render(d), data);
+    assert.equal(await page.locator('.worker-wait').count(), 0, 'manual pause takes precedence');
+    data.held = false;
+    data.merge_auto.priority = false;
+    await page.evaluate(d => render(d), data);
+    assert.equal(await page.locator('.worker-wait').count(), 0, 'wait disappears when priority clears');
+    data.live = [
+      {task: 891, title: 'Shower interactions', agent: 'sonnet', stage: 'Reviewing', since: now, actions: 12},
+      {task: 899, title: 'Preview reactions', agent: 'codex-sol', stage: 'Writing', since: now, actions: 4},
+    ];
     data.merge_view = originalMergeView;
     data.merge_auto = originalMergeAuto;
     delete data.merge[0].round;
