@@ -27,6 +27,9 @@ class AssetJobs(unittest.TestCase):
   self.assertIsNone(grant_for({'991':{'paths':['../'] }},self.worktrees,self.wt))
   self.assertIsNone(grant_for({'991':{'paths':['Art/*'] }},self.worktrees,self.wt))
   self.assertIn('binary file type alone',prompt_note(grant))
+  self.assertIn('--cli-profile',prompt_note(grant))
+  self.assertIn('do not bypass it',prompt_note(grant))
+  self.assertEqual(prompt_note(None),'')
  def test_codex_authoring_is_task_scoped_and_reviewers_stay_read_only(self):
   rt=CodexRuntime(AgentSpec('codex',kind='codex'));rt.asset_tasks=self.grants;rt.worktree_root=self.worktrees
   prompt=self.root/'prompt.md';prompt.write_text('task')

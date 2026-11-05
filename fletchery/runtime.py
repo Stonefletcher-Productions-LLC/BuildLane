@@ -78,6 +78,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                               "depends_on": {"type": "array", "items": {"type": "integer"}}}}}}},
 }
 
+# Resource contention is explicit, never inferred from a permission/error string.
+for _role in ("worker", "fixer"):
+    SCHEMAS[_role]["properties"]["waiting_resource"] = {"type": "string", "enum": ["", "heavy"]}
+
 # Blocker planning uses the read-only planner, with an explicit human-decision escape hatch.
 SCHEMAS["planner"]["properties"].update({
     "retry": {"type": "string"},
@@ -132,6 +136,14 @@ def role_prompt(role: str, rules=None, **fields: str) -> str:
     this role and the checks it will run (rules.py). Braces in the files are literal unless they name a field.
     `python3 ` becomes `python ` on Windows, where python3 is not a real interpreter."""
     text = (ROLES_DIR / f"{role}.md").read_text(encoding="utf-8")
+    # Keep this contract with the loaded schema, not in hot-read role files: a
+    # running backend may finish a merge round while a new bundle is staged.
+    if role in ("worker", "fixer"):
+        text += ("\nIf another job holds the heavy-work lease, stop cleanly and return "
+                 "`waiting_resource: \"heavy\"` without `gave_up`. Preserve the checkout and assets. "
+                 "This is only for actual reservation contention: permission denials, missing tools "
+                 "and build failures use the normal failure report. Never release another job's lease. "
+                 "The controller waits for readiness before resuming.\n")
     conventions = (rules.conventions.strip() if rules and rules.conventions else "")
     fields.setdefault("conventions", "# The project's conventions\n\n" + conventions if conventions else "")
     extra = rules.additions.get(role, "").strip() if rules else ""

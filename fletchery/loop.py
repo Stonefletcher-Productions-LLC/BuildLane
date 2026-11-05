@@ -43,6 +43,7 @@ class State:
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
     merge_held: bool = False                                  # Pause merging in the Merge section
+    resource_waits: dict = field(default_factory=dict)        # task -> earliest readiness check (ISO); survives restart
     blocker_checked: dict = field(default_factory=dict)       # task -> last planner dispatch; fair across deferred blocks
 
     @staticmethod
@@ -145,6 +146,16 @@ class Engine:
                 self.watcher = watcher.make(ctx.cfg, ctx.gh, ctx.log)
             except Exception as e:  # never let the watcher keep the workers from starting
                 ctx.log(f"lane watcher off: {type(e).__name__}: {e}")
+
+    def resource_wait_reason(self, task: int) -> str:
+        from resource_waits import wait_reason
+        key = str(task)
+        if key not in self.state.resource_waits:
+            return ""
+        reason = wait_reason(self.cfg.heavy_lease_file, self.state.resource_waits[key], now())
+        if not reason:
+            del self.state.resource_waits[key]
+        return reason
 
     # ---- agents ----
     def stats(self):
@@ -292,7 +303,7 @@ class Engine:
         for pr_num, task in ordered_feedback:
             if paused or not budget_left or self.free_slots() <= 0 or inspected_feedback >= 6:
                 break
-            if task.number in self.active:
+            if task.number in self.active or self.resource_wait_reason(task.number):
                 continue
             if any(d in tasks or not is_closed(d) for d in task.depends_on):
                 continue
@@ -357,6 +368,18 @@ class Engine:
                 rd.waiting[number] = "prerequisite status unavailable; retrying GitHub for " + ", ".join(f"#{d}" for d in sorted(unknown))
         fixing = {t.number for t in by_pr.values()}
         rd.ready = [t for t in rd.ready if t.number not in self.active and t.number not in fixing]
+        free_resources = []
+        for t in rd.ready:
+            reason = self.resource_wait_reason(t.number)
+            if reason:
+                rd.waiting[t.number] = reason
+            else:
+                free_resources.append(t)
+        rd.ready = free_resources
+        for number in tasks:
+            reason = self.resource_wait_reason(number)
+            if reason:
+                rd.waiting[number] = reason
         if pool is not None:  # a task whose agents are all off, paused or busy waits instead of starting and stopping
             stats = self.stats()
             free = []
@@ -668,6 +691,8 @@ class Engine:
                 o = Outcome(n, "requeue", f"crashed: {type(exc).__name__}: {exc}", pr_number=pr_n)
             else:
                 o = job.result()
+            if o.result == "waiting_resource":
+                st.resource_waits[str(o.task)] = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="seconds")
             outcomes.append(o)
             st.running.pop(str(o.task), None)
             st.spent[today()] = st.spent.get(today(), 0.0) + o.cost_usd
@@ -681,7 +706,7 @@ class Engine:
             # Dispatch already recorded the newest feedback actually sent to
             # this fixer. Do not advance it to completion time: comments/checks
             # arriving during the repair still need to be handled next pass.
-            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix") and pr_n is not None:
+            if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix", "waiting_resource") and pr_n is not None:
                 # A new concrete repair plan or resolved prerequisite needs a fresh fixer opportunity,
                 # including when the previous block was caused by exhausted fixer attempts.
                 st.fix_attempts[str(pr_n)] = (0 if o.result in ("waiting_dependencies", "retry_fix") else
@@ -711,7 +736,7 @@ class Engine:
         # entire queue or every PR's files before newly-created worker tasks can run.
         terminal = {"pr": PR, "fixed": PR, "blocked": BLOCKED,
                     "waiting_dependencies": QUEUED, "retry_fix": QUEUED}
-        temporary = {"requeue", "limited", "signed_out", "agent_paused", "waiting_agent"}
+        temporary = {"requeue", "limited", "signed_out", "agent_paused", "waiting_agent", "waiting_resource"}
         for o in outcomes:
             task = tasks.get(o.task)
             if task is None:
