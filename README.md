@@ -378,3 +378,5 @@ a failed save leaves the previous valid checkpoint intact.
 Worker escalation preserves failed attempts in place, including staged, untracked and ignored generated files.
 The next eligible agent gets a separate checkout; a persistent task registry selects that checkout after a restart.
 Checkout ownership is rechecked before the controller commits or pushes worker/repair changes.
+Blocker planners read the current active attempt from the same persistent registry, including its saved
+uncommitted drafts; they do not silently inspect a preserved older attempt or create a checkout to plan.

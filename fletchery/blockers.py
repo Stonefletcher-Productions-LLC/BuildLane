@@ -1,6 +1,7 @@
 """Read-only planning, followed by bounded, restart-safe prerequisite issue creation by the harness."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -41,6 +42,10 @@ def failure_event(thread: dict) -> str:
 
 def planner_root(task, ctx) -> Path:
     """Read an existing task worktree, including uncommitted drafts; never create or reset one to plan."""
+    resolver = getattr(ctx.repo, "existing_task_worktree", None)
+    if resolver is not None:
+        candidate = resolver(task.number, task.slug, task.branch)
+        return candidate if candidate is not None else Path(ctx.cfg.project_root)
     root = getattr(ctx.repo, "worktree_root", None)
     if root:
         root = Path(root).resolve()
@@ -171,7 +176,7 @@ async def resolve(task, ctx, out):
                 agent = choice.agent
                 pool.acquire(agent)
             rt = pool.runtime(agent) if pool is not None else ctx.runtime
-            cwd = planner_root(task, ctx)
+            cwd = await asyncio.to_thread(planner_root, task, ctx)
             import rules as rules_mod
             rules = rules_mod.load(cwd, ctx.cfg.project_root)
             goal = (f"Issue #{task.number}: {thread['title']}\n{thread['body']}\n\nBlocker:\n{reason}\n\n"
