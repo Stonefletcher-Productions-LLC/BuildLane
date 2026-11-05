@@ -107,6 +107,9 @@ class Dashboard:
                 ranks["limits"] = dict(fm.cfg.worker_rank_limits)
         snap["max_parallel"] = fm.cfg.max_parallel
         snap["worker_ranks"] = ranks
+        recorded_ranks = getattr(fm.state, "task_worker_rank", {})
+        snap["tasks"] = [{**row, "worker_rank": recorded_ranks.get(str(row["number"]), row.get("worker_rank", ""))}
+                         for row in snap.get("tasks", [])]
         snap["worker_handoffs"] = fm.handoffs.view() if hasattr(fm, "handoffs") else {}
         snap["integration_queue"] = fm.plans.view() if hasattr(fm, "plans") else None
         snap["held"] = fm.state.held

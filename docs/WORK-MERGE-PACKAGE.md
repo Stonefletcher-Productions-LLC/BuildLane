@@ -4,12 +4,12 @@
 
 Use **All workers** at the top of Overview to choose 0–30 normal jobs. Changing
 that number returns to automatic allocation: Fletchery uses eligible ready tasks,
-the existing router, model availability and current scores to allocate writing
+the existing router, model availability and baseline strength to allocate writing
 slots across ranks. Each rank is capped at ten. If no eligible model/task can
 use the remaining slots, the panel reports them as unassigned.
 
 The three rank sections show current models, scores, allowed task levels and
-active writing sessions. Rank is derived from overall effective score:
+active writing sessions. Rank uses the benchmark baseline or configured strength fallback. Learned scores still guide routing within available capacity.
 
 | Rank | Score | Manual capacity |
 | --- | --- | --- |
@@ -19,8 +19,7 @@ active writing sessions. Rank is derived from overall effective score:
 
 Changing any rank capacity selects manual allocation and sets the total to the
 sum of the three capacities. Changing All workers restores automatic allocation.
-Lowering capacity never cancels an active session. A running task keeps its rank
-assignment until it finishes, even if new results change its model's score.
+Lowering capacity never cancels an active session. The task badge records the bucket used at admission, even if an agent escalates or its baseline changes.
 
 Ranks control new writing admission. They do not replace existing task-level,
 role, provider, per-model concurrency, sign-in or usage-limit restrictions. Higher

@@ -36,6 +36,7 @@ class State:
     watch_seen: list = field(default_factory=list)            # build runs the lane watcher has handled
     watch_last: str = ""                                      # ISO: when the lane watcher last looked
     agent_paused: dict = field(default_factory=dict)          # agent -> {"until", "reason"}: one agent's limit or sign-in
+    task_worker_rank: dict = field(default_factory=dict)
     task_agent: dict = field(default_factory=dict)            # task number -> the agent that wrote its branch
     accounts_checked: str = ""                                # ISO: when every agent's sign-in was last checked
     spent_by_agent: dict = field(default_factory=dict)        # YYYY-MM-DD -> {agent: USD}
@@ -170,6 +171,7 @@ class Engine:
         if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
             ctx.agents.paused = self.state.agent_paused
             ctx.task_agents = self.state.task_agent
+            ctx.task_worker_ranks = self.state.task_worker_rank
             ctx.stats = self.stats
             ctx.agents.catalog_override = self.state_dir / "model_scores.json"
         if not dry_run and ctx.cfg.workers_enabled:
@@ -1319,6 +1321,7 @@ class Engine:
                          "fix_attempts": st.fix_attempts.get(str(t.pr_number), 0) if t.pr_number else 0,
                          "since": st.running.get(str(t.number), ""), "url": f"{url}/issues/{t.number}",
                          "agent": st.task_agent.get(str(t.number), ""),
+                         "worker_rank": st.task_worker_rank.get(str(t.number), ""),
                          "pr_url": f"{url}/pull/{t.pr_number}" if t.pr_number else ""})
         return {"repo": cfg.repo, "repo_url": url, "project": cfg.name, "label": graph.PREFIX,
                 "storage": self.storage_view(),
@@ -1446,6 +1449,8 @@ class Engine:
             row = {"at": now(), "task": o.task, "result": o.result, "pr": o.pr_number,
                    "cost_usd": round(o.cost_usd, 4), "sessions": o.sessions,
                    "detail": o.detail.splitlines()[0] if o.detail else ""}
+            if o.worker_rank:
+                row["worker_rank"] = o.worker_rank
             if o.agent:
                 row.update(agent=o.agent, difficulty=o.difficulty, reviewer=o.reviewer, attempts=o.attempts)
             f.write(json.dumps(row) + "\n")

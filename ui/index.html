@@ -697,6 +697,8 @@
 .rank-section .slot.free {min-height:0; padding:10px}
 #planRows {overflow-wrap:anywhere}
 #planPRChoices label {display:block}
+  html, .slots-scroll, .scroll, .hist { overflow-anchor: none; }
+  .worker-rank-badge { display: inline-block; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -1190,6 +1192,11 @@ function normalWorkerSessions(d) {
   const emergencyTasks = new Set(emergency.live.map(a => a.task));
   return (d.live || []).filter(a => !a.emergency && !emergencyTasks.has(a.task));
 }
+function workerRankBadge(rank) {
+  const labels = {low: "Low", medium: "Medium", high: "High"};
+  return Object.hasOwn(labels, rank) ? ` <span class="worker-rank-badge" title="Worker capacity bucket">${labels[rank]}</span>` : "";
+}
+
 function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
   const fixing = a.kind === "fix";
@@ -1200,7 +1207,7 @@ function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   lastActions[a.task] = a.actions;
   const row = d.tasks.find(t => t.number === a.task);
   return `<details class="slot" ${attribute}="${a.task}"${expanded.has(String(a.task)) ? " open" : ""}>
-    <summary><span class="worker-title">#${a.task} ${esc(a.title)}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
     <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
     ${track}<div class="what">${esc(explain(a))}</div>
     <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
@@ -1246,6 +1253,18 @@ function workerMergeWait(d) {
 }
 
 function render(d) {
+  const {scrollX, scrollY} = window;
+  const panels = [...document.querySelectorAll(".slots-scroll, .scroll, .hist, .log")]
+    .filter(panel => panel.scrollTop || panel.scrollLeft)
+    .map(panel => [panel, panel.scrollLeft, panel.scrollTop]);
+  renderStatus(d);
+  for (const [panel, left, top] of panels) {
+    if (panel.id !== "log") panel.scrollTo(left, top);
+  }
+  if (scrollX || scrollY) window.scrollTo({left: scrollX, top: scrollY, behavior: "instant"});
+}
+
+function renderStatus(d) {
   last = d;
   renderPlans(d);
   const ordinary = normalWorkerSessions(d);
@@ -1411,7 +1430,7 @@ function render(d) {
       if (!r.ready) bits.push("not labelled ready");
       if (r.repair_wait) bits.push(`<b>Waiting for repair:</b> ${esc(r.repair_wait)}`);
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
-      return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}</a>` +
+      return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}${workerRankBadge(d.tasks.find(t => t.number === r.task)?.worker_rank)}</a>` +
         `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
     }
   }
@@ -1426,7 +1445,7 @@ function render(d) {
         why = a ? `${esc(a.stage)}, started ${ago(a.since)} ago` : (t.since ? "Started " + ago(t.since) + " ago" : "");
       }
       if (k === "pr") why = t.pr ? `<a href="${esc(t.pr_url)}" target="_blank" rel="noopener">PR #${t.pr}</a>` + (t.fix_attempts ? `, fixed ${t.fix_attempts}×` : "") : "PR open";
-      if (k === "blocked") return `<li><button type="button" class="t" data-ny="${t.number}"><span class="num">#${t.number}</span> <span class="ttl">${esc(t.title)}</span></button><span class="why">Click to read and answer. Send re-queues it.</span></li>`;
+      if (k === "blocked") return `<li><button type="button" class="t" data-ny="${t.number}"><span class="num">#${t.number}</span> <span class="ttl">${esc(t.title)}${workerRankBadge(t.worker_rank)}</span></button><span class="why">Click to read and answer. Send re-queues it.</span></li>`;
       return `<li><a class="t" href="${esc(t.url)}" target="_blank" rel="noopener"><span class="num">#${t.number}</span> ${esc(t.title)}</a><span class="why">${why}</span></li>`;
     }).join("") : `<li class="empty">${empty[k]}</li>`;
   }
@@ -1437,7 +1456,7 @@ function render(d) {
                  retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
-      <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a></td>
+      <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)}</td>
       <td><span class="res ${esc(h.result)}">${esc(names[h.result] || h.result)}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
         ${h.agent ? ` <span class="ag-by">by ${esc(h.agent)}${h.reviewer ? `, reviewed by ${esc(h.reviewer)}` : ""}</span>` : ""}
         ${h.detail ? `<br><span style="color:var(--muted)">${esc(h.detail)}</span>` : ""}</td>
@@ -1479,7 +1498,7 @@ function renderOverview(d) {
   $("attentionCount").textContent = blocked.length ? `(${blocked.length})` : "";
   $("attentionPreview").innerHTML = blocked.length ? blocked.slice(0, 3).map(t => `<li><button type="button" data-ny="${t.number}">#${t.number} ${esc(t.title)}</button></li>`).join("") : '<li><small>Nothing needs your input.</small></li>';
   const names = {pr: "PR opened", fixed: "Fix pushed", blocked: "Needs you", requeue: "Requeued", retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
-  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a> ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
+  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
   const active = d.merge_auto && d.merge_auto.running;
   $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merge & build";
   const L = d.lane;
@@ -1511,7 +1530,7 @@ function renderWorkers(d) {
   $("slots").innerHTML = ["high", "medium", "low"].map(rank => {
     const sessions = active.filter(a => ((ranks.assignments || {})[String(a.task)] || (ranks.agent_ranks || {})[a.agent] || "low") === rank);
     const models = (ranks.models[rank] || []).map(n => `${n} (${ranks.scores[n]}${ranks.restrictions[n] ? "; " + ranks.restrictions[n].join("/") + " tasks" : ""})`).join(", ");
-    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · score ${esc(ranks.thresholds[rank])}</h3><label>${rank} capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${esc(models || "No enabled writing models in this rank.")}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
+    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · baseline ${esc(ranks.thresholds[rank])}</h3><label>${rank} capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${esc(models || "No enabled writing models in this rank.")}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
   }).join("");
 }
 async function setWorkers(v) {
@@ -1643,11 +1662,11 @@ function renderQueue(d) {
   const link = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
   $("tqReady").innerHTML = ready.length ? ready.map((t, i) => `<li class="${i === 0 && !held ? "next" : ""}">
       <span class="pos" aria-hidden="true">${i + 1}</span>
-      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${workerRankBadge(t.worker_rank)}</span>
       ${i === 0 && !held ? `<span class="why">next</span>` : ""}</li>`).join("")
     : `<li class="none">${queued.length ? "Nothing ready: every queued task waits on another." : `Nothing queued. Add a task, or label an issue ${esc(d.label || "fletchery")}.`}</li>`;
   $("tqWaiting").innerHTML = waiting.length ? waiting.map(t => `<li>
-      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${workerRankBadge(t.worker_rank)}</span>
       <span class="why">${esc(t.why).replace(/#(\d+)/g, (m, n) => link(n))}</span></li>`).join("")
     : `<li class="none">None.</li>`;
 }

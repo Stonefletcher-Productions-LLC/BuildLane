@@ -69,6 +69,7 @@ class Outcome:
     route: str = ""          # why the router picked the first agent
     reviewer: str = ""
     attempts: list[dict] = field(default_factory=list)  # [{"agent", "difficulty", "role", "ok", "why"}]: what Stats learns from
+    worker_rank: str = ""    # capacity bucket at first admission
     costs: dict = field(default_factory=dict)  # agent -> USD this outcome spent on it (writer and reviewer apart)
 
 
@@ -85,6 +86,7 @@ class Context:
     stats: Callable[[], object] | None = None  # -> agents.Stats, for the router
     task_agents: dict = field(default_factory=dict)  # task number (str) -> agent that wrote its branch (for fixers)
     escalate: bool = True     # a failed attempt goes to a stronger agent before the task is blocked
+    task_worker_ranks: dict = field(default_factory=dict)
     handoffs: object | None = None  # cooperative checkpoints owned by Engine
 
 
@@ -175,6 +177,9 @@ async def _run_task_body(task: Task, ctx: Context, out: Outcome, agent: str | No
             out.result, out.detail = "waiting_agent", "waiting for a worker rank slot"
             gh.set_status(task.number, QUEUED)
             return out
+    if rank_reserved and not out.worker_rank:
+        out.worker_rank = pool.worker_slots[task.number][1]
+        ctx.task_worker_ranks[str(task.number)] = out.worker_rank
     if pool is not None and not reserved:
         pool.acquire(agent)
     try:

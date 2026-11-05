@@ -18,7 +18,7 @@ class RankTests(unittest.IsolatedAsyncioTestCase):
         skills = lambda v: {k: v for k in ("cpp", "scripts", "ui", "docs", "review")}
         pool = AgentPool([
             AgentSpec("low", kind="fake", tier=1, scores=skills(50), roles=["worker"], levels=["easy"]),
-            AgentSpec("medium", kind="fake", tier=2, scores=skills(65)),
+            AgentSpec("medium", kind="fake", tier=3, scores=skills(65)),
             AgentSpec("high", kind="fake", tier=4, scores=skills(85)),
         ], {"mode": "scores"}, lambda _: rt)
         engine.ctx.agents = pool
@@ -29,9 +29,9 @@ class RankTests(unittest.IsolatedAsyncioTestCase):
     def task(self, n, level):
         return Task(n, "A task", f"Difficulty: {level}\nSkill: docs")
 
-    async def test_rank_comes_from_score_not_manual_strength(self):
+    async def test_rank_comes_from_baseline_not_routing_score(self):
         engine, pool = self.setup_pool()
-        pool.specs["low"].tier = 5
+        pool.specs["high"].scores = {k: 48 for k in ("cpp", "scripts", "ui", "docs")}
         view = configure(engine, [self.task(1, "easy")])
         self.assertEqual(view["agent_ranks"], {"low": "low", "medium": "medium", "high": "high"})
         self.assertEqual([rank(v) for v in [59, 60, 74, 75]], ["low", "medium", "medium", "high"])
@@ -60,11 +60,11 @@ class RankTests(unittest.IsolatedAsyncioTestCase):
         pool.release_worker(1)
         self.assertIsNotNone(pool.choose("Small task", "Difficulty: easy", []))
 
-    async def test_active_rank_is_pinned_when_scores_change(self):
+    async def test_active_rank_is_pinned_when_baseline_changes(self):
         engine, pool = self.setup_pool()
         configure(engine, [self.task(1, "easy")])
         pool.reserve_worker(1, "low")
-        pool.specs["low"].scores = {k: 90 for k in ("cpp", "scripts", "ui", "docs", "review")}
+        pool.specs["low"].tier = 5
         view = configure(engine, [self.task(2, "easy")])
         self.assertEqual(view["assignments"]["1"], "low")
         self.assertEqual(view["agent_ranks"]["low"], "high")
@@ -96,6 +96,7 @@ class RankTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 from pipeline import _run_task_body, Outcome
                 await _run_task_body(task, engine.ctx, Outcome(1, "blocked"))
+        self.assertEqual(engine.state.task_worker_rank["1"], "low")
         self.assertEqual(pool.worker_slots, {})
         self.assertEqual(pool.busy.get("low", 0), 0)
 

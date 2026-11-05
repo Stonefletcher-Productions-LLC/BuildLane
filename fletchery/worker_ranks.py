@@ -13,7 +13,7 @@ def configure(engine, tasks):
     if pool is None:
         return None
     scores = pool.scored(engine.stats())
-    pool.worker_rank_names = {name: rank(value["overall"]) for name, value in scores.items()}
+    pool.worker_rank_names = {name: rank(value["seed"]["coding"]) for name, value in scores.items()}
     active = Counter(r for _, r in pool.worker_slots.values())
     manual = engine.cfg.worker_rank_limits
     capacities = dict(manual) if manual is not None else {r: 0 for r in RANKS}
@@ -60,6 +60,6 @@ def configure(engine, tasks):
             "agent_ranks": dict(pool.worker_rank_names),
             "ready_levels": {level: levels[level] for level in ("easy", "medium", "hard")},
             "restrictions": {n: pool.specs[n].levels for n in pool.specs},
-            "scores": {n: s["overall"] for n, s in scores.items()},
+            "scores": {n: s["seed"]["coding"] for n, s in scores.items()},
             "thresholds": {"low": "below 60", "medium": "60–74", "high": "75–100"},
             "unassigned": max(0, engine.cfg.max_parallel - sum(capacities.values()))}

@@ -384,12 +384,25 @@ const server = http.createServer(async (req, res) => {
     data.worker_handoffs = {};
     data.worker_ranks = {mode: 'automatic', limits: {low: 1, medium: 1, high: 1}, active: {}, models: {low: ['deepseek'], medium: [], high: ['expert']},
       scores: {deepseek: 59, expert: 85}, restrictions: {deepseek: ['easy']}, ready_levels: {easy: 0, medium: 2, hard: 3},
-      thresholds: {low: 'below 60', medium: '60–74', high: '75–100'}, assignments: {}, agent_ranks: {sonnet: 'high', 'codex-sol': 'low'}};
+      thresholds: {low: 'below 60', medium: '60–74', high: '75–100'}, assignments: {'891': 'high', '899': 'low'}, agent_ranks: {sonnet: 'high', 'codex-sol': 'low'}};
     data.merge = [{pr: 1041, title: 'Safe <preview>', ready: true, pr_url: '#1041', unblocks: [], flags: []}];
     await page.goto(url + '/?view=overview');
     await page.waitForFunction(() => document.querySelector('#integrationPlans').hidden === false);
     assert.equal(await page.locator('#nowh').innerText(), 'All workers');
     assert.equal(await page.locator('[data-rank]').count(), 3);
+    assert.equal(await page.locator('[data-worker="891"] .worker-rank-badge').textContent(), 'High');
+    const scroll = await page.evaluate(() => {
+      document.body.style.minHeight = '4000px';
+      window.scrollTo(0, 1200);
+      const before = window.scrollY;
+      render(last);
+      const after = window.scrollY;
+      document.body.style.minHeight = '';
+      window.scrollTo(0, 0);
+      return {before, after};
+    });
+    assert.equal(scroll.before, 1200);
+    assert.equal(scroll.after, scroll.before, 'refresh preserves the page scroll position');
     assert.match(await page.locator('#rankMode').innerText(), /0 easy/);
     await page.selectOption('#allWorkerTotal', '12');
     await page.waitForFunction(() => document.querySelector('#wVal').textContent === '12');
