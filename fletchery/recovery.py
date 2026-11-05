@@ -5,6 +5,51 @@ from pathlib import Path
 import rounds
 
 
+def reconcile_landed_round(engine, data: dict) -> dict:
+    """Clear a saved round only after GitHub confirms its exact PRs landed."""
+    state, cfg = engine.state, engine.cfg
+    resume, last = state.merge_resume, state.merge_last
+    number, landing = data.get("round"), data.get("landing_pr")
+    if (type(number) is not int or type(landing) is not int or landing <= 0
+            or engine.round_job is not None or number != resume.get("round") or number != last.get("round")):
+        raise ValueError("Name the current saved round and its landing PR.")
+    if not (state.planned_integration or state.merge_held):
+        raise ValueError("Enable planned windows or pause merging before clearing recovery.")
+    heads = resume.get("prs") or {}
+    branch = (resume.get("checkpoint") or {}).get("branch")
+    if not heads or not branch or not branch.startswith(f"fletchery/merge-round-{number}-"):
+        raise ValueError("Saved recovery has no verifiable round branch or PR heads.")
+
+    def merged_pr(pr):
+        result = engine.ctx.gh.api(f"repos/{cfg.repo}/pulls/{pr}")
+        if result.get("merged") is not True or result.get("base", {}).get("ref") != cfg.base_branch:
+            raise ValueError(f"PR #{pr} has not merged into {cfg.base_branch}.")
+        return result
+
+    landed = merged_pr(landing)
+    commit = landed.get("merge_commit_sha") or ""
+    if landed.get("head", {}).get("ref") != branch or not re.fullmatch(r"[a-f0-9]{40}", commit):
+        raise ValueError("The landing PR does not match the saved round branch.")
+    for pr, head in heads.items():
+        if not pr.isdigit() or merged_pr(pr).get("head", {}).get("sha") != head:
+            raise ValueError(f"PR #{pr} does not match the saved head.")
+    if (state.merge_resume is not resume or state.merge_last is not last or engine.round_job is not None
+            or not (state.planned_integration or state.merge_held)):
+        raise ValueError("Merge state changed while verifying the landing.")
+    state.merge_last = {**last, "result": "landed", "pr": landing, "merged": sorted(map(int, heads)),
+                        "landed_commit": commit, "stop_reason": "",
+                        "reconciled_stop_reason": last.get("stop_reason", ""),
+                        "summary": f"GitHub verified PR #{landing} and all saved PR heads merged into {cfg.base_branch}."}
+    state.merge_resume = {}
+    try:
+        state.save(engine.state_dir / "state.json")
+    except Exception:
+        state.merge_last, state.merge_resume = last, resume
+        raise
+    engine.wake()
+    return {"round": number, "landing_pr": landing, "commit": commit, "reconciled": True}
+
+
 def resume_worktree(repo, checkpoint: dict, lease_file: str = "") -> Path:
     path = Path(checkpoint.get("worktree") or "").resolve()
     if not Path(checkpoint.get("worktree") or "").is_absolute() or path.parent != Path(repo.worktree_root).resolve():

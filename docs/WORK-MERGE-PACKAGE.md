@@ -138,3 +138,5 @@ Run `python fletchery/test_plans.py`, `python fletchery/test_worker_ranks.py`, t
 existing engine/recovery suites and `node ui/test-control-room.cjs`. UI tests use
 an isolated headless fixture and synthetic data, never the user's desktop or a
 live release request.
+
+If an interrupted round lands through a separate recovery, the CLI recovery route can reconcile it using the round number and landing PR. Planned windows or a merge hold must be active. Fletchery verifies the landing branch and every saved PR head with GitHub before clearing recovery.

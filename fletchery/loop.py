@@ -914,7 +914,9 @@ class Engine:
     def recover_interrupted(self, data: dict) -> dict:
         """Adopt an older saved round after explicit operator recovery authorization."""
         import rounds
-        from recovery import resume_worktree, reconcile_runtime_resume
+        from recovery import reconcile_landed_round, resume_worktree, reconcile_runtime_resume
+        if data.get("reconcile_landed") is True:
+            return reconcile_landed_round(self, data)
         if data.get("reconcile_runtime_failure") is True:
             return reconcile_runtime_resume(self, data)
         last = self.state.merge_last
