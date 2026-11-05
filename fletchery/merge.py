@@ -85,7 +85,8 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     out = {"round": "", "prs": [], "in_branch": {}, "steps": [], "pc": pc, "pc_text": pc_text, "state": "idle",
            "headline": "", "next": "", "started": "", "updated": "", "owner": "", "note": "", "stale": False,
            "active": False, "previous": None}
-    steps = [{"name": str(s.get("name", "?")), "state": str(s.get("state", "todo")).lower()}
+    steps = [{"name": str(s.get("name", "?")), "state": str(s.get("state", "todo")).lower(),
+              **({"required": False} if s.get("required") is False else {})}
              for s in r.get("steps", []) if isinstance(s, dict)]
     for s in steps:
         if s["state"] not in STATES:
@@ -122,10 +123,18 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
         out["in_branch"][n] = in_branch(r.get("worktree", ""), r.get("branch", ""), sha) if sha else None
     merged = sum(1 for v in out["in_branch"].values() if v)
     known = sum(1 for v in out["in_branch"].values() if v is not None)
-    cur = next((i for i, s in enumerate(steps) if s["state"] in ("running", "waiting", "failed")), None)
+    # A required failure blocks landing even when another step reports activity.
+    failed = [s["name"] for s in steps if s["state"] == "failed" and s.get("required") is not False]
+    out["failed_steps"] = failed
+    out["reported_activity"] = [s["name"] for s in steps if s["state"] == "running"]
+    cur = next((i for i, s in enumerate(steps) if s["state"] == "failed" and s.get("required") is not False), None)
+    if cur is None:
+        cur = next((i for i, s in enumerate(steps) if s["state"] in ("running", "waiting")), None)
     if cur is None:
         cur = next((i for i, s in enumerate(steps) if s["state"] == "todo"), None)
     nxt = next((s["name"] for s in steps[(cur + 1 if cur is not None else 0):] if s["state"] == "todo"), "")
+    if failed:
+        nxt = "Repair or exclude the failing PRs, then revalidate the remaining candidate before landing"
     out["next"] = nxt
     name = f"round {out['round']}" if out["round"] else "the merge round"
     bits = [f"Merging {name}"]

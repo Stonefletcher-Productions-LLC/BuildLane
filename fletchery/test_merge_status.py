@@ -68,6 +68,40 @@ class MergeStatusTests(unittest.TestCase):
         self.assertEqual(view["prs"], [100, 101])
         self.assertIn("FAILED at Build", view["headline"])
 
+    def test_failure_blocks_landing_despite_other_reported_activity(self):
+        for activity in ("running", "waiting"):
+            with self.subTest(activity=activity):
+                self.save(state="running", steps=[
+                    {"name": "Package", "state": activity},
+                    {"name": "Game specs", "state": "failed"},
+                    {"name": "Landing", "state": "todo"}])
+                view = merge.view(self.progress, self.lease, now=self.now)
+                self.assertEqual(view["state"], "failed")
+                self.assertEqual(view["failed_steps"], ["Game specs"])
+                self.assertIn("FAILED at Game specs", view["headline"])
+                self.assertIn("revalidate", view["next"])
+                self.assertEqual(view["reported_activity"], ["Package"] if activity == "running" else [])
+
+    def test_revalidation_clears_failure_only_when_progress_changes(self):
+        self.save(state="running", steps=[{"name": "Game specs", "state": "running"},
+                                          {"name": "Landing", "state": "todo"}])
+        view = merge.view(self.progress, self.lease, now=self.now)
+        self.assertEqual(view["state"], "running")
+        self.assertEqual(view["failed_steps"], [])
+        self.assertEqual(view["next"], "Landing")
+
+    def test_excluded_candidate_failure_stays_visible_without_blocking_revalidation(self):
+        self.save(state="running", steps=[
+            {"name": "Build eight-PR candidate", "state": "running"},
+            {"name": "Low-VRAM old candidate", "state": "failed", "required": False},
+            {"name": "Game specs eight-PR candidate", "state": "todo"}])
+        view = merge.view(self.progress, self.lease, now=self.now)
+        self.assertEqual(view["state"], "running")
+        self.assertEqual(view["failed_steps"], [])
+        self.assertEqual(view["steps"][1]["state"], "failed")
+        self.assertIs(view["steps"][1]["required"], False)
+        self.assertEqual(view["next"], "Game specs eight-PR candidate")
+
     def test_invalid_historical_timestamps_do_not_invent_a_duration(self):
         for started, ended in [("bad", "also bad"), ("2026-11-05T02:00:00Z", "2026-11-05T01:00:00Z")]:
             with self.subTest(started=started):
