@@ -66,7 +66,7 @@ class StorageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="fletchery-storage-test-")
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)/"worktrees"
+        self.root = Path(self.tmp.name).resolve()/"worktrees"
         self.root.mkdir()
         self.repo = FixtureRepo(self.root)
         self.gh = Mock()
