@@ -12,6 +12,13 @@ from runtime import DEFAULT_ANSWERS
 
 class ResourceWaitTests(unittest.IsolatedAsyncioTestCase):
     engine = fixtures.DispatchResilienceTests.engine
+    def test_wait_guidance_is_loaded_with_schema_not_hot_read_roles(self):
+        from runtime import role_prompt, SCHEMAS, ROLES_DIR
+        for role in ("worker", "fixer"):
+            self.assertIn("heavy", SCHEMAS[role]["properties"]["waiting_resource"]["enum"])
+            self.assertIn('waiting_resource: "heavy"', role_prompt(role))
+            self.assertNotIn("waiting_resource", (ROLES_DIR / (role + ".md")).read_text(encoding="utf-8"))
+
     def waiting_engine(self, fixer=False):
         task = Task(1, "Hair", labels=[label_for(PR)] if fixer else [])
         engine, gh, rt = self.engine({1: task})
