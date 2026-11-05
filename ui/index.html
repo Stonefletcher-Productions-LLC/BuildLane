@@ -1201,9 +1201,15 @@ function render(d) {
     box.className = "merge-now " + (active ? (mv.stale ? "failed" : (mv.state || "running")) : "idle");
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
-    const stepsHtml = (steps, label) => `<ol class="msteps" aria-label="${label}">${steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
-    const currentStep = active && (mv.steps || []).find(s => ["running", "waiting", "failed"].includes(s.state));
+    const stepsHtml = (steps, label) => `<ol class="msteps" aria-label="${label}">${steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
+    const failedSteps = active ? (mv.steps || []).filter(s => s.state === "failed" && s.required !== false) : [];
+    const currentStep = failedSteps[0] || (active && (mv.steps || []).find(s => ["running", "waiting"].includes(s.state)));
     box.innerHTML = currentStep ? `<div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    if (failedSteps.length) {
+      box.className = "merge-now failed";
+      const activity = (mv.steps || []).filter(s => s.state === "running").map(s => s.name);
+      box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${activity.length ? `<br>Reported activity: ${esc(activity.join(", "))}. This does not clear the failed check.` : ""}</p>`);
+    }
     if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
     if (active && mv.steps && mv.steps.length) box.insertAdjacentHTML("beforeend", stepsHtml(mv.steps, "Current round steps"));
     if (ma || history) {
