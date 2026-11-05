@@ -75,7 +75,7 @@ class Dashboard:
         # Merge controls must reflect a click immediately, even during a slow GitHub poll.
         snap["merge_auto"] = {**snap.get("merge_auto", {}), "on": bool(fm.cfg.merge_rounds),
                               "held": fm.state.merge_held, "running": dict(fm.round_info),
-                              "last": dict(fm.state.merge_last),
+                              "last": dict(fm.state.merge_last), "resume": dict(fm.state.merge_resume),
                               "why": "merging is paused" if fm.state.merge_held else fm.merge_why}
         snap["agents"] = fm.agents_view()  # live: a switch or a sign-in shows at once, not at the next pass
         snap["signed_out"] = fm.state.signed_out
@@ -338,6 +338,9 @@ class Dashboard:
         self.fm.hold_merging(on)
         return {"held": on, "message": "Merging paused: no new round starts; a running round finishes." if on
                 else "Merging resumed: a round starts when PRs are ready."}
+
+    def merge_recover(self, data: dict) -> dict:
+        return self.fm.recover_interrupted(data)
 
     def merge_now(self, data: dict) -> dict:
         if not self.fm.cfg.merge_rounds:
@@ -619,7 +622,7 @@ class Dashboard:
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
                               "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores, "/api/agents/routing": dash.set_routing_policy,
-                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents, "/api/merge/hold": dash.merge_hold, "/api/merge/now": dash.merge_now,
+                              "/api/agents/refresh-scores": dash.refresh_scores, "/api/agents/refresh": dash.refresh_agents, "/api/merge/hold": dash.merge_hold, "/api/merge/now": dash.merge_now, "/api/merge/recover": dash.merge_recover,
                               "/api/settings/get": dash.settings_get, "/api/settings/save": dash.settings_save,
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,

@@ -55,9 +55,11 @@ def should_start(cfg, last: dict, held: bool, draining: bool, running: bool, rea
         return False, "Fletchery is restarting on new code"
     if held:
         return False, "merging is paused"
+    if last and last.get("result") == "interrupted" and not last.get("resume_authorized"):
+        return False, "merge acceptance was interrupted; press Merge now to authorize resuming the saved candidate"
     if not ready:
         return False, f"no PR labelled `{cfg.merge_label or 'ready'}` into {cfg.base_branch}"
-    if last and last.get("result") not in ("landed", "waiting") and last.get("key") == key_of(ready) and last.get("at"):
+    if last and last.get("result") not in ("landed", "waiting", "interrupted") and last.get("key") == key_of(ready) and last.get("at"):
         now = now or datetime.now(timezone.utc)
         try:
             at = datetime.fromisoformat(str(last["at"]).replace("Z", "+00:00"))
@@ -95,13 +97,14 @@ def finish_file(path: str, result: str, note: str) -> None:
     d = read_file(path)
     if not d:
         return
-    d["state"] = "waiting" if result == "waiting" else "done" if result in ("landed", "nothing") else "failed"
-    if d["state"] == "waiting":
+    d["state"] = result if result in ("waiting", "interrupted") else "done" if result in ("landed", "nothing") else "failed"
+    if d["state"] in ("waiting", "interrupted"):
         running = [step for step in d.get("steps", []) if step.get("state") == "running"]
         for step in running:
             step["state"] = "waiting"
         if not any(step.get("state") == "waiting" for step in d.get("steps", [])):
-            d.setdefault("steps", []).insert(0, {"name": "Prepare merge checkout", "state": "waiting"})
+            name = "Await explicit merge resume" if result == "interrupted" else "Prepare merge checkout"
+            d.setdefault("steps", []).insert(0, {"name": name, "state": "waiting"})
     if d["state"] == "failed":
         running = [step for step in d.get("steps", []) if step.get("state") in ("running", "waiting")]
         for step in running:
@@ -143,11 +146,51 @@ def notes_text(rules, cfg) -> str:
 
 
 def result_of(output: dict) -> str:
-    """landed | nothing | failed, from the merger's answer."""
+    """Classify an explicit interruption and older operator-stop reports separately from defects."""
     st = str(output.get("state", "")).lower()
+    if st == "interrupted":
+        return st
+    # Older merger prompts required `failed` for every early stop. Inspect the
+    # actual stop reason, never a reassuring summary that merely mentions Escape.
+    reason = str(output.get("stop_reason") or output.get("gave_up") or "")
+    if st != "landed" and operator_interruption(reason):
+        return "interrupted"
     if st in ("landed", "nothing", "failed"):
         return st
     return "landed" if output.get("landed_pr") else "failed"
+
+
+def operator_interruption(reason: str) -> bool:
+    """A reported physical/operator stop, not a general validation failure."""
+    return bool(re.search(
+        r"\bphysical\s+escape\b|\b(?:user|operator)\s+(?:(?:has|had)\s+)?(?:(?:explicitly|manually)\s+)?"
+        r"(?:stopped|interrupted|cancelled|canceled|requested\s+(?:a\s+)?(?:stop|interruption|cancellation))\b|"
+        r"\b(?:stop(?:ped)?|interrupt(?:ed)?|cancel(?:led|ed)?)\b.{0,80}\b(?:by\s+(?:the\s+)?(?:user|operator))\b",
+        str(reason), re.I | re.S))
+
+
+def deferred(item: dict) -> bool:
+    """Untested/incomplete PRs are pending, not evidence of a broken PR head.
+
+    New agents report the disposition. Legacy agents put all unlanded PRs in
+    left_out, so recognize their explicit interruption/incomplete-acceptance
+    reasons while retaining real compile/test/defect evidence.
+    """
+    if not isinstance(item, dict):
+        return False
+    disposition = str(item.get("disposition", "")).lower()
+    if disposition in ("failed", "deferred"):
+        return disposition == "deferred"
+    reason = str(item.get("why", ""))
+    confirmed = re.search(
+        r"\b(?:compile|compilation|build|test|check|repair)\b.{0,35}\b(?:failed|failure|error)\b|"
+        r"\bfailed\s+(?:compilation|compile|build|test|check)\b|\bconfirmed\s+(?:failure|defect|bug)\b",
+        reason, re.I)
+    pending = re.search(
+        r"\binterrupt(?:ed|ion)\b|\bunattempted\b|\bnot\s+(?:attempted|validated|tested)\b|"
+        r"\bacceptance\s+(?:is\s+)?incomplete\b|\bincomplete\s+(?:(?:final|visual|runtime|packaged)\s+)*acceptance\b",
+        reason, re.I)
+    return bool(pending and not confirmed)
 
 
 def worktree_busy(path) -> list[str]:
@@ -304,7 +347,9 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
     """One durable task per recurring validation or orchestration failure, with a deduplicated occurrence for each round."""
     import graph
     summary = str(result.get("summary", ""))
-    signature = re.sub(r"fletchery/merge-round-[\w-]+", "<round-branch>", summary.splitlines()[0] if summary else "unknown")
+    reason = str(result.get("stop_reason") or result.get("error") or result.get("gave_up") or "")
+    cause = reason or summary
+    signature = re.sub(r"fletchery/merge-round-[\w-]+", "<round-branch>", cause.splitlines()[0] if cause else "unknown")
     signature = re.sub(r"\b[0-9a-f]{40}\b", "<sha>", signature)
     signature = re.sub(r"merge-round(?:-[0-9a-f]{12})?", "<merge-checkout>", signature)
     key = hashlib.sha256(signature.encode()).hexdigest()[:20]
@@ -312,7 +357,8 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
     occurrence = f"<!-- fletchery-merge-occurrence:{result.get('round')} -->"
     evidence = (f"Round {result.get('round')} ({result.get('agent') or 'unknown agent'}), {result.get('at', '')}.\n"
                 f"Worktree: `{worktree}`. Base: `{cfg.base_branch}`.\n\n"
-                f"```text\n{summary[:7000]}\n```\n\n{occurrence}")
+                f"```text\n{summary[:7000]}\n```\n\n"
+                + (f"Stop/failure reason:\n\n```text\n{reason[:7000]}\n```\n\n" if reason else "") + occurrence)
     found = gh.marked_issues(marker)
     if found:
         number = found[0]["number"]
