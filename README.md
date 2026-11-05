@@ -11,6 +11,8 @@ OpenCode). You write what you want as GitHub issues. An agent writes each change
 it, an agent from a different company reviews it, and it becomes a pull request. Your build lane then builds, tests
 and merges it. One window shows all of it, and nothing merges without passing your checks.
 
+Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
+
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
 open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay

@@ -78,6 +78,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                               "depends_on": {"type": "array", "items": {"type": "integer"}}}}}}},
 }
 
+# Resource contention is explicit, never inferred from a permission/error string.
+for _role in ("worker", "fixer"):
+    SCHEMAS[_role]["properties"]["waiting_resource"] = {"type": "string", "enum": ["", "heavy"]}
+
 # Blocker planning uses the read-only planner, with an explicit human-decision escape hatch.
 SCHEMAS["planner"]["properties"].update({
     "retry": {"type": "string"},

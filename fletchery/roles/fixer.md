@@ -52,3 +52,5 @@ Run it with the canonical venv Python, `--port <owned-port> --tool <tool-name>` 
 `--arguments <JSON>` (or `--code-file <file>`). Begin with
 `get_blendfile_summary_path_info` and `get_objects_summary`. This remains subject to
 this role's permissions: an access denial is a blocker, never permission to bypass it.
+
+If an actual heavy-work lease is held by another job, stop cleanly and return `waiting_resource: "heavy"` without `gave_up`. Preserve the existing checkout and assets. This is only for verified reservation contention: permission denials, missing tools, malformed leases and build failures still use the normal failure report. Never release another job's lease. The controller waits for readiness before resuming.

@@ -207,6 +207,8 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         return await fail(f"worker session failed: {r.error}", infra=True)
     if r.output.get("gave_up"):
         return await fail(f"worker gave up: {r.output['gave_up']}")
+    if r.output.get("waiting_resource"):
+        return _resource_wait(ctx, out, r.output["waiting_resource"])
     await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
     if await asyncio.to_thread(repo.dirty, wt):
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
@@ -221,6 +223,8 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
                                  freeze=freeze) + "\n\n## Gate failures to fix\n" + _gate_output(results)
         r2 = await rt.run("worker", fix_prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r2)
+        if r2.ok and not r2.output.get("gave_up") and r2.output.get("waiting_resource"):
+            return _resource_wait(ctx, out, r2.output["waiting_resource"])
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if await asyncio.to_thread(repo.dirty, wt):
             await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} gate fixes")
@@ -235,6 +239,8 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
             + "\n\n## Review findings to address\n" + _findings_text(review)
         r3 = await rt.run("worker", back, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r3)
+        if r3.ok and not r3.output.get("gave_up") and r3.output.get("waiting_resource"):
+            return _resource_wait(ctx, out, r3.output["waiting_resource"])
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if await asyncio.to_thread(repo.dirty, wt):
             await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} review fixes")
@@ -360,6 +366,8 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         out.attempts.append({"agent": agent or "", "difficulty": "", "role": "fixer", "ok": False, "why": out.detail[:200]})
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}) could not fix PR #{pr.number}: {out.detail}")
         return out
+    if r.output.get("waiting_resource"):
+        return _resource_wait(ctx, out, r.output["waiting_resource"])
     await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
     if await asyncio.to_thread(repo.dirty, wt):
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} fix after lane feedback")
@@ -524,6 +532,15 @@ _CANT_RUN = re.compile(r"not supported|unsupported model|unknown model|model[^.\
 def _findings_text(review: dict) -> str:
     fs = review.get("findings") or []
     return "\n".join(f"- `{f.get('file')}:{f.get('line')}` [{f.get('rule')}] {f.get('note')}" for f in fs) or "- (none)"
+
+
+def _resource_wait(ctx: Context, out: Outcome, resource: str) -> Outcome:
+    if resource != "heavy" or not ctx.cfg.heavy_lease_file:
+        return _block(ctx, out, "Resource wait needs the configured heavy-work lease")
+    ctx.gh.set_status(out.task, PR if out.pr_number else QUEUED)
+    out.result, out.detail = "waiting_resource", "Waiting for the heavy-work reservation; existing branch preserved"
+    ctx.log(f"#{out.task}: {out.detail}")
+    return out
 
 
 def _block(ctx: Context, out: Outcome, why: str) -> Outcome:
