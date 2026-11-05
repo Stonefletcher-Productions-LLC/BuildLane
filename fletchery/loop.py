@@ -589,12 +589,16 @@ class Engine:
             return
         wait_for = resume.get("wait_for") if resume else None
         if wait_for:
-            from recovery import ready_signal
-            if not ready_signal(self.state_dir, wait_for):
+            from recovery import handoff_status, release_handoff
+            ready, reason = handoff_status(self.state_dir, wait_for)
+            st.save(self.state_dir / "state.json")  # persist the deadline across restarts
+            if not ready:
                 self.merge_priority = False
-                self.merge_why = "Saved round waits for " + str(wait_for.get("name") or "required acceptance") + " to finish"
+                self.merge_why = reason
                 return
-            resume.pop("wait_for", None)
+            release_handoff(resume, reason)
+            if reason:
+                self.ctx.log(reason)
             st.save(self.state_dir / "state.json")
         if self.round_job is not None:
             self.merge_why = "a round is running"
@@ -875,6 +879,8 @@ class Engine:
         wait_for = data.get("wait_for") or {}
         if wait_for and not re.fullmatch(r"[a-f0-9]{32}", str(wait_for.get("request_id", ""))):
             raise ValueError("External acceptance needs a unique recovery request id")
+        if wait_for:
+            wait_for = {**wait_for, "started_at": datetime.now(timezone.utc).isoformat()}
         last.update(result="interrupted", stop_reason=reason, resume_authorized=True, key="", checkpoint=checkpoint,
                     deferred=deferred, left_out=[item for item in last.get("left_out", []) if not rounds.deferred(item)])
         self.state.merge_resume = {"round": last["round"], "authorized": True, "stop_reason": reason,
@@ -894,6 +900,9 @@ class Engine:
             self.state.merge_last["resume_authorized"] = True
         if self.state.merge_resume:
             self.state.merge_resume["authorized"] = True
+            from recovery import release_handoff
+            release_handoff(self.state.merge_resume,
+                "Operator requested Merge now. External completion is unconfirmed; verify affected inputs and acceptance directly before landing.")
         self.state.save(self.state_dir / "state.json")
         self.wake()
 
@@ -1090,6 +1099,13 @@ class Engine:
             if self._reload_draining and not self.jobs and self.round_job is None and not (self._storage_job and not self._storage_job.done()):
                 return
             wait = min(30, self.cfg.poll_minutes * 60) if self.sync_error else self.cfg.poll_minutes * 60
+            handoff = self.state.merge_resume.get("wait_for") or {}
+            if handoff.get("started_at") and self.state.merge_resume.get("authorized") and not self.state.held and not self.state.merge_held:
+                try:
+                    elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(handoff["started_at"].replace("Z", "+00:00"))).total_seconds()
+                    wait = min(wait, max(1, 900 - elapsed))
+                except (ValueError, TypeError):
+                    pass
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
                                                        timezone.utc).isoformat(timespec="seconds")
             deadline = loop.time() + wait

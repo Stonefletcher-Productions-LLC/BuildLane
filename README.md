@@ -259,7 +259,7 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 Recoverable non-operator interruptions automatically queue their saved checkpoint and wait for resources. An operator interruption (including physical Escape during computer control) pauses the saved round until an explicit **Resume saved round / Merge now** request. It does not mark untested PRs broken, consume their repair attempts, or file a code-failure issue. The stop reason remains visible alongside the summary. Confirmed compile/test failures still keep their exact heads excluded, even when another part of the round is interrupted.
 
-An explicitly queued recovery can wait for another project's final acceptance receipt, bound to a unique request id. A short PC-lease gap or stale completion receipt does not start it early.
+An explicitly queued recovery can wait for another project's final acceptance receipt, bound to a unique request id. A short PC-lease gap or stale completion receipt does not start it early. External chat handoffs have a persistent 15-minute deadline with a visible countdown. If the completion signal never arrives, the merger resumes to verify the outstanding evidence directly; expiry never counts as accepted testing. **Merge now** releases that handoff immediately and records the same verification requirement. Explicit pauses, operator stops and native/heavy reservations still apply.
 
 On startup, legacy exclusions that only describe interrupted or incomplete acceptance become deferred; confirmed failures remain excluded. The authenticated local recovery API can adopt an older interrupted candidate after validating its round, branch, full commit and exact deferred PR set.
 

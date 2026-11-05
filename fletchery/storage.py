@@ -211,12 +211,12 @@ def maintain(repo, gh, state_dir, protected_paths=(), open_tasks=(), lease_file=
                     raise RuntimeError("Open task or active/preserved checkout")
                 if not path.is_dir() or _reparse(path):
                     raise RuntimeError("Linked/non-directory candidate")
-                if time.time() - path.stat().st_mtime < max(0, retention_hours) * 3600:
+                if retention_hours > 0 and time.time() - path.stat().st_mtime < retention_hours * 3600:
                     raise RuntimeError("Within retention window")
                 if not gh.issue_closed(issue):
                     raise RuntimeError("Task closure not verified")
                 head, size, newest = _proof(repo, path, root, base_head, protected, lease_file)
-                if time.time() - newest < max(0, retention_hours) * 3600:
+                if retention_hours > 0 and time.time() - newest < retention_hours * 3600:
                     raise RuntimeError("Recent checkout activity; retained")
                 entry = {"path": str(path), "issue": issue, "head": head, "logical_bytes": size}
                 if dry_run:

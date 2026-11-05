@@ -32,3 +32,33 @@ def ready_signal(state_dir: Path, wait_for: dict) -> bool:
         return False
     receipt = rounds.read_file(str(Path(state_dir) / ("resume-ready-" + request + ".json")))
     return receipt.get("request_id") == request and receipt.get("complete") is True
+
+
+def handoff_status(state_dir: Path, wait_for: dict, now=None) -> tuple[bool, str]:
+    """Bound chat handoffs without treating missing external acceptance as a pass."""
+    from datetime import datetime, timezone
+    import math
+    now = now or datetime.now(timezone.utc)
+    if ready_signal(state_dir, wait_for):
+        return True, ""
+    try:
+        started = datetime.fromisoformat(wait_for.get("started_at", "").replace("Z", "+00:00"))
+        if started.tzinfo is None or started > now:
+            raise ValueError("Invalid handoff timestamp")
+    except (ValueError, TypeError, AttributeError):
+        started = now
+        wait_for["started_at"] = now.isoformat()
+    remaining = 900 - (now - started).total_seconds()
+    name = str(wait_for.get("name") or "external acceptance")
+    if remaining > 0:
+        return False, f"Saved round waits for {name}; merger will verify directly in {math.ceil(remaining / 60)} min if no completion signal arrives"
+    return True, f"External handoff timed out: {name}. Completion is UNCONFIRMED. Verify affected inputs and required acceptance directly; do not treat this timeout as a passing check."
+
+
+def release_handoff(resume: dict, reason: str) -> None:
+    """Keep the missing evidence visible to the merger after releasing scheduling."""
+    wait_for = resume.pop("wait_for", None)
+    if wait_for and reason:
+        progress = resume.setdefault("progress", {})
+        progress["note"] = str(progress.get("note", "")) + "\n" + reason
+        resume["handoff_verification"] = {"wait_for": wait_for, "reason": reason, "verified": False}
