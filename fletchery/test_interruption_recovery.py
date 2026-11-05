@@ -96,6 +96,17 @@ class InterruptedRoundTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(engine.state.merge_resume['authorized'])
         self.assertTrue(engine.state.merge_last['resume_authorized'])
 
+    async def test_authorized_resume_rejects_changed_ready_head(self):
+        engine,gh,rt=await self.stopped()
+        engine.merge_now()
+        gh.prs[1].head_sha='e'*40
+        before=len(rt.calls)
+        with patch('recovery.resume_worktree') as resume:
+            await engine.once()
+        resume.assert_not_called()
+        self.assertEqual(len(rt.calls),before)
+        self.assertIn('heads changed',engine.merge_why)
+
     async def test_startup_removes_only_legacy_deferred_exclusions(self):
         engine, gh, rt = self.engine()
         engine.state.merge_last={'round':23}
@@ -186,6 +197,60 @@ class InterruptedRoundTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restarted.state.merge_resume['wait_for']['started_at'],wait['started_at'])
         self.assertFalse(restarted.state.merge_resume['authorized'])
 
+
+
+class RuntimeCheckpointRecoveryTests(unittest.TestCase):
+    engine = fixtures.DispatchResilienceTests.engine
+
+    def saved(self):
+        engine, gh, _ = self.engine(max_parallel=0, emergency_workers=0, merge_rounds=True)
+        gh.prs = [PullRequest(n, f'PR {n}', f'branch-{n}', 'Test-Staging', str(n % 10)*40, ['ready']) for n in (12,13)]
+        candidate=engine.ctx.repo.worktree_root/'merge-round-current'
+        checkpoint={'worktree':str(candidate),'branch':'fletchery/merge-round-23-eight','head':'a'*40}
+        engine.state.merge_last={'round':23,'result':'failed','worktree':str(candidate),
+                                 'stop_reason':'codex failed: workspace routing discovery timed out'}
+        engine.state.merge_resume={'round':23,'checkpoint':{**checkpoint,'head':'b'*40},
+                                   'prs':{'12':'c'*40,'13':'d'*40},'authorized':False}
+        progress={'round':'23','branch':checkpoint['branch'],'prs':[13],
+                  'steps':[{'name':'Build','state':'done'},{'name':'Acceptance','state':'todo'}]}
+        rounds.write_file(str(engine.state_dir/'merge-round.json'),progress)
+        payload={'round':23,'reconcile_runtime_failure':True,'checkpoint':checkpoint,
+                 'stop_reason':engine.state.merge_last['stop_reason'],'prs':{'13':'3'*40},
+                 'left_out':[{'pr':12,'head':'2'*40,'why':'Confirmed graphics assertion failed','disposition':'failed'}]}
+        def git(*args,**kwargs):
+            if args[2]=='2'*40: raise RuntimeError('head not included')
+            return ''
+        engine.ctx.repo.git=Mock(side_effect=git)
+        return engine,payload,candidate
+
+    def test_transport_recovery_keeps_real_checkpoint_pending_acceptance_and_excluded_defect(self):
+        engine,payload,candidate=self.saved()
+        with patch('recovery.resume_worktree',return_value=candidate) as ownership:
+            result=engine.recover_interrupted(payload)
+        ownership.assert_called_once_with(engine.ctx.repo,payload['checkpoint'])
+        self.assertTrue(result['resume_authorized'])
+        self.assertEqual(engine.state.merge_resume['checkpoint'],payload['checkpoint'])
+        self.assertEqual(engine.state.merge_resume['prs'],{'13':'3'*40})
+        self.assertEqual(engine.state.merge_resume['progress']['steps'][-1]['state'],'todo')
+        self.assertEqual(engine.state.merge_excluded['12']['head'],'2'*40)
+        self.assertEqual(engine.state.merge_last['result'],'interrupted')
+
+    def test_invalid_adoption_never_changes_state(self):
+        import copy
+        for failure in ('wrong-round','wrong-checkout','code-failure','head-moved','unaccounted-pr','included-exclusion','missing-parent'):
+            with self.subTest(failure=failure):
+                engine,payload,candidate=self.saved()
+                if failure=='wrong-round': payload['round']=22
+                if failure=='wrong-checkout': payload['checkpoint']['worktree']=str(candidate.parent/'other')
+                if failure=='code-failure': engine.state.merge_last['stop_reason']=payload['stop_reason']='compile failed'
+                if failure=='head-moved': payload['prs']['13']='e'*40
+                if failure=='unaccounted-pr': payload['left_out']=[]
+                if failure=='included-exclusion': engine.ctx.repo.git.side_effect=None
+                if failure=='missing-parent': engine.ctx.repo.git.side_effect=RuntimeError('missing included parent')
+                before=copy.deepcopy((engine.state.merge_last,engine.state.merge_resume,engine.state.merge_excluded))
+                with patch('recovery.resume_worktree',return_value=candidate):
+                    with self.assertRaises((ValueError,RuntimeError)): engine.recover_interrupted(payload)
+                self.assertEqual((engine.state.merge_last,engine.state.merge_resume,engine.state.merge_excluded),before)
 
 
 class SavedCheckoutGuardTests(unittest.TestCase):

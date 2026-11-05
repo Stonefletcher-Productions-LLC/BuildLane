@@ -623,6 +623,73 @@
     .overview-grid { gap: 12px; }
     .worker-stage { max-width: 100px; }
   }
+
+  /* Expandable merge checks: the same live panel works in overview and its own view. */
+  .merge-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, .36fr); gap: 18px; align-items: start; }
+  .merge-main, .merge-aside { min-width: 0; }
+  #view-overview .merge-layout { display: block; }
+  #view-overview .merge-aside { display: none; }
+  .merge-live { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--soft); margin: 10px 0 16px; }
+  .merge-live .round-status { font-size: 16px; font-weight: 700; }
+  .merge-live .round-status small { font-weight: 400; }
+  .merge-live.failed { border-color: var(--blocked); }
+  .merge-live-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+  .merge-health { font-size: 11px; border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; white-space: nowrap; color: var(--muted); }
+  .merge-health.active { color: var(--running); background: var(--running-bg); }
+  .merge-health.quiet, .merge-health.possibly_stuck, .merge-health.failed { color: var(--blocked); background: var(--blocked-bg); }
+  .merge-subline, .merge-next { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .merge-progress { display: flex; gap: 4px; margin: 12px 0 8px; height: 6px; }
+  .merge-progress i { flex: 1; border-radius: 3px; background: var(--rule); }
+  .merge-progress i.done { background: var(--running); }
+  .merge-progress i.running { background: var(--queued); }
+  .merge-progress i.failed { background: var(--blocked); }
+  .merge-progress-label { color: var(--muted); font-size: 11px; }
+  .round-section-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; margin: 8px 0; }
+  .merge-now .msteps { display: block; margin: 0; padding: 0; }
+  .merge-now .msteps > li { border: 0; margin: 0; padding: 0; border-radius: 0; color: var(--ink); opacity: 1; font-weight: 400; }
+  .merge-now .msteps > li.done, .merge-now .msteps > li.running, .merge-now .msteps > li.waiting, .merge-now .msteps > li.failed { color: var(--ink); font-weight: 400; }
+  .merge-now .msteps > li.previous-candidate { color: var(--muted); }
+  .merge-step { border-bottom: 1px solid var(--rule); }
+  .merge-step > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 11px 7px; cursor: pointer; border-radius: 5px; font-size: 13px; }
+  .merge-step > summary::-webkit-details-marker { display: none; }
+  .merge-step > summary::after { content: '⌄'; color: var(--muted); font-size: 15px; }
+  .merge-step[open] > summary::after { content: '⌃'; }
+  .merge-step > summary:hover { background: var(--soft); }
+  .merge-step > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .merge-step-label { flex: 1; font-weight: 600; min-width: 0; }
+  .merge-step-time { color: var(--muted); font-size: 11px; }
+  .merge-step-icon { flex: 0 0 17px; text-align: center; }
+  .done .merge-step-icon, .check-done { color: var(--running); }
+  .running .merge-step-icon, .check-running { color: var(--queued); }
+  .failed .merge-step-icon, .check-failed { color: var(--blocked); }
+  .merge-step[open] { margin: 3px 0; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
+  .running .merge-step[open] { border-color: var(--queued); }
+  .failed .merge-step[open] { border-color: var(--blocked); }
+  .merge-step-body { padding: 0 12px 12px; font-size: 12px; }
+  .merge-step-tabs { display: flex; gap: 5px; border-top: 1px solid var(--rule); padding: 8px 0; }
+  .merge-step-tabs button { min-height: 28px; padding: 3px 9px; font-size: 11px; background: transparent; }
+  .merge-step-tabs button[aria-pressed="true"] { color: var(--queued); background: var(--queued-bg); border-color: var(--queued); }
+  .merge-checks { padding: 0; margin: 4px 0 8px; list-style: none; }
+  .merge-checks li { display: flex; gap: 8px; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+  .merge-checks li > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .merge-checks .check-state { color: var(--muted); white-space: nowrap; font-size: 11px; }
+  .merge-activity { background: var(--paper); border: 1px solid var(--rule); border-radius: 5px; font: 11px/1.7 var(--mono); padding: 8px; max-height: 190px; overflow: auto; margin-top: 8px; }
+  .merge-activity p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .merge-log-link { display: inline-block; font-size: 11px; margin-top: 8px; }
+  .merge-step-meta, .merge-empty { font-size: 12px; color: var(--muted); margin: 6px 0; overflow-wrap: anywhere; }
+  .merge-side-card { border: 1px solid var(--rule); border-radius: 8px; padding: 14px; margin: 10px 0 14px; background: var(--soft); }
+  .merge-side-card h4 { font-size: 13px; margin: 0 0 9px; }
+  .merge-side-card p { margin: 6px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .merge-side-card .merge-side-number { font-size: 21px; color: var(--ink); font-weight: 700; }
+  .merge-side-prs { list-style: none; padding: 0; margin: 10px 0 0; }
+  .merge-side-prs li { border-top: 1px solid var(--rule); padding: 6px 0; font-size: 12px; }
+  .merge-side-prs a { display: block; overflow-wrap: anywhere; }
+  .round-recovery { border-left: 3px solid var(--blocked); padding: 7px 10px; color: var(--blocked); font-size: 12px; font-weight: 400; }
+  .merge-now.failed { font-weight: 400; }
+  #view-merge #mergeCard { padding: 18px; }
+  @media(max-width: 1000px) { .merge-layout { grid-template-columns: minmax(0, 1fr) minmax(185px, .4fr); gap: 12px; } }
+  @media(max-width: 700px) { .merge-layout { display: block; } .merge-step > summary { gap: 6px; } .merge-side-card { padding: 10px; } }
+
 </style>
 </head>
 <body>
@@ -631,6 +698,7 @@
   <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery</div>
   <nav aria-label="Workspace">
     <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
+    <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merge &amp; build</a>
     <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
     <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true">◇</span>Agents</a>
     <a href="#activity" data-view="activity"><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
@@ -685,6 +753,7 @@
       <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
     </div>
   </section>
+  <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merge &amp; build</h2><p>Current checks, recent activity and what happens next.</p></div><div id="mergePageMount"></div></section>
   <section class="view" id="view-tasks" aria-labelledby="tasksHeading" hidden><div class="page-heading"><h2 id="tasksHeading">Tasks</h2><p>Queued work, dependencies and PRs.</p></div><div class="tasks-view" id="tasksMount"></div></section>
   <section class="view" id="view-agents" aria-labelledby="agentsHeading" hidden><div class="page-heading"><h2 id="agentsHeading">Agents</h2><p>Models, accounts and usage.</p></div><div id="agentsMount"></div></section>
   <section class="view" id="view-activity" aria-labelledby="activityHeading" hidden><div class="page-heading"><h2 id="activityHeading">Activity</h2><p>Finished sessions and the full log.</p></div><div id="activityMount"></div></section>
@@ -971,10 +1040,12 @@ $("agentsMount").append(document.querySelector(".usage"), $("agents"));
 $("activityMount").append($("lowerBox"));
 $("sidebarBottom").prepend($("settingsBtn"));
 const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "tasks", log: "activity", lowerBox: "activity"};
-const viewNames = ["overview", "tasks", "agents", "activity"];
+const viewNames = ["overview", "merge", "tasks", "agents", "activity"];
 function showView(name, remember = true) {
   name = viewAliases[name] || name;
   if (!viewNames.includes(name)) return;
+  if (name === "merge") $("mergePageMount").append($("mergeCard"));
+  else if (name === "overview") $("overviewGrid").insertBefore($("mergeCard"), $("workersMount").nextSibling);
   document.querySelectorAll(".view").forEach(el => { el.hidden = el.id !== "view-" + name; });
   document.querySelectorAll("[data-view]").forEach(a => {
     if (a.dataset.view === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -1007,6 +1078,31 @@ systemTheme.addEventListener("change", applyTheme);
 applyTheme();
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const mergeExpansion = new Map();
+const mergeTabs = new Map();
+function mergeStepTime(s) {
+  if (typeof s.duration_seconds === "number") return durationText(s.duration_seconds);
+  if (s.started && s.ended) return durationText((Date.parse(s.ended) - Date.parse(s.started)) / 1000);
+  if (s.started && s.state === "running") return ago(s.started) + " elapsed";
+  return {done: "Done", running: "Running", waiting: "Waiting", failed: "Failed", todo: "Queued"}[s.state] || "Not reported";
+}
+function mergeActivityHtml(lines) {
+  return lines && lines.length ? `<div class="merge-activity" aria-label="Recent step activity">${lines.slice(-16).map(a => `<p>${a.at ? esc(clockTime(a.at)) + "  " : ""}${esc(typeof a === "string" ? a : a.line || "")}</p>`).join("")}</div>` : `<p class="merge-empty">No detailed activity reported for this step yet.</p>`;
+}
+function mergeStepHtml(s, i, mv, current, mark, word) {
+  const key = `${mv.round}:${i}:${s.name}`;
+  const open = mergeExpansion.has(key) ? mergeExpansion.get(key) : s === current || (s.state === "failed" && s.required !== false);
+  const tab = mergeTabs.get(key) || "progress";
+  const activity = s.activity || [];
+  const files = s.files || [];
+  const checks = s.checks || [];
+  const log = files.find(f => f.url);
+  const meta = [s.started ? `Started ${clockTime(s.started)}` : "", s.updated ? `Updated ${ago(s.updated)} ago` : "", s.ended ? `Finished ${clockTime(s.ended)}` : "", s.activity_updated ? `Activity ${ago(s.activity_updated)} ago` : "", s.activity_source || ""].filter(Boolean).join(" · ");
+  const checksHtml = checks.length ? `<ul class="merge-checks">${checks.map(c => `<li class="check-${esc(c.state)}"><span>${mark[c.state] || "○"} ${esc(c.name)}</span><span class="check-state">${esc(word[c.state] || c.state || "Not reported")}${typeof c.duration_seconds === "number" ? ` · ${esc(durationText(c.duration_seconds))}` : ""}</span></li>`).join("")}</ul>` : `<p class="merge-empty">${esc(s.state === "done" ? "Completed. No individual check results were reported." : s.state === "todo" ? "Queued. Waiting for earlier checks to finish." : "Individual check results have not been reported yet.")}</p>`;
+  const filesHtml = files.length ? `<ul class="merge-side-prs">${files.map(f => `<li>${f.url && /^\/api\/merge\/log\?/.test(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)} ↗</a>` : esc(f.name || "File")}</li>`).join("")}</ul>` : `<p class="merge-empty">No output files reported for this step.</p>`;
+  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span><span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checksHtml}${mergeActivityHtml(activity.slice(-4))}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
+}
 
 function durationText(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "";
@@ -1150,7 +1246,7 @@ function render(d) {
   // banners
   const hb = $("holdBanner");
   if (d.signed_out) { hb.innerHTML = `Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`; hb.classList.add("show"); }
-  else if (d.update_pending) { hb.innerHTML = "Update ready. <span>Workers continue while the current merge round finishes, then Fletchery reloads.</span>"; hb.classList.add("show"); }
+  else if (d.update_pending) { hb.innerHTML = `Update ready. <span>${d.merge_auto?.running?.round ? "Workers continue while the current merge round finishes, then Fletchery reloads." : "Running sessions finish, then Fletchery reloads automatically."}</span>`; hb.classList.add("show"); }
   else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
   else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
@@ -1181,7 +1277,7 @@ function render(d) {
   }
   const empty = {pr: "None yet. A worker's PR appears here once it is opened.", blocked: "Nothing needs you."};
   // the Merge column: one row per finished PR, in the order that frees the most waiting tasks
-  const mergeRows = d.merge || null;
+  const mergeRows = Array.isArray(d.merge) ? d.merge : (d.merge_auto || d.merge_view ? [] : null);
   if (mergeRows) {
     cols.pr = [];
     const mv = d.merge_view || {headline: "", steps: [], prs: [], state: "idle"};
@@ -1198,24 +1294,34 @@ function render(d) {
     const active = mv.active !== false && !history && !settled && (mv.round || (mv.steps || []).length) && (!running || String(running.round) === String(mv.round));
     const box = $("mergeNow");
     const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
-    box.className = "merge-now " + (active ? (mv.stale ? "failed" : (mv.state || "running")) : "idle");
+    const mergeFocus = box.contains(document.activeElement) ? document.activeElement.dataset.mergeFocus : null;
+    box.className = "merge-now " + (active ? (mv.state || "running") : "idle");
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
-    const stepsHtml = (steps, label) => `<ol class="msteps" aria-label="${label}">${steps.map(s => `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
+    const stepsHtml = (steps, label, expand = false) => `<ol class="msteps" aria-label="${label}">${steps.map((s, i) => expand ? mergeStepHtml(s, i, mv, currentStep, mark, word) : `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
     const failedSteps = active ? (mv.steps || []).filter(s => s.state === "failed" && s.required !== false) : [];
     const currentStep = failedSteps[0] || (active && (mv.steps || []).find(s => ["running", "waiting"].includes(s.state)));
-    box.innerHTML = currentStep ? `<div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    const steps = active ? mv.steps || [] : [];
+    const activity = mv.activity || {};
+    const activityAt = activity.updated;
+    const activeCheck = currentStep && (currentStep.checks || []).find(c => c.state === "running");
+    const requiredSteps = steps.filter(s => s.required !== false);
+    const completed = requiredSteps.filter(s => s.state === "done").length;
+    const health = failedSteps.length ? "failed" : activity.health || (mv.stale ? "possibly_stuck" : "unknown");
+    const checkpointOnly = activity.source === "Progress checkpoint";
+    const healthText = {active: checkpointOnly ? "Recent update" : "Active", quiet: "Quiet · check activity", possibly_stuck: "May be stuck", unknown: "Activity not reported", failed: "Landing blocked"}[health] || "Activity not reported";
+    if (failedSteps.length) box.className = "merge-now failed";
+    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${mv.next ? `<p class="merge-next">Next: ${esc(mv.next)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (failedSteps.length) {
-      box.className = "merge-now failed";
-      const activity = (mv.steps || []).filter(s => s.state === "running").map(s => s.name);
-      box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${activity.length ? `<br>Reported activity: ${esc(activity.join(", "))}. This does not clear the failed check.` : ""}</p>`);
+      const reported = steps.filter(s => s.state === "running" && s.required !== false).map(s => s.name);
+      box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${reported.length ? `<br>Reported activity: ${esc(reported.join(", "))}. This does not clear the failed check.` : ""}</p>`);
     }
     if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
-    if (active && mv.steps && mv.steps.length) box.insertAdjacentHTML("beforeend", stepsHtml(mv.steps, "Current round steps"));
+    if (active && steps.length) box.insertAdjacentHTML("beforeend", `<h4 class="round-section-label">Round progress</h4>` + stepsHtml(steps, "Current round steps", true));
     if (ma || history) {
       let line;
       if (!ma) line = esc(mv.headline || "No merge round running.");
-      else if (running) line = `<b>${esc(running.agent)}</b> · ${(running.prs || []).length} PRs · started ${esc(clockTime(running.started))}`;
+      else if (running) line = `<b>${esc(running.agent)}</b> · ${(running.prs || []).length} ${(running.prs || []).length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
       else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {
@@ -1234,6 +1340,12 @@ function render(d) {
         (!running && !ma.held ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
+    const included = active ? mv.prs || [] : running ? running.prs || [] : [];
+    const side = `<aside class="merge-aside" aria-label="Round context"><section class="merge-side-card"><h4>This round</h4><p class="merge-side-number">${included.length} ${included.length === 1 ? "PR" : "PRs"} included</p><p>${active || running ? "Results appear as checks finish and PRs land." : "No active merge round."}</p><ul class="merge-side-prs">${included.slice(0, 5).map(n => {const row = mergeRows.find(r => r.pr === n); return `<li><a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}${row ? ` · ${esc(row.title)}` : ""}</a></li>`;}).join("")}${included.length > 5 ? `<li>+${included.length - 5} more</li>` : ""}</ul></section><section class="merge-side-card"><h4>Machine</h4><p>${esc(mv.pc_text || (mv.pc ? mv.pc.what : "Machine status not reported"))}</p>${ma && !running && ma.why ? `<p>${esc(ma.why)}</p>` : ""}</section>${d.update_pending || d.restarting ? `<section class="merge-side-card"><h4>App update ready</h4><p>Activates after running work finishes.</p><p>${running ? "The current merge continues." : "Running sessions finish before reloading."}</p></section>` : ""}</aside>`;
+    const main = document.createElement("div"); main.className = "merge-main";
+    while (box.firstChild) main.append(box.firstChild);
+    const layout = document.createElement("div"); layout.className = "merge-layout"; layout.append(main); layout.insertAdjacentHTML("beforeend", side); box.append(layout);
+    if (mergeFocus) [...box.querySelectorAll("[data-merge-focus]")].find(el => el.dataset.mergeFocus === mergeFocus)?.focus({preventScroll:true});
     const currentRound = active ? mv.round : running ? running.round : "";
     const inRound = new Set(active ? (mv.prs || []) : running ? (running.prs || []) : []);
     $("n-pr").textContent = mergeRows.length || "";
@@ -1244,7 +1356,7 @@ function render(d) {
       const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
       lastGroup = g;
       return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
-    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+    }).join("") : `<li class="empty">${Array.isArray(d.merge) ? "Nothing waiting to merge." : "GitHub PR queue is not available yet. Local merge progress is shown above."}</li>`;
   }
   function mergeRow(r, currentRound, membershipVerified) {
     const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
@@ -1838,6 +1950,18 @@ function agentClick(ev) {
   }
 }
 $("agents").addEventListener("click", agentClick);
+$("mergeNow").addEventListener("click", ev => {
+  const detail = ev.target.closest("details[data-step-key]");
+  if (!detail) return;
+  const summary = ev.target.closest("summary");
+  if (summary && summary.parentElement === detail) mergeExpansion.set(detail.dataset.stepKey, !detail.open);
+  const tab = ev.target.closest("[data-step-tab]");
+  if (tab) {
+    mergeTabs.set(detail.dataset.stepKey, tab.dataset.stepTab);
+    detail.querySelectorAll("[data-step-tab]").forEach(b => b.setAttribute("aria-pressed", String(b === tab)));
+    detail.querySelectorAll("[data-step-panel]").forEach(p => p.hidden = p.dataset.stepPanel !== tab.dataset.stepTab);
+  }
+});
 $("mergeNow").addEventListener("click", async ev => {
   if (ev.target.closest("[data-merge-settings]")) { ev.preventDefault(); openSettings("project"); return; }
   const b = ev.target.closest("button"); if (!b) return;

@@ -666,6 +666,9 @@ class Engine:
             if {p.number for p in ready} != wanted:
                 self.merge_why = "Saved merge candidate waits for its recorded PRs/dependencies to be eligible; preserved progress is unchanged"
                 return
+            if any(p.head_sha != resume["prs"].get(str(p.number)) for p in ready):
+                self.merge_why = "Saved candidate PR heads changed; reconcile before resuming validation"
+                return
         ok, why = rounds.should_start(cfg, st.merge_last, st.merge_held, draining, False, ready)
         self.merge_why = why
         if not ok:
@@ -868,7 +871,9 @@ class Engine:
     def recover_interrupted(self, data: dict) -> dict:
         """Adopt an older saved round after explicit operator recovery authorization."""
         import rounds
-        from recovery import resume_worktree
+        from recovery import resume_worktree, reconcile_runtime_resume
+        if data.get("reconcile_runtime_failure") is True:
+            return reconcile_runtime_resume(self, data)
         last = self.state.merge_last
         if self.round_job is not None or int(data.get("round", -1)) != int(last.get("round", -2)):
             raise ValueError("Recovery must name the current stopped round and cannot replace an active merge")

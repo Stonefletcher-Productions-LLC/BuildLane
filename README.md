@@ -14,7 +14,7 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
-**Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step;
+**Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
 Paused merging and interrupted rounds awaiting authorization leave feature capacity available, including while cleanup finishes. Active rounds retain their reservation. See [work, merge and package policy](docs/WORK-MERGE-PACKAGE.md) for the operating plan.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
@@ -73,6 +73,8 @@ then `/login`), the Codex CLI (`codex login`) or [OpenCode](https://opencode.ai)
 
 3. **Open Fletchery** and fill in your project in **Settings** ([First ten minutes](#first-ten-minutes)). To update later, pull this repository and run the installer again. Fletchery picks up the new
    version between tasks, never in the middle of one.
+
+Development roles use CLI, connected APIs/MCP and isolated browser sessions by default. Desktop apps and existing browsers require an explicit user request; an unavailable allowed route is reported as a blocker rather than replaced with desktop control.
 
 ## First ten minutes
 
@@ -257,13 +259,23 @@ Emergency repairs use the existing branch, review and validation rules. Their re
 
 The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the dashboard report normal and emergency sessions separately.
 
+## Merge progress
+
+Open **Merge & build** for the current round's expandable steps, individual check results, elapsed times, recent activity and output files. The active step opens automatically; your expansion and detail-tab choices survive status refreshes. The overview keeps a compact version of the same panel. Both light and dark themes work at narrow window widths.
+
+Merge progress and saved history remain visible even while the GitHub queue is unavailable or still loading. The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards. Update messages distinguish an active merge from worker sessions draining after a round ends.
+
+On Windows, the dashboard listener and request threads receive ordinary scheduling priority while worker sessions retain their lower priority. This keeps the progress panel responsive during heavy validation without stopping a merge.
+
+Status reads the current checkpoint on each dashboard poll and tails only bounded, approved round logs. **Open full log** serves plain text from the current saved round, capped at the latest 1 MiB with a truncation notice. Step timings and check results are reported only when the runner supplied them; source progress and generated captures do not imply visual acceptance.
+
 ## Merge rounds
 
 Recoverable non-operator interruptions automatically queue their saved checkpoint and wait for resources. An operator interruption (including physical Escape during computer control) pauses the saved round until an explicit **Resume saved round / Merge now** request. It does not mark untested PRs broken, consume their repair attempts, or file a code-failure issue. The stop reason remains visible alongside the summary. Confirmed compile/test failures still keep their exact heads excluded, even when another part of the round is interrupted.
 
 An explicitly queued recovery can wait for another project's final acceptance receipt, bound to a unique request id. A short PC-lease gap or stale completion receipt does not start it early. External chat handoffs have a persistent 15-minute deadline with a visible countdown. If the completion signal never arrives, the merger resumes to verify the outstanding evidence directly; expiry never counts as accepted testing. **Merge now** releases that handoff immediately and records the same verification requirement. Explicit pauses, operator stops and native/heavy reservations still apply.
 
-On startup, legacy exclusions that only describe interrupted or incomplete acceptance become deferred; confirmed failures remain excluded. The authenticated local recovery API can adopt an older interrupted candidate after validating its round, branch, full commit and exact deferred PR set.
+On startup, legacy exclusions that only describe interrupted or incomplete acceptance become deferred; confirmed failures remain excluded. The authenticated local recovery API can adopt an older interrupted candidate after validating its round, branch, full commit and exact deferred PR set. The authenticated recovery API can also reconcile a transport-lost round to its current saved branch/commit: it verifies checkout ownership, progress PRs, live ready heads and included commits, requires head-bound failure evidence for removed PRs, and preserves generated files and acceptance still pending. It cannot use a transport retry to bypass a recorded validation failure.
 
 A saved checkpoint records the real candidate path, branch, full commit, PR heads and completed progress. Resumption waits for the normal PC reservation and verifies checkout registration, ownership, branch and commit without resetting or cleaning generated files. The merger must verify source/content/external-input/binary fingerprints before reusing successful checks and continue only the remaining acceptance; changed inputs require the affected checks again.
 

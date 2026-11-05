@@ -37,11 +37,13 @@ rebinding)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import lane
 from live import ledger_tail
@@ -51,10 +53,30 @@ UI = HERE.parent / "ui"
 MAX_BODY = 64 * 1024
 
 
+def dashboard_thread_priority() -> None:
+    """Keep HTTP threads schedulable while the controller and agents run below normal."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.GetCurrentThread.restype = ctypes.c_void_p
+        kernel.GetPriorityClass.argtypes = [ctypes.c_void_p]
+        kernel.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if kernel.GetPriorityClass(kernel.GetCurrentProcess()) == 0x00004000:
+            # BELOW_NORMAL's base 6 plus HIGHEST's 2 equals ordinary priority 8.
+            # No process/child priority change and no time-critical scheduling.
+            kernel.SetThreadPriority(kernel.GetCurrentThread(), 2)
+    except (AttributeError, OSError):
+        pass  # Status remains usable when the OS does not support this hint.
+
+
 def live_merge_progress(fm) -> dict:
     import merge
     progress = fm.cfg.merge_round_file or str(fm.state_dir / "merge-round.json")
-    return merge.view(progress, fm.cfg.heavy_lease_file)
+    cached = (getattr(fm, "snapshot", None) or {}).get("merge_view") or {}
+    return merge.refresh(progress, fm.cfg.heavy_lease_file, cached, getattr(fm.cfg, "worktree_root", None))
 
 
 class Dashboard:
@@ -566,6 +588,10 @@ class Dashboard:
         class Handler(BaseHTTPRequestHandler):
             server_version = "Fletchery"
 
+            def handle(self):
+                dashboard_thread_priority()
+                super().handle()
+
             def log_message(self, *a):  # quiet: the dashboard polls every few seconds
                 pass
 
@@ -590,6 +616,7 @@ class Dashboard:
                 self._send(code, json.dumps(obj).encode("utf-8"))
 
             def do_GET(self):
+                query = parse_qs(urlsplit(self.path).query)
                 self.path = self.path.split("?", 1)[0].split("#", 1)[0]  # the page reads its own query (?open=, ?only=)
                 if not self._host_ok():
                     return self._json(403, {"error": "Open the dashboard at http://127.0.0.1:%d" % dash.port})
@@ -597,6 +624,15 @@ class Dashboard:
                     return self._send(200, dash.page(), "text/html; charset=utf-8")
                 if self.path == "/api/status":
                     return self._json(200, dash.status())
+                if self.path == "/api/merge/log":
+                    import merge
+                    try:
+                        cfg = dash.fm.cfg
+                        text = merge.log_text(cfg.merge_round_file or str(dash.fm.state_dir / "merge-round.json"),
+                                              cfg.worktree_root, query.get("round", [""])[0], query.get("name", [""])[0])
+                        return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
+                    except (OSError, ValueError, TypeError):
+                        return self._json(404, {"error": "Current round log is unavailable"})
                 if self.path == "/favicon.ico":  # the app window's taskbar icon
                     return self._send(200, (UI / "Fletchery.ico").read_bytes(), "image/x-icon")
                 return self._json(404, {"error": "not found"})
@@ -663,7 +699,10 @@ class Dashboard:
 
         self.server = ThreadingHTTPServer((self.host, self.port), Handler)
         self.server.daemon_threads = True
-        threading.Thread(target=self.server.serve_forever, name="fletchery-server", daemon=True).start()
+        def serve():
+            dashboard_thread_priority()
+            self.server.serve_forever()
+        threading.Thread(target=serve, name="fletchery-server", daemon=True).start()
 
     def stop(self) -> None:
         if self.server:
