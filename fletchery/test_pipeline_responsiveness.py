@@ -11,7 +11,7 @@ from config import Config
 from gates import GateResult
 from github import FakeGitHub, PullRequest
 from graph import Task
-from pipeline import Context, Outcome, _fix_pr, _requeue_or_block, _run_task
+from pipeline import Context, Outcome, _fix_pr, _requeue_or_block, _run_task, _fail, _run_task_body
 from repo import FakeRepo
 from runtime import FakeRuntime
 
@@ -116,6 +116,79 @@ class PipelineResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             results = await asyncio.gather(first, second)
         self.assertEqual([r.agent for r in results], ["first", "second"])
         self.assertEqual(ctx.agents.busy, {"first": 0, "second": 0})
+
+    def escalation_context(self):
+        pool = AgentPool([AgentSpec("weak", kind="fake", tier=1),
+                          AgentSpec("strong", kind="fake", tier=3, max_parallel=1)],
+                         {"mode": "lists"}, lambda _: FakeRuntime())
+        return self.context(pool)
+
+    async def test_escalation_reserves_capacity_before_slow_setup_and_transfers_once(self):
+        ctx = self.escalation_context()
+        entered, release = threading.Event(), threading.Event()
+        original = ctx.repo.restart_task_worktree
+
+        def slow(*args):
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError("fixture checkout timed out")
+            return original(*args)
+
+        with patch.object(ctx.repo, "restart_task_worktree", side_effect=slow) as setup:
+            first = asyncio.create_task(_fail(ctx, ctx.gh.tasks[1], Outcome(1, "requeue"),
+                                             Path("first-attempt"), "weak", "needs stronger agent"))
+            try:
+                while not entered.is_set():
+                    await asyncio.sleep(0)
+                self.assertEqual(ctx.agents.busy.get("strong"), 1)
+                second = await _fail(ctx, ctx.gh.tasks[2], Outcome(2, "requeue"),
+                                     Path("second-attempt"), "weak", "needs stronger agent")
+                self.assertEqual(second.result, "blocked")
+                self.assertEqual(setup.call_count, 1)
+            finally:
+                release.set()
+            escalation = await first
+        self.assertTrue(escalation.reserved)
+
+        async def next_attempt(*args):
+            self.assertEqual(ctx.agents.busy["strong"], 1, "handoff must not acquire the slot twice")
+            return Outcome(1, "pr")
+
+        with patch("pipeline._attempt", side_effect=next_attempt):
+            await _run_task_body(ctx.gh.tasks[1], ctx, Outcome(1, "requeue"),
+                                 escalation.agent, [escalation.note], escalation.reserved)
+        self.assertEqual(ctx.agents.busy["strong"], 0)
+
+    async def test_escalation_setup_failure_releases_reserved_capacity(self):
+        ctx = self.escalation_context()
+        with patch.object(ctx.repo, "restart_task_worktree", side_effect=RuntimeError("setup failed")):
+            result = await _fail(ctx, ctx.gh.tasks[1], Outcome(1, "requeue"), Path("attempt"), "weak", "failed")
+        self.assertEqual(result.result, "blocked")
+        self.assertEqual(ctx.agents.busy["strong"], 0)
+
+    async def test_cancelled_escalation_setup_releases_reserved_capacity(self):
+        ctx = self.escalation_context()
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        def slow(*args):
+            entered.set()
+            try:
+                if not release.wait(2):
+                    raise RuntimeError("fixture checkout timed out")
+                return Path("fresh")
+            finally:
+                finished.set()
+        with patch.object(ctx.repo, "restart_task_worktree", side_effect=slow):
+            job = asyncio.create_task(_fail(ctx, ctx.gh.tasks[1], Outcome(1, "requeue"), Path("attempt"), "weak", "failed"))
+            try:
+                while not entered.is_set():
+                    await asyncio.sleep(0)
+                job.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await job
+                self.assertEqual(ctx.agents.busy["strong"], 0)
+            finally:
+                release.set()
+                self.assertTrue(await asyncio.to_thread(finished.wait, 2))
 
     async def test_setup_failure_releases_fixer_capacity(self):
         ctx = self.context(self.pool())

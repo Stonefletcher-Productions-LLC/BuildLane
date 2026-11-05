@@ -397,6 +397,7 @@ class Engine:
         # the very first pass after startup rather than the previous snapshot.
         self._tasks, self._prs, self._waiting = tasks, prs, rd.waiting
         self._known_closed_dependencies = closed_deps
+        self._dependency_lookup = is_closed
         self._merge_round(draining)
         self.snapshot = self.make_snapshot(tasks, prs, rd.waiting, [])
 
@@ -422,6 +423,20 @@ class Engine:
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
+            # External ready PRs need not carry the harness task label and thus
+            # may be absent from open_prs(). Verify their own dependency refs too.
+            known_closed = getattr(self, "_known_closed_dependencies", set())
+            refs = {d for p in ready for d in Task(0, "", p.body).depends_on}
+            unresolved = refs - self._tasks.keys() - {p.number for p in ready} - known_closed
+            lookup = getattr(self, "_dependency_lookup", self.ctx.gh.issue_closed)
+            for dependency in sorted(unresolved):
+                try:
+                    if lookup(dependency):
+                        known_closed.add(dependency)
+                except Exception as e:
+                    self.dispatch_warning = f"GitHub could not verify prerequisite #{dependency}"
+                    self.ctx.log(f"#{dependency}: merge prerequisite lookup deferred: {e}")
+            self._known_closed_dependencies = known_closed
             for p in ready:
                 old = st.merge_excluded.get(str(p.number))
                 if old and old.get("head") == p.head_sha and not old.get("repair_task"):
@@ -663,8 +678,9 @@ class Engine:
                 for old in [d for d in st.spent_by_agent if d < (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")]:
                     del st.spent_by_agent[old]
             self._ledger(o)
-            if o.result == "fixed" and o.pr_number is not None:
-                st.seen[str(o.pr_number)] = now()
+            # Dispatch already recorded the newest feedback actually sent to
+            # this fixer. Do not advance it to completion time: comments/checks
+            # arriving during the repair still need to be handled next pass.
             if o.result in ("signed_out", "limited", "agent_paused", "waiting_dependencies", "retry_fix") and pr_n is not None:
                 # A new concrete repair plan or resolved prerequisite needs a fresh fixer opportunity,
                 # including when the previous block was caused by exhausted fixer attempts.

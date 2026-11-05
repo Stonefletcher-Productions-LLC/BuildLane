@@ -50,9 +50,9 @@ class _LimitGuard(Runtime):
 
 
 class _Escalate:
-    """An attempt failed in a way a stronger agent may fix: the worktree is reset and `agent` tries next."""
-    def __init__(self, agent: str, note: str):
-        self.agent, self.note = agent, note
+    """A preserved attempt handed to a stronger agent with its capacity reserved."""
+    def __init__(self, agent: str, note: str, reserved: bool = False):
+        self.agent, self.note, self.reserved = agent, note, reserved
 
 
 @dataclass
@@ -129,12 +129,13 @@ async def run_task(task: Task, ctx: Context) -> Outcome:
 
 
 async def _run_task(task: Task, ctx: Context, out: Outcome) -> Outcome:
-    agent, history = None, []
+    agent, history, reserved = None, [], False
     try:
         while True:
-            res = await _run_task_body(task, ctx, out, agent, history)
+            transfer, reserved = reserved, False
+            res = await _run_task_body(task, ctx, out, agent, history, transfer)
             if isinstance(res, _Escalate):
-                agent = res.agent
+                agent, reserved = res.agent, res.reserved
                 history.append(res.note)
                 continue
             return res
@@ -153,7 +154,7 @@ async def _run_task(task: Task, ctx: Context, out: Outcome) -> Outcome:
 
 
 async def _run_task_body(task: Task, ctx: Context, out: Outcome, agent: str | None = None,
-                         history: list[str] | None = None) -> "Outcome | _Escalate":
+                         history: list[str] | None = None, reserved: bool = False) -> "Outcome | _Escalate":
     cfg, gh, repo, pool = ctx.cfg, ctx.gh, ctx.repo, ctx.agents
     first = not history
     if pool is not None and agent is None:
@@ -163,7 +164,7 @@ async def _run_task_body(task: Task, ctx: Context, out: Outcome, agent: str | No
             out.result, out.detail = "waiting_agent", "no agent free for it"
             return out
         agent, out.difficulty, out.route, out.skill = choice.agent, choice.difficulty, choice.why, choice.skill
-    if pool is not None:
+    if pool is not None and not reserved:
         pool.acquire(agent)
     try:
         return await _attempt(task, ctx, out, agent, history or [], first)
@@ -194,7 +195,7 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     local_branch = await asyncio.to_thread(_branch_at, repo, wt, task.branch)
     task.rules = rules_mod.load(wt, cfg.project_root)
     async def fail(why, infra=False):
-        return await asyncio.to_thread(_fail, ctx, task, out, wt, agent, why, infra)
+        return await _fail(ctx, task, out, wt, agent, why, infra)
     issue = _issue_text(task) + _history_text(history)
 
     # 1. worker
@@ -377,7 +378,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
 
 # ---- helpers ----
 
-def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, why: str,
+async def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, why: str,
           infra: bool = False) -> "Outcome | _Escalate":
     """A failed attempt. With several agents, the next stronger one available starts again from a clean branch, told
     what went wrong; the task is blocked only when the strongest has failed too. With one agent: blocked as before
@@ -392,15 +393,32 @@ def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | None, w
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:
             why += "\n\nAgents tried, in order: " + ", ".join(tried) + "."
-        return _requeue_or_block(ctx, task, out, why) if infra and len(tried) <= 1 else _block(ctx, out, why)
+        if infra and len(tried) <= 1:
+            return await asyncio.to_thread(_requeue_or_block, ctx, task, out, why)
+        return await asyncio.to_thread(_block, ctx, out, why)
+    # Selection and reservation happen together on the event-loop thread, before
+    # slow checkout preparation can let another failed worker select this slot.
+    pool.acquire(nxt)
+    transferred = False
     try:
-        fresh = ctx.repo.restart_task_worktree(task.number, task.slug, task.branch, wt, why, ctx.cfg.heavy_lease_file)
-    except Exception as e:
-        return _block(ctx, out, f"{why}\n\n(could not preserve this attempt and prepare {nxt}'s checkout: {e})")
-    ctx.gh.comment(task.number, f"Fletchery: {agent} could not finish this ({first_line[:300]}). "
-                                f"Its work is preserved at `{wt}`; {nxt} starts in `{fresh}` from `{ctx.cfg.base_branch}`.")
-    ctx.log(f"#{task.number} {agent} failed ({first_line[:80]}); escalating to {nxt}")
-    return _Escalate(nxt, f"- {agent} tried and failed: {why[:1500]}\n  Preserved attempt: `{wt}`. Read it only if useful; do not modify it.")
+        try:
+            fresh = await asyncio.to_thread(ctx.repo.restart_task_worktree, task.number, task.slug,
+                                            task.branch, wt, why, ctx.cfg.heavy_lease_file)
+        except Exception as e:
+            return await asyncio.to_thread(_block, ctx, out,
+                f"{why}\n\n(could not preserve this attempt and prepare {nxt}'s checkout: {e})")
+        await asyncio.to_thread(ctx.gh.comment, task.number,
+            f"Fletchery: {agent} could not finish this ({first_line[:300]}). "
+            f"Its work is preserved at `{wt}`; {nxt} starts in `{fresh}` from `{ctx.cfg.base_branch}`.")
+        ctx.log(f"#{task.number} {agent} failed ({first_line[:80]}); escalating to {nxt}")
+        result = _Escalate(nxt,
+            f"- {agent} tried and failed: {why[:1500]}\n  Preserved attempt: `{wt}`. Read it only if useful; do not modify it.",
+            reserved=True)
+        transferred = True
+        return result
+    finally:
+        if not transferred:
+            pool.release(nxt)
 
 
 def _branch_at(repo, wt: Path, fallback: str) -> str:

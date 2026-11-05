@@ -11,7 +11,7 @@ from config import Config
 from github import FakeGitHub, Feedback, PullRequest
 from graph import Task, PR, label_for
 from loop import Engine, State, today
-from pipeline import Context
+from pipeline import Context, Outcome
 from repo import FakeRepo
 from runtime import FakeRuntime
 
@@ -28,6 +28,50 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         ctx = Context(cfg, gh, FakeRepo(root / "worktrees"), runtime,
                       run_gates=lambda *_: [], log=lambda _: None)
         return Engine(ctx, root / "state"), gh, runtime
+
+    async def test_external_ready_pr_dependency_is_verified_even_without_harness_label(self):
+        for answer in (True, False, RuntimeError("GitHub down")):
+            with self.subTest(answer=answer):
+                engine, gh, runtime = self.engine(merge_rounds=True, max_parallel=0)
+                external = PullRequest(12, "External feature", "external", "Test-Staging", "a" * 40,
+                                       ["ready"], "Depends on: #90")
+                independent = PullRequest(13, "Independent", "independent", "Test-Staging", "b" * 40, ["ready"])
+                options = {"side_effect": answer} if isinstance(answer, Exception) else {"return_value": answer}
+                with patch.object(gh, "open_prs", return_value=[]), \
+                     patch.object(gh, "labelled_prs", return_value=[external, independent]), \
+                     patch.object(gh, "issue_closed", **options) as lookup:
+                    await engine.once()
+                lookup.assert_called_once_with(90)
+                progress = __import__("rounds").read_file(str(engine.state_dir / "merge-round.json"))
+                self.assertEqual(progress["prs"], [12, 13] if answer is True else [13])
+
+    async def test_feedback_arriving_during_repair_is_not_marked_consumed(self):
+        task = Task(1, "Fix existing feature", labels=[label_for(PR)])
+        engine, gh, _ = self.engine({1: task})
+        pr = PullRequest(12, "Feature", task.branch, "Test-Staging", "a" * 40, ["ready"], "Closes #1")
+        gh.prs = [pr]
+        first = "2026-11-04T00:00:00Z"
+        later = "2026-11-04T00:01:00Z"
+        gh.feedback[12] = [Feedback(12, "comment", "Initial correction", first)]
+        entered, release = asyncio.Event(), asyncio.Event()
+        seen = []
+
+        async def fixer(task, pr, feedback, attempt, ctx):
+            seen.append([f.text for f in feedback])
+            if len(seen) == 1:
+                entered.set()
+                await release.wait()
+            return Outcome(1, "fixed", pr_number=12)
+
+        with patch("loop.fix_pr", side_effect=fixer):
+            engine.dispatch()
+            await asyncio.wait_for(entered.wait(), 2)
+            gh.feedback[12].append(Feedback(12, "comment", "New correction during repair", later))
+            release.set()
+            await engine._wait_for_jobs(None)
+            self.assertEqual(engine.state.seen["12"], first)
+            await engine.once()
+        self.assertEqual(seen, [["Initial correction"], ["New correction during repair"]])
 
     async def test_shared_dependency_queried_once_across_fixers_and_workers(self):
         tasks = {1: Task(1, "Existing PR", "Depends on: #90", [label_for(PR)]),
