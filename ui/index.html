@@ -1356,7 +1356,7 @@ function render(d) {
       const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
       lastGroup = g;
       return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
-    }).join("") : `<li class="empty">Nothing waiting to merge.</li>`;
+    }).join("") : `<li class="empty">${Array.isArray(d.merge) ? "Nothing waiting to merge." : "GitHub PR queue is not available yet. Local merge progress is shown above."}</li>`;
   }
   function mergeRow(r, currentRound, membershipVerified) {
     const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;

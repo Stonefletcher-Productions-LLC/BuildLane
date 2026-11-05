@@ -199,6 +199,7 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(next=>{last=next;render(next);},data);
     assert.match(await page.locator('.round-history summary').innerText(),/Previous round 19/);
     assert.match(await page.locator('#mergeNow').innerText(),/PC heavy lease is held/);
+    assert.match(await page.locator('#c-pr').innerText(),/GitHub PR queue is not available yet/);
     data.merge=cachedQueue;
     // A newly started round must not inherit old failed steps or old ancestry.
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
