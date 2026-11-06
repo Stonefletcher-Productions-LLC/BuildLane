@@ -92,6 +92,10 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
     assert.match(await page.locator('.round-status').innerText(), /Game tests/);
+    const workerWidth = (await page.locator('#workers').boundingBox()).width;
+    const mergeWidth = (await page.locator('#mergeCard').boundingBox()).width;
+    assert.ok(Math.abs(workerWidth - mergeWidth) <= 1, 'overview gives workers and merging equal column widths');
+    assert.equal(await visible('#mergeNow .msteps[aria-label="Current round steps"]'), false);
     await page.locator('.round-detail summary').click();
     await page.evaluate(() => render(last));
     assert.equal(await page.locator('.round-detail').getAttribute('open'), '');
@@ -106,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
     await page.screenshot({path: path.join(out, 'overview-dark.png'), fullPage: true});
     // Each step expands independently; polling preserves explicit choices and keyboard focus.
-    await page.locator('[data-view="merge"]').click();
+    await page.getByRole('link', {name: 'Round details →'}).click();
     assert.equal(await visible('#view-merge'), true);
     assert.equal(await visible('#mergeCard .merge-aside'), true);
     assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
@@ -251,6 +255,7 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('.merge-current').innerText(), /1 PR · started/);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
+    await page.locator('[data-view="merge"]').click();
     assert.match(await page.locator('.merge-check-summary').innerText(), /1 of 3 passed[\s\S]*1 running/);
     assert.match(await page.locator('.merge-checks li').first().innerText(), /RunSpecs/);
     assert.match(await page.locator('[data-step-panel="progress"]:visible .merge-activity').innerText(), /Running LifeShare.Pets/);
@@ -271,6 +276,7 @@ const server = http.createServer(async (req, res) => {
     assert.doesNotMatch(await page.locator('.round-history summary').innerText(), /failed/);
     delete data.merge_auto.resume;
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
+    await page.locator('[data-view="overview"]').click();
     // Worker availability explains merge scheduling, without presenting it as a manual pause.
     data.live = [];
     data.merge_auto.priority = true;
@@ -426,6 +432,9 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => document.querySelector('#rankMode').textContent.includes('Manual'));
     assert.equal(requests.at(-1).url, '/api/workers/ranks');
     assert.equal(requests.at(-1).body.limits.low, 7);
+    assert.equal(await visible('#integrationPlans'), false, 'planning stays on the Merging page');
+    await page.getByRole('link', {name: 'Round details →'}).click();
+    assert.equal(await visible('#integrationPlans'), true);
     await page.locator('#planMerge').click();
     await page.locator('#planWhen').fill('2030-11-05T19:30');
     await page.locator('#planSubmit').click();
