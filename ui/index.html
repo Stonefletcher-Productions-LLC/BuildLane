@@ -76,6 +76,7 @@
   .banner.hold { background: var(--hold-bg); color: var(--hold); }
   .banner.down { background: var(--blocked-bg); color: var(--blocked); }
   .banner span { font-weight: 400; }
+  .banner > div + div { margin-top: 6px; }
 
 
   /* ---- task queue: the GitHub issues waiting for a worker ---- */
@@ -610,7 +611,7 @@
   @media (max-width: 640px) {
     .sidebar { position: static; width: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--rule); gap: 10px; }
     .sidebar-brand { font-size: 17px; }
-    .sidebar nav { display: flex; gap: 4px; }
+    .sidebar nav { display: flex; flex-wrap: wrap; gap: 4px; }
     .sidebar a { padding: 8px; gap: 5px; font-size: 12px; }
     .nav-icon { display: none; }
     .sidebar-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -725,7 +726,12 @@
 .ranked-workers [data-key="workers"] {display:none}
 #allWorkerTotal {width:90px; display:inline-block; margin:0}
 .rank-section {border-top:1px solid var(--line); margin-top:12px; padding-top:8px}
-.rank-section .slot.free {min-height:0; padding:10px}
+.rank-section .slot.free {min-height:0; padding:6px 10px}
+.rank-section .now-head {align-items:center; margin-bottom:4px}
+.rank-section .now-head h3 {margin:0; font-size:15px}
+.rank-section .now-head label {display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:600}
+.rank-section .now-head select {width:auto; min-width:64px; padding-top:4px; padding-bottom:4px}
+.rank-section .emergency-help {margin:2px 0 6px}
   .plans-header, .plans-heading, .plans-actions, .plan-top, .plan-actions {
     display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
   }
@@ -1439,15 +1445,21 @@ function renderStatus(d) {
   $("hold").classList.toggle("primary", d.held);
 
   // banners
+  // Every reason that applies, not just the first: an update banner used to hide "Paused", and nothing said that new
+  // feature tasks wait while the merge backlog is high (2026-11-06).
   const hb = $("holdBanner");
-  if (d.signed_out) { hb.innerHTML = `Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`; hb.classList.add("show"); }
-  else if (d.update_pending) { hb.innerHTML = `Update ready. <span>${d.merge_auto?.running?.round ? "Workers continue while the current merge round finishes, then Fletchery reloads." : "Running sessions finish, then Fletchery reloads automatically."}</span>`; hb.classList.add("show"); }
-  else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
-  else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
-  else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
-  else if (d.limit_until) { hb.innerHTML = `Feature workers paused by a usage limit. <span>Feature work can resume at ${esc(clockTime(d.limit_until))}. Merge windows and packages have separate queues.</span>`; hb.classList.add("show"); }
-  else if (mergeWait) { hb.innerHTML = `${esc(mergeWait.title)}. <span>${esc(mergeWait.detail)}</span>`; hb.classList.add("show"); }
-  else hb.classList.remove("show");
+  const notes = [];
+  const backlog = d.merge_auto && d.merge_auto.backlog;
+  if (d.signed_out) notes.push(`Claude needs signing in again. <span>${esc(d.signed_out)} Open a terminal, run <b>claude</b>, type <b>/login</b>; work resumes on the next check.</span>`);
+  if (d.held) notes.push("Paused. <span>Nothing new starts until you press <b>Resume</b> (top right). Running work finishes.</span>");
+  if (d.update_pending) notes.push(`Update ready. <span>${d.merge_auto?.running?.round ? "Running work continues while the current merge round finishes, then Fletchery reloads." : "Running sessions finish, then Fletchery reloads automatically."}</span>`);
+  if (d.restarting) notes.push(`Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`);
+  if (d.setup_needed) notes.push(`Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`);
+  if (d.limit_until) notes.push(`Feature workers paused by a usage limit. <span>Feature work can resume at ${esc(clockTime(d.limit_until))}. Merge windows and packages have separate queues.</span>`);
+  if (backlog && backlog.paused) notes.push(`New feature tasks wait for merging. <span>${backlog.count} ready PRs are waiting to merge; new tasks start again when that drops to ${backlog.low}. Fixes, repairs and merge rounds continue. (Settings &gt; This project &gt; Merging)</span>`);
+  if (mergeWait && !notes.length) notes.push(`${esc(mergeWait.title)}. <span>${esc(mergeWait.detail)}</span>`);
+  hb.innerHTML = notes.map(n => `<div>${n}</div>`).join("");
+  hb.classList.toggle("show", notes.length > 0);
   if (d.sync_error) {
     $("downBanner").innerHTML = "GitHub refresh delayed. <span>Showing the last queue snapshot; retrying shortly. Workers already running continue.</span>";
     $("downBanner").classList.add("show");
