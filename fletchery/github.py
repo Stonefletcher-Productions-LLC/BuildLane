@@ -54,6 +54,7 @@ class GitHub:
     def __init__(self, repo: str, gh: str = "gh"):
         self.repo = repo
         self.gh = gh
+        self.warnings: list[str] = []
 
     # ---- raw ----
     def _request(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False) -> str:
@@ -209,13 +210,48 @@ class GitHub:
         items = self.api(f"repos/{self.repo}/pulls/{number}/files?per_page=100", paginate=True) or []
         return [f["filename"] for f in items]
 
+    def _open_from(self, head: str, base: str) -> list[dict]:
+        owner = self.repo.split("/")[0]
+        return self.api(f"repos/{self.repo}/pulls?state=open&head={owner}:{head}&base={base}&per_page=10") or []
+
+    def open_pr_for(self, head: str, base: str) -> int | None:
+        """The open PR from `head` into `base`, or None."""
+        items = self._open_from(head, base)
+        return items[0]["number"] if items else None
+
+    def orphan_pr_for(self, head: str, base: str) -> int | None:
+        """An open PR from `head` that lacks the Fletchery label: opened by a run that then failed to label it."""
+        for p in self._open_from(head, base):
+            if graph.PREFIX not in [l["name"] for l in p.get("labels", [])]:
+                return p["number"]
+        return None
+
+    def add_labels(self, number: int, labels: list[str]) -> None:
+        self.api(f"repos/{self.repo}/issues/{number}/labels", "POST", {"labels": labels})
+
     def create_pr(self, head: str, base: str, title: str, body: str, labels: list[str], assignee: str | None) -> int:
-        p = self.api(f"repos/{self.repo}/pulls", "POST", {"title": title, "head": head, "base": base, "body": body})
-        patch: dict = {"labels": labels}
+        """Open (or reuse) the PR from `head` and label it. Idempotent: a retry after a half-finished attempt finds the
+        PR the first attempt opened instead of failing with 422 (2026-11-05/06: ~35 finished tasks were requeued or
+        blocked that way, and their PRs sat unlabelled, so no merge round ever picked them up)."""
+        number = self.open_pr_for(head, base)
+        if number is None:
+            try:
+                number = self.api(f"repos/{self.repo}/pulls", "POST", {"title": title, "head": head, "base": base, "body": body})["number"]
+            except RuntimeError:
+                number = self.open_pr_for(head, base)  # an ambiguous earlier POST may have opened it after all
+                if number is None:
+                    raise
+        else:
+            self.api(f"repos/{self.repo}/pulls/{number}", "PATCH", {"title": title, "body": body})
+        self.add_labels(number, labels)
         if assignee:
-            patch["assignees"] = [assignee]
-        self.api(f"repos/{self.repo}/issues/{p['number']}", "PATCH", patch)
-        return p["number"]
+            # Optional. A login that cannot be assigned on this repository made the combined labels+assignees PATCH
+            # fail with 422 after the PR was already open; GitHub ignores unassignable logins on this endpoint.
+            try:
+                self.api(f"repos/{self.repo}/issues/{number}/assignees", "POST", {"assignees": [assignee]})
+            except RuntimeError as e:
+                self.warnings.append(f"PR #{number}: could not assign {assignee}: {e}")
+        return number
 
     def feedback_since(self, pr: PullRequest, since: str | None) -> list[Feedback]:
         """Lane/controller comments, failed check runs and conflicts newer than `since` (ISO time)."""
@@ -352,6 +388,18 @@ class FakeGitHub:
 
     def pr_files(self, number):
         return list(getattr(self, "files", {}).get(number, []))
+
+    def open_pr_for(self, head, base):
+        return next((p.number for p in self.prs if p.head == head and p.base == base), None)
+
+    def orphan_pr_for(self, head, base):
+        return next((p.number for p in self.prs if p.head == head and p.base == base and graph.PREFIX not in p.labels), None)
+
+    def add_labels(self, number, labels):
+        for p in self.prs:
+            if p.number == number:
+                p.labels = list(dict.fromkeys(list(p.labels) + list(labels)))
+        self.writes.append(f"labels #{number}: {', '.join(labels)}")
 
     def create_pr(self, head, base, title, body, labels, assignee):
         n = self._next_pr
