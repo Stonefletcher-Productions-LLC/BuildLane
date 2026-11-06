@@ -108,7 +108,7 @@ class Config:
     # merge rounds (rounds.py): Fletchery merges, builds, tests and lands `ready` PRs by itself, one round at a time
     merge_rounds: bool = False
     merge_label: str = "ready"               # PRs with this label into the base branch go in the next round
-    merge_round_max: int = 12                # at most this many PRs per round, oldest first
+    merge_round_max: int = 6                 # at most this many PRs per round, most-unblocking first
     merge_agent: str = ""                    # profile `roundAgent`: the agent that runs rounds; "" = Best active worker (the strongest available one). The old `mergeAgent` key is ignored.
     merge_notes: str = ""                    # a file with the project's round instructions when the repo has no .fletchery/merger.md
     merge_budget_usd: float = 60.0

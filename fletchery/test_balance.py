@@ -127,6 +127,51 @@ class BalanceTests(unittest.IsolatedAsyncioTestCase):
         cfg.merge_backlog_high, cfg.merge_backlog_low = 4, 9
         self.assertEqual(engine._backlog_marks(), (4, 4))
 
+    # ---- rounds: value order and parking ----
+
+    def test_rounds_take_the_most_unblocking_pr_first(self):
+        import rounds
+        tasks = {1: Task(1, "Old leaf", labels=["foreman:pr"]), 2: Task(2, "Pets base", labels=["foreman:pr"]),
+                 3: Task(3, "Tricks", "Depends on: #2"), 4: Task(4, "More tricks", "Depends on: #3")}
+        tasks[1].pr_number, tasks[2].pr_number = 11, 22
+        ready = [self.ready_pr(11), self.ready_pr(22)]
+        self.assertEqual([p.number for p in rounds.by_value(ready, tasks)], [22, 11])
+        self.assertEqual([p.number for p in rounds.by_value(ready, {})], [11, 22], "ties stay oldest first")
+
+    def test_twice_deferred_head_is_parked_until_it_changes(self):
+        import rounds
+        parked = {}
+        pr = self.ready_pr(20)
+        cant = [{"pr": 20, "why": "Two-PC Steam acceptance cannot run on a single PC.", "disposition": "deferred"}]
+        self.assertEqual(rounds.record_deferrals(parked, [pr], cant, 25, "2026-11-06T10:00:00+00:00"), [])
+        self.assertEqual(rounds.not_parked([pr], parked), [pr], "one deferral is not enough")
+        self.assertEqual(rounds.record_deferrals(parked, [pr], cant, 26, "2026-11-06T12:00:00+00:00"), [20])
+        from datetime import datetime
+        soon = datetime.fromisoformat("2026-11-06T13:00:00+00:00")
+        self.assertEqual(rounds.not_parked([pr], parked, soon), [])
+        later = datetime.fromisoformat("2026-11-09T13:00:00+00:00")
+        self.assertEqual(rounds.not_parked([pr], dict(parked), later), [pr], "parking expires")
+        moved = self.ready_pr(20, head="c" * 40)
+        self.assertEqual(rounds.not_parked([moved], parked, soon), [moved], "a new head unparks")
+        self.assertNotIn("20", parked)
+
+    def test_unattempted_deferrals_never_park(self):
+        import rounds
+        parked = {}
+        pr = self.ready_pr(34)
+        for n, why in ((25, "Not attempted; head unchanged since round 24."), (26, "Round interrupted before its check")):
+            rounds.record_deferrals(parked, [pr], [{"pr": 34, "why": why, "disposition": "deferred"}], n, "2026-11-06T10:00:00+00:00")
+        self.assertEqual(rounds.not_parked([pr], parked), [pr])
+
+    async def test_parked_pr_stays_out_of_the_next_round(self):
+        engine, gh, rt = self.engine({}, merge_rounds=True)
+        gh.prs = [self.ready_pr(11), self.ready_pr(12)]
+        engine.state.merge_parked = {"11": {"head": "a" * 40, "count": 2, "parked": "2999-01-01T00:00:00+00:00"}}
+        await engine.once()
+        import rounds
+        progress = rounds.read_file(str(engine.state_dir / "merge-round.json"))
+        self.assertEqual(progress["prs"], [12])
+
 
 if __name__ == "__main__":
     unittest.main()

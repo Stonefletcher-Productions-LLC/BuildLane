@@ -44,6 +44,7 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
+    merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
@@ -728,6 +729,10 @@ class Engine:
         ready = self.plans.select(ready)
         if self.plans.active_merge and not ready:
             return
+        if not resume and not self.plans.active_merge:
+            # A PR deferred twice at one head (acceptance this PC cannot run) stops taking a slot until it changes;
+            # the rest go most-unblocking first, so each round sets the most queued work moving.
+            ready = rounds.by_value(rounds.not_parked(ready, st.merge_parked), self._tasks)
         if resume:
             wanted = {int(n) for n in resume.get("prs", {})}
             ready = [p for p in ready if p.number in wanted]
@@ -916,6 +921,10 @@ class Engine:
             p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
             if p is not None:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
+        parked = rounds.record_deferrals(self.state.merge_parked, batch, res.get("deferred", []), n, res["at"])
+        if parked:
+            self.ctx.log(f"merge round {n}: parked " + ", ".join(f"#{x}" for x in parked)
+                         + f" (deferred {rounds.PARK_AFTER} times at the same head; a new commit or {rounds.PARK_HOURS} h unparks)")
         if resume and res["result"] in ("landed", "nothing"):
             self.state.merge_resume = {}
         elif resume and res["result"] in ("failed", "crashed", "checkout_failed"):
@@ -1410,6 +1419,7 @@ class Engine:
                 "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority,
                                "backlog": {"count": self.merge_backlog, "paused": self.backlog_paused,
                                            "high": self._backlog_marks()[0], "low": self._backlog_marks()[1]},
+                               "parked": {k: v for k, v in st.merge_parked.items() if v.get("parked")},
                                "round_shares": (list(self.ctx.agents.round_account) if self.ctx.agents is not None
                                                 and self.ctx.agents.round_account else None), "running": dict(self.round_info),
                                "why": self.merge_why, "resume": dict(st.merge_resume), "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
