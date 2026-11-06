@@ -194,6 +194,12 @@ def role_prompt(role: str, rules=None, **fields: str) -> str:
                  "This is only for actual reservation contention: permission denials, missing tools "
                  "and build failures use the normal failure report. Never release another job's lease. "
                  "The controller waits for readiness before resuming.\n")
+    # Round 26 (2026-11-06) wrote "Still waiting on Auto." and ended its turn while a 25-minute test run went on in the
+    # background; the SDK then forced the final answer and the round reported `interrupted` with every check green.
+    text += ("\nNobody answers between your turns: ending a turn ends this session and forces your final answer. Never end "
+             "a turn to wait. Wait for long commands inside the turn: run them in the foreground with a long timeout, or "
+             "poll in the foreground (wait a minute or two, then read the log, repeated) until they finish. Give the "
+             "final answer once, when the work is done or truly cannot continue.\n")
     conventions = (rules.conventions.strip() if rules and rules.conventions else "")
     fields.setdefault("conventions", "# The project's conventions\n\n" + conventions if conventions else "")
     extra = rules.additions.get(role, "").strip() if rules else ""
