@@ -1304,6 +1304,15 @@ function emergencyWorkerState(d) {
   const live = e && Array.isArray(e.live) ? e.live : (d.live || []).filter(a => a.emergency);
   return {available: !!e, max: e && Number(e.max_parallel) > 0 ? 1 : 0, live, why: e && e.why || ""};
 }
+// Session results as people read them. Unknown codes fall back to "some_code" -> "Some code", never the raw code.
+const RESULT_NAMES = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued",
+  signed_out: "Signed out", agent_paused: "Agent paused", waiting_agent: "Waited for an agent", handed_off: "Checkpoint saved",
+  retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites", waiting_resource: "Waiting for the PC",
+  unreachable: "Model unreachable", crashed: "Crashed", interrupted: "Interrupted"};
+function resultName(names, code) {
+  const text = String(code || "");
+  return Object.hasOwn(names, text) ? names[text] : (text.charAt(0).toUpperCase() + text.slice(1)).replace(/_/g, " ");
+}
 function normalWorkerSessions(d) {
   const emergency = emergencyWorkerState(d);
   const emergencyTasks = new Set(emergency.live.map(a => a.task));
@@ -1324,7 +1333,7 @@ function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   lastActions[a.task] = a.actions;
   const row = d.tasks.find(t => t.number === a.task);
   return `<details class="slot" ${attribute}="${a.task}"${expanded.has(String(a.task)) ? " open" : ""}>
-    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Choosing an agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
     <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
     ${track}<div class="what">${esc(explain(a))}</div>
     <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
@@ -1402,7 +1411,12 @@ function renderStatus(d) {
   if (d.max_parallel === 0) state = running
       ? `<b>Writing pauses</b> once ${running} running ${running > 1 ? "sessions finish" : "session finishes"} (0 workers) · ${zeroWorkerTail}`
       : `<b>Writing paused</b> (0 workers) · ${zeroWorkerTail}`;
-  else if (running) state = `<b>${running} of ${d.max_parallel}</b> workers writing code`;
+  else if (running) {
+    const fixing = ordinary.filter(a => a.kind === "fix").length;
+    state = fixing
+      ? `<b>${running} of ${d.max_parallel}</b> workers busy · ${running - fixing} on tasks, ${fixing} fixing ${fixing === 1 ? "a PR" : "PRs"}`
+      : `<b>${running} of ${d.max_parallel}</b> workers on tasks`;
+  }
   else if (mergeWait) state = `<b>${esc(mergeWait.title)}</b>`;
   else if (emergency.live.length) state = "<b>Repairing a build or merge failure</b>";
   else if (d.passing) state = "Checking GitHub for work…";
@@ -1571,13 +1585,11 @@ function renderStatus(d) {
   }
 
   // history
-  const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out",
-                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent", handed_off: "Checkpoint saved",
-                 retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
+  const names = RESULT_NAMES;
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
       <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)}</td>
-      <td><span class="res ${esc(h.result)}">${esc(names[h.result] || h.result)}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
+      <td><span class="res ${esc(h.result)}">${esc(resultName(names, h.result))}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
         ${h.agent ? ` <span class="ag-by">by ${esc(h.agent)}${h.reviewer ? `, reviewed by ${esc(h.reviewer)}` : ""}</span>` : ""}
         ${h.detail ? `<br><span style="color:var(--muted)">${esc(h.detail)}</span>` : ""}</td>
       <td class="cost">$${Number(h.cost_usd || 0).toFixed(2)}</td></tr>`).join("")
@@ -1625,8 +1637,8 @@ function renderOverview(d) {
   $("navTasks").setAttribute("aria-label", blocked.length ? `${blocked.length} need attention` : `${queued.length} queued, ${prs} PRs waiting`);
   $("attentionCount").textContent = blocked.length ? `(${blocked.length})` : "";
   $("attentionPreview").innerHTML = blocked.length ? blocked.slice(0, 3).map(t => `<li><button type="button" data-ny="${t.number}">#${t.number} ${esc(t.title)}</button></li>`).join("") : '<li><small>Nothing needs your input.</small></li>';
-  const names = {pr: "PR opened", fixed: "Fix pushed", blocked: "Needs you", requeue: "Requeued", retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
-  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
+  const names = {...RESULT_NAMES, fixed: "Fix pushed", blocked: "Needs you"};
+  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(resultName(names, h.result))}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
   const active = d.merge_auto && d.merge_auto.running;
   $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merging";
 }
@@ -1656,7 +1668,7 @@ function renderWorkers(d) {
   $("slots").innerHTML = ["high", "medium", "low"].map(rank => {
     const sessions = active.filter(a => ((ranks.assignments || {})[String(a.task)] || (ranks.agent_ranks || {})[a.agent] || "low") === rank);
     const models = (ranks.models[rank] || []).map(n => `${n} (${ranks.scores[n]}${ranks.restrictions[n] ? "; " + ranks.restrictions[n].join("/") + " tasks" : ""})`).join(", ");
-    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · baseline ${esc(ranks.thresholds[rank])}</h3><label>${rank} capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${esc(models || "No enabled writing models in this rank.")}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
+    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · baseline ${esc(ranks.thresholds[rank])}</h3><label>Capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${models ? `Coding benchmark: ${esc(models)}` : "No enabled writing models in this rank."}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
   }).join("");
 }
 async function setWorkers(v) {
