@@ -42,6 +42,13 @@ class AssetJobs(unittest.TestCase):
    rt.asset_tasks={'991':{'paths':['Art/Hair/'],'mode':'delete'}}
    args,_,_=rt.command('worker',prompt,self.wt,self.root)
    self.assertEqual(args[args.index('-s')+1],'workspace-write')
+   # Ordinary Codex workers reach GitHub and their worktree's shared git metadata (blocked tasks, 2026-11-05).
+   self.assertIn('sandbox_workspace_write.network_access=true',args)
+   with patch('clis.git_common_dir',return_value='E:/repo/.git'):
+    args,_,_=rt.command('worker',prompt,self.wt,self.root)
+   self.assertEqual(args[args.index('--add-dir')+1],'E:/repo/.git')
+   args,_,_=rt.command('reviewer',prompt,self.wt,self.root)
+   self.assertNotIn('sandbox_workspace_write.network_access=true',args)
  def test_opencode_allows_installed_mcp_only_for_authorized_write_jobs(self):
   rt=OpenCodeRuntime(AgentSpec('deepseek',kind='opencode'));rt.asset_tasks=self.grants;rt.worktree_root=self.worktrees
   prompt=self.root/'prompt.md';prompt.write_text('task')
