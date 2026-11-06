@@ -635,7 +635,11 @@ class Dashboard:
 
             def handle(self):
                 dashboard_thread_priority()
-                super().handle()
+                try:
+                    super().handle()
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    # Polls can be cancelled while a response is being written.
+                    self.close_connection = True
 
             def log_message(self, *a):  # quiet: the dashboard polls every few seconds
                 pass

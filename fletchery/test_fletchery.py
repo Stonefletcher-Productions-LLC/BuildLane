@@ -153,6 +153,15 @@ ctx, tmp = ctx_with({1: T(1, "a")}, gates_fn=lambda c, w, **kw: [gates.GateResul
 fm, out = run_once(ctx, tmp)
 assert out[0].result == "blocked" and "gates still fail" in out[0].detail
 
+state["runs"] = 0
+ctx, tmp = ctx_with({1: T(1, "a")}, gates_fn=flaky, script={
+    ("worker", 1): lambda prompt: {"gave_up": "required validator is unavailable"}
+    if "Gate failures to fix" in prompt else {"summary": "Initial change"},
+})
+fm, out = run_once(ctx, tmp)
+assert state["runs"] == 1 and out[0].result == "blocked"
+assert "required validator is unavailable" in out[0].detail and not ctx.gh.prs
+
 # ---- worker gives up -> blocked with its reason; worker crash -> requeued once, blocked the second time ----
 ctx, tmp = ctx_with({1: T(1, "a")}, script={("worker", 1): {"summary": "", "files": [], "build_steps": [], "checks": [], "unverified": [], "gave_up": "needs a design call"}})
 fm, out = run_once(ctx, tmp)

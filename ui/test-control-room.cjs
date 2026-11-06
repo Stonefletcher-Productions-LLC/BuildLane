@@ -242,13 +242,18 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
     data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
-      {name: 'Game specs', state: 'running'}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
+      {name: 'Game specs', state: 'running', checks: [
+      {name: 'ValidateData', state: 'done'}, {name: 'RunSpecs', state: 'running'}, {name: 'RunNavCheck', state: 'todo'}
+    ], activity: [{line: 'Running LifeShare.Pets'}]}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
     data.merge_auto.running.prs = [1041, 1042];
     data.merge_view.prs = [1041];
     await page.evaluate(next => { last = next; render(next); }, data);
     assert.match(await page.locator('.merge-current').innerText(), /1 PR · started/);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
+    assert.match(await page.locator('.merge-check-summary').innerText(), /1 of 3 passed[\s\S]*1 running/);
+    assert.match(await page.locator('.merge-checks li').first().innerText(), /RunSpecs/);
+    assert.match(await page.locator('[data-step-panel="progress"]:visible .merge-activity').innerText(), /Running LifeShare.Pets/);
     data.update_pending=true;
     data.merge_auto.running = {};
     await page.evaluate(next=>{last=next;render(next);},data);

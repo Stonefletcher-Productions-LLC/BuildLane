@@ -1,6 +1,7 @@
 """Finished rounds are history, not the next merge's current status."""
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -169,6 +170,37 @@ class MergeStatusTests(unittest.TestCase):
         self.assertEqual(step['checks'][0]['name'],'Current repaired check')
         self.assertEqual(step['activity_source'],'Progress checkpoint')
         self.assertIn('Auto-Game-final.log',step['log_source'])
+
+    def test_live_specs_follow_test_lease_workspace_and_advance_a_stale_checkpoint(self):
+        candidate = self.root.parent / (self.root.name + "-candidate")
+        self.addCleanup(shutil.rmtree, candidate, ignore_errors=True)
+        folder = candidate / "Saved" / "MergeRound19"
+        folder.mkdir(parents=True)
+        self.save(state="running", updated="2026-11-05T07:58:00Z", steps=[
+            {"name": "Old Game specs", "state": "failed", "required": False},
+            {"name": "Game specs", "state": "running", "checks": [
+                {"name": "ValidateData", "state": "running"},
+                {"name": "RunSpecs", "state": "todo"}]}])
+        self.lease.write_text(json.dumps({"token": "held", "purpose": r"Tools\RunAllTests.ps1",
+                                         "workspaces": str(candidate), "acquiredUtc": "2026-11-05T07:57:00Z"}))
+        log = folder / "Auto-final-repaired.log"
+        log.write_text("PASS ValidateData (62s)\nSTART RunSpecs at 07:59:10\n", encoding="utf-8")
+        os.utime(log, (self.now.timestamp() - 50,) * 2)
+        engine = folder.parent / "Logs" / "Specs.log"
+        engine.parent.mkdir()
+        engine.write_text("LogAutomationController: Testing LifeShare.Pets\n", encoding="utf-8")
+        os.utime(engine, (self.now.timestamp() - 2,) * 2)
+        step = merge.view(self.progress, self.lease, now=self.now, worktree_root=self.root.parent)["steps"][1]
+        self.assertEqual([(c["name"], c["state"]) for c in step["checks"]],
+                         [("ValidateData", "done"), ("RunSpecs", "running")])
+        self.assertEqual(step["message"], "Running RunSpecs")
+        self.assertIn("Testing LifeShare.Pets", step["activity"][-1]["line"])
+        self.assertEqual(step["activity_source"], candidate.name + "/Specs.log")
+        self.assertEqual(step["state"], "running")
+
+        os.utime(log, (self.now.timestamp() - 240,) * 2)
+        stale = merge.view(self.progress, self.lease, now=self.now, worktree_root=self.root.parent)["steps"][1]
+        self.assertEqual(stale["checks"][0]["state"], "running", "previous run output cannot change a new run")
 
     def test_refresh_reads_checkpoint_without_git_and_keeps_membership_only_same_round(self):
         self.save(state="running",updated="2026-11-05T07:59:00Z",steps=[{"name":"Build","state":"running"}])

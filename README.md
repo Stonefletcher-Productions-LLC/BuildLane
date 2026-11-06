@@ -19,6 +19,8 @@ Workers and fixers that report heavy-work reservation contention keep their exis
 
 **Merge windows & packages** queues durable, cancellable integration requests. Future windows leave feature work running; due windows drain active sessions and validate the selected PR heads before reserving capacity. Package requests name an exact revision or depend on a selected window, and use the existing staging release controller for full tests and verified artifact results. The dashboard groups active, blocked, and upcoming requests, with expandable PR lists and a collapsed history for finished and cancelled requests. A quota pause on one account leaves other signed-in accounts eligible even when their worker slots are full. Queues survive restart and uncertain dispatches are not resent. [Operating guide](docs/WORK-MERGE-PACKAGE.md).
 
+If a repair session stops, Fletchery records the reason before any commit or check rerun. Failed checks retain their output for the next repair attempt. Windows worker sessions and controller checks default to UTF-8 for Python so Unicode reports survive redirected output.
+
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Tasks**, **Merging**, **Building**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
@@ -333,6 +335,9 @@ itself. Nobody is asked for approval: turning rounds on is the approval. Workers
 
 The Merge section shows the round's steps, the last result, and **Pause merging** / **Merge now**. A round that landed
 nothing waits **Retry a failed round after** minutes before trying the same PRs again, unless one of them changes.
+During Game specs, the dashboard reads fresh check events from the workspace holding the test reservation on each
+three-second refresh. The panel puts running and failed checks first, shows a pass count, and displays recent engine
+output during data validation and native specs when available. The round checkpoint still controls phase acceptance.
 `examples/LifeShare.merger.md` is a full example of round instructions.
 
 ## Safe by design
