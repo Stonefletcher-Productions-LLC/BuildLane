@@ -120,8 +120,9 @@ FIELDS = [
     {"group": "Merging", "key": "merge_label", "label": "Merge label", "type": "text",
      "help": "PRs into the base branch with this label go in the next round."},
     {"group": "Merging", "key": "merge_round_max", "label": "PRs per round (most)", "type": "int", "min": 1, "max": 60},
-    {"group": "Merging", "key": "merge_agent", "label": "Agent for rounds", "type": "text",
-     "help": "An agent's name, or empty for the strongest available Claude or OpenCode agent."},
+    {"group": "Merging", "key": "merge_agent", "label": "Agent for rounds", "type": "select", "options_from": "agents",
+     "help": "Best active worker picks the strongest agent that is on, signed in and not at a usage limit, each round. "
+             "Pick one to always use it while it is available."},
     {"group": "Merging", "key": "merge_notes", "label": "Round instructions file", "type": "path", "advanced": True,
      "help": "How a round builds and tests, when the repository has no .fletchery/merger.md."},
     {"group": "Merging", "key": "merge_budget_usd", "label": "Per round ($)", "type": "float", "min": 0, "advanced": True},
@@ -144,8 +145,26 @@ FIELDS = [
 _BY_KEY = {f["key"]: f for f in FIELDS}
 
 
+BEST_ACTIVE = "Best active worker"
+
+
+def agent_options(cfg: Config) -> list[dict]:
+    """Choices for a setting that names an agent: Best active worker (stored as "") first, then each agent."""
+    out = [{"value": "", "label": BEST_ACTIVE + " (automatic)"}]
+    for a in cfg.agents or [{"name": "claude"}]:
+        name = str(a.get("name") or "").strip()
+        if name:
+            off = "" if a.get("enabled", True) else ", off"
+            out.append({"value": name, "label": f"{name} ({a.get('model') or a.get('kind') or 'claude'}{off})"})
+    return out
+
+
+def _fields(cfg: Config) -> list[dict]:
+    return [dict(f, options=agent_options(cfg)) if f.get("options_from") == "agents" else f for f in FIELDS]
+
+
 def read_settings(cfg: Config) -> dict:
-    return {"fields": FIELDS, "values": {f["key"]: getattr(cfg, f["key"]) for f in FIELDS},
+    return {"fields": _fields(cfg), "values": {f["key"]: getattr(cfg, f["key"]) for f in FIELDS},
             "profile": str(getattr(cfg, "_path", "") or ""), "state_dir": cfg.state_dir}
 
 
@@ -194,6 +213,8 @@ def apply_settings(cfg: Config, changes: dict) -> dict:
         if k not in _BY_KEY:
             raise ValueError(f"No setting called {k}.")
         clean[k] = _coerce(_BY_KEY[k], v)
+        if _BY_KEY[k].get("options_from") == "agents" and clean[k] not in {o["value"] for o in agent_options(cfg)}:
+            raise ValueError(f"{_BY_KEY[k]['label']}: choose {BEST_ACTIVE} or one of this project's agents.")
     changed = {k: v for k, v in clean.items() if getattr(cfg, k) != v}
     if not changed:
         return {"saved": [], "restart": []}

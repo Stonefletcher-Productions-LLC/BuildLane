@@ -896,8 +896,8 @@ class Engine:
         rounds.finish_file(round_file, res["result"],
                            (res.get("stop_reason", "") + " " + res["summary"]) if res["result"] == "interrupted" else
                            (f"Landed as #{res['pr']}. " if res["pr"] else "") + res["summary"])
-        if res["result"] in ("unreachable", "checkout_failed"):
-            res["key"] = ""  # try the same PRs again at once on another agent
+        if res["result"] in ("unreachable", "checkout_failed", "limited"):
+            res["key"] = ""  # not the PRs' fault: try the same PRs again at once on another agent
             self.wake()
         for item in res.get("left_out", []):
             if not isinstance(item, dict):
