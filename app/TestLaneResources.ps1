@@ -21,7 +21,7 @@ function Start-Runner([string]$Resources, [string]$Payload, [string]$Label) {
 function Assert([bool]$Ok,[string]$Message) { if (-not $Ok) { throw $Message } }
 function Write-StartupDiagnostics($Process) {
     $Process.Refresh()
-    $Exit = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { 'still running at the 15-second startup deadline' }
+    $Exit = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { 'still running at the 60-second startup deadline' }
     Write-Host "STARTUP FAILURE: wrapper PID $($Process.Id) $Exit; shell $Shell; evidence $Root"
     foreach ($Name in @('first.out','first.err')) {
         $Path=Join-Path $Root $Name
@@ -39,7 +39,7 @@ function Write-StartupDiagnostics($Process) {
 $First = $null
 try {
     $First = Start-Runner 'gpu' ('-NoProfile -File "{0}" -Root "{1}"' -f $Fixture,$Root) 'first'
-    $Deadline = (Get-Date).AddSeconds(15)
+    $Deadline = (Get-Date).AddSeconds(60)  # cold pwsh starts on hosted runners took over 15 s (flaky CI, 2026-11-06)
     while (-not (Test-Path (Join-Path $Root 'running.json')) -and (Get-Date) -lt $Deadline -and -not $First.HasExited) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path (Join-Path $Root 'running.json'))) { Write-StartupDiagnostics $First }
     Assert (Test-Path (Join-Path $Root 'running.json')) 'Child did not start.'
