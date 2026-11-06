@@ -14,6 +14,11 @@
   let theme = "system";
   try { theme = localStorage.getItem("fletchery.theme") || theme; } catch (_) {}
   document.documentElement.dataset.theme = theme === "dark" || (theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  try {
+    const size = +localStorage.getItem("fletchery.textSize");
+    if (size >= 80 && size <= 150) document.documentElement.style.zoom = size + "%";
+    if (localStorage.getItem("fletchery.nav") === "rail") document.documentElement.dataset.nav = "rail";
+  } catch (_) {}
 })();
 </script>
 <style>
@@ -377,6 +382,7 @@
   .mr > .chev { grid-area: c; } .mr .nm { grid-area: n; } .mr .model { grid-area: m; } .mr .ov { grid-area: o; }
   .mr .chip { grid-area: s; } .mr .switch { grid-area: w; }
   .mr .nm { font-weight: 700; font-size: 15px; }
+  .mr .chip { white-space: nowrap; }
   .mr .model { font-family: var(--mono); font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
   .mr .ov { display: grid; grid-template-columns: 1fr 2.2em; gap: 8px; align-items: center; }
   .mr .ov b { text-align: right; font-variant-numeric: tabular-nums; }
@@ -491,6 +497,19 @@
   .theme-control { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; padding: 0 8px; }
   .theme-control select { width: auto; min-width: 0; margin: 0; padding: 5px 7px; font-size: 12px; border: 1px solid var(--rule); }
   .wrap { max-width: 1600px; margin-left: 180px; padding: 20px 28px 28px; }
+  #navToggle { margin-left: auto; min-height: 0; padding: 2px 8px; border: 1px solid var(--rule); background: transparent; color: var(--muted); font-size: 15px; line-height: 1.2; }
+  @media (min-width: 641px) {
+    :root[data-nav="rail"] .sidebar { width: 64px; padding-left: 8px; padding-right: 8px; }
+    :root[data-nav="rail"] .wrap { margin-left: 64px; }
+    :root[data-nav="rail"] .sidebar-brand { font-size: 0; flex-direction: column; gap: 8px; padding: 0; }
+    :root[data-nav="rail"] #navToggle { margin-left: 0; font-size: 15px; }
+    :root[data-nav="rail"] .sidebar a { font-size: 0; justify-content: center; padding: 10px 0; position: relative; }
+    :root[data-nav="rail"] .nav-count { position: absolute; top: 2px; right: 2px; margin: 0; }
+    :root[data-nav="rail"] .theme-control { display: none; }
+    :root[data-nav="rail"] #settingsBtn { font-size: 0; text-align: center; padding: 8px 0; }
+    :root[data-nav="rail"] #settingsBtn::before { content: "⚙"; font-size: 18px; }
+  }
+  @media (max-width: 640px) { #navToggle { display: none; } }
   header.top { border-bottom: 1px solid var(--rule); padding-bottom: 16px; margin-bottom: 22px; gap: 10px 20px; }
   .brand { flex: 1 1 240px; gap: 12px; flex-wrap: wrap; }
   .brand h1 { font-size: 18px; letter-spacing: 0; }
@@ -782,7 +801,7 @@
 <body>
 <a class="skip-link" href="#mainContent">Skip to content</a>
 <aside class="sidebar" aria-label="Main navigation">
-  <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery</div>
+  <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery<button id="navToggle" type="button" aria-label="Collapse the menu" title="Collapse the menu to icons">«</button></div>
   <nav aria-label="Workspace">
     <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
     <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
@@ -793,6 +812,7 @@
   </nav>
   <div class="sidebar-bottom" id="sidebarBottom">
     <label class="theme-control" for="themeChoice">Theme <select id="themeChoice"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <label class="theme-control" for="textSize" title="Scale the whole dashboard; remembered on this machine">Text size <select id="textSize"><option value="90">Small</option><option value="100">Normal</option><option value="115">Large</option><option value="130">Larger</option></select></label>
   </div>
 </aside>
 <main class="wrap" id="mainContent" tabindex="-1">
@@ -1218,6 +1238,30 @@ $("themeChoice").onchange = () => {
 };
 systemTheme.addEventListener("change", applyTheme);
 applyTheme();
+// Text size scales the whole dashboard (80-150%), and the menu can fold to icons for narrow windows; both remembered.
+(function () {
+  const root = document.documentElement, size = $("textSize"), toggle = $("navToggle");
+  let saved = 100;
+  try { saved = +localStorage.getItem("fletchery.textSize") || 100; } catch (_) {}
+  size.value = [...size.options].some(o => +o.value === saved) ? String(saved) : "100";
+  size.onchange = () => {
+    root.style.zoom = size.value === "100" ? "" : size.value + "%";
+    try { localStorage.setItem("fletchery.textSize", size.value); } catch (_) {}
+  };
+  const showToggle = () => {
+    const rail = root.dataset.nav === "rail";
+    toggle.textContent = rail ? "»" : "«";
+    toggle.setAttribute("aria-label", rail ? "Expand the menu" : "Collapse the menu");
+    toggle.title = rail ? "Show the menu with names" : "Collapse the menu to icons";
+    document.querySelectorAll(".sidebar nav a").forEach(a => { a.title = rail ? a.textContent.replace(/\d+$/, "").trim() : ""; });
+  };
+  toggle.onclick = () => {
+    if (root.dataset.nav === "rail") delete root.dataset.nav; else root.dataset.nav = "rail";
+    try { localStorage.setItem("fletchery.nav", root.dataset.nav || ""); } catch (_) {}
+    showToggle();
+  };
+  showToggle();
+})();
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -1972,19 +2016,21 @@ function agentChip(a) {
   if (a.signed_in === false) return ["Not signed in", "out"];
   if (a.busy) return [`Working (${a.busy})`, "working"];
   if (a.signed_in === true) return ["Ready", "ready"];
-  return ["Not checked yet", "idle"];
+  return ["Not checked", "idle"];
 }
+const CHIP_HELP = {"Not checked": "Its sign-in has not been checked since Fletchery started. Refresh agents checks it now.",
+  "Ready": "Signed in and free to take work.", "Not signed in": "Sign in from Accounts & keys before it can take work."};
 function modelName(a) { return a.model ? a.model.split("/").pop() : (a.scores && a.scores.seed.model_key ? a.scores.seed.model_key + " (CLI default)" : "the CLI's default model"); }
 function modelRow(a, A) {
   const [chip, cls] = agentChip(a), S = a.scores;
   const rates = ["easy", "medium", "hard"].filter(l => a[l] && a[l].tried).map(l => `${l} <b>${Math.round(a[l].rate * 100)}%</b> of ${a[l].tried}`);
   const spent = A.spent_today && A.spent_today[a.name] ? ` · today <b>$${A.spent_today[a.name].toFixed(2)}</b>` : "";
-  const ov = S ? `<span class="ov" title="Overall: the average of its four coding scores. Open the row for each one."><span class="bar" role="img" aria-label="overall ${S.overall} of 100"><i style="width:${S.overall}%"></i></span><b>${S.overall}</b></span>` : "<span></span>";
+  const ov = S ? `<span class="ov" title="Coding score, 0 to 100: the average of its four skill scores. Higher models get harder tasks. Open the row for each one."><span class="bar" role="img" aria-label="overall ${S.overall} of 100"><i style="width:${S.overall}%"></i></span><b>${S.overall}</b></span>` : "<span></span>";
   const runs = a.auth === "key" ? `API key${a.api_key ? " " + a.api_key : ""}` : (PLAN_LABEL[a.kind] || "its own sign-in");
   return `<details class="mrow${a.enabled ? "" : " off"}" data-sc="${esc(a.name)}"${scoresOpen().includes(a.name) ? " open" : ""}>
     <summary aria-label="${esc(a.name)}, ${esc(modelName(a))}, ${esc(chip)}${S ? ", overall " + S.overall : ""}. Show its scores">
       <div class="mr"><span class="chev" aria-hidden="true">▶</span><span class="nm">${esc(a.name)}</span><span class="model">${esc(modelName(a))}</span>${ov}
-        <span class="chip ${cls}" ${a.paused_until ? `title="${esc(a.paused_reason)}"` : ""}>${esc(chip)}</span>
+        ${a.enabled ? `<span class="chip ${cls}" title="${esc(a.paused_until ? a.paused_reason : CHIP_HELP[chip] || "")}">${esc(chip)}</span>` : "<span></span>"}
         <button type="button" class="switch" data-ag-toggle="${esc(a.name)}" aria-pressed="${a.enabled}" aria-label="${esc(a.name)}: ${a.enabled ? "on, press to switch off" : "off, press to switch on"}">${a.enabled ? "On" : "Off"}</button></div>
     </summary>
     <div class="mx">
