@@ -6,6 +6,7 @@
     python3 Tools/Fletchery/foreman.py status               print the status text
     python3 Tools/Fletchery/foreman.py plan "<goal>" [--apply]
     python3 Tools/Fletchery/foreman.py config               print the effective config
+    python3 Tools/Fletchery/foreman.py doctor               read-only: what is running, why nothing starts, recent failures
     python3 Tools/Fletchery/foreman.py demo                 a scripted pass with fakes: shows the shape, touches nothing
     python3 Tools/Fletchery/foreman.py demo --serve         the same, slowed down, with the dashboard on localhost
 """
@@ -273,7 +274,7 @@ def utf8_console() -> None:
 def main(argv: list[str] | None = None) -> int:
     utf8_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["once", "run", "status", "plan", "config", "demo"])
+    ap.add_argument("command", choices=["once", "run", "status", "plan", "config", "demo", "doctor"])
     ap.add_argument("goal", nargs="?", default="")
     ap.add_argument("--dry-run", action="store_true", help="no sessions, no GitHub writes; print what a pass would do")
     ap.add_argument("--apply", action="store_true", help="plan: create the issues instead of drafting them")
@@ -295,6 +296,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.command == "config":
         print(cfg.dump())
         return 0
+    if a.command == "doctor":  # read-only: the running dashboard's state and the ledger, in plain words
+        import doctor
+        return doctor.main(cfg)
 
     if a.command == "demo" and a.serve:
         import tempfile
