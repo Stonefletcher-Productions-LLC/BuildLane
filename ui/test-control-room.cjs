@@ -109,6 +109,19 @@ const server = http.createServer(async (req, res) => {
     await page.selectOption('#themeChoice', 'dark');
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
     await page.screenshot({path: path.join(out, 'overview-dark.png'), fullPage: true});
+    // Text size scales the whole page and the menu folds to icons; both survive a reload.
+    await page.selectOption('#textSize', '115');
+    await page.locator('#navToggle').click();
+    assert.equal(await page.locator('html').getAttribute('data-nav'), 'rail');
+    assert.equal(await page.evaluate(() => document.documentElement.style.zoom), '115%');
+    await page.screenshot({path: path.join(out, 'overview-rail-large.png')});
+    await page.reload(); await page.waitForSelector('#navToggle');
+    assert.equal(await page.locator('html').getAttribute('data-nav'), 'rail');
+    assert.equal(await page.locator('#textSize').inputValue(), '115');
+    await page.locator('#navToggle').click();
+    await page.selectOption('#textSize', '100');
+    assert.equal(await page.locator('html').getAttribute('data-nav'), null);
+    assert.equal(await page.evaluate(() => document.documentElement.style.zoom), '');
     // Each step expands independently; polling preserves explicit choices and keyboard focus.
     await page.getByRole('link', {name: 'Round details →'}).click();
     assert.equal(await visible('#view-merge'), true);
