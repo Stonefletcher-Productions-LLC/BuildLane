@@ -24,8 +24,11 @@ class Repo:
         self.thin_text_workers = thin_text_workers
         self.env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"}
 
-    def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
-        p = subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, encoding="utf-8", errors="replace", env=self.env)
+    def git(self, *args: str, cwd: Path | None = None, check: bool = True, stdin: str | None = None) -> str:
+        """`stdin` feeds long path lists (--stdin, --pathspec-from-file=-): thousands of paths on the command line
+        exceed Windows' limit and fail with WinError 206 (LifeShare #1018, 2026-11-06)."""
+        p = subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, encoding="utf-8", errors="replace", env=self.env,
+                           input=stdin)
         if check and p.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)}: {p.stderr.strip()}")
         return p.stdout.strip()
@@ -271,8 +274,10 @@ class Repo:
     def lfs_tracked(self, wt: Path, files: list[str]) -> list[str]:
         if not files:
             return []
-        out = self.git("check-attr", "filter", "--", *files, cwd=wt, check=False)
-        return [l.split(":")[0] for l in out.splitlines() if l.endswith(": filter: lfs")]
+        # NUL-separated both ways: Windows text mode would turn newlines into CRLF and break the names.
+        out = self.git("check-attr", "-z", "--stdin", "filter", cwd=wt, check=False, stdin="".join(f + chr(0) for f in files))
+        fields = out.split(chr(0))
+        return [fields[i] for i in range(0, len(fields) - 2, 3) if fields[i + 2] == "lfs"]
 
     def push(self, wt: Path, branch: str) -> None:
         """Text-only pushes skip the LFS hook. Explicit operator grants route asset

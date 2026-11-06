@@ -88,7 +88,8 @@ class WorkerHandoffs:
                         changed.add(relative)
             paths = sorted(name for name in changed if (root / name).resolve().is_relative_to(root))
             if paths:
-                repo.git("--literal-pathspecs", "add", "--", *paths, cwd=worktree)
+                repo.git("--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul", cwd=worktree,
+                         stdin=chr(0).join(paths))
             record["staged"] = sorted(set(repo.git("diff", "--cached", "--name-only", "-z", cwd=worktree).split("\0")) - {""})[:100]
             record["status"] = repo.git("status", "--short", cwd=worktree)[:4000]
         except Exception as exc:
