@@ -326,6 +326,9 @@ itself. Nobody is asked for approval: turning rounds on is the approval. Workers
 
 The Merge section shows the round's steps, the last result, and **Pause merging** / **Merge now**. A round that landed
 nothing waits **Retry a failed round after** minutes before trying the same PRs again, unless one of them changes.
+During Game specs, the dashboard reads fresh check events from the workspace holding the test reservation on each
+three-second refresh. The panel puts running and failed checks first, shows a pass count, and displays recent engine
+output during data validation and native specs when available. The round checkpoint still controls phase acceptance.
 `examples/LifeShare.merger.md` is a full example of round instructions.
 
 ## Safe by design
