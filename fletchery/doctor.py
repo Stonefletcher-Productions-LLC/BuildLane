@@ -113,4 +113,8 @@ def main(cfg) -> int:
         return 1
     state_dir = Path(getattr(cfg, "state_dir", "") or ".")
     print(report(s, read_ledger(state_dir / "ledger.jsonl")))
+    import usage
+    summary = usage.summary(state_dir / "usage.jsonl")
+    if summary["agents"]:
+        print("\n" + usage.text(summary))
     return 0

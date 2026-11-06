@@ -80,6 +80,13 @@ Where a score comes from, strongest first:
 
 **Refresh benchmarks** fetches the newest `model_scores.json` from Fletchery's main branch with `gh` and keeps it in the state folder. To add a model, add its numbers and sources to that file on main.
 
+## Planning, kinds of work and token use
+
+Hard tasks are planned by an architect (a strong model, read-only) before a cheaper agent writes them; Blender & 3D
+work prefers Codex; agents can have a daily session cap; every session's tokens go to `usage.jsonl`. The why, the
+numbers behind it and the profile keys (`routing.plan`, `preferredKindsBySkill`, `maxEscalations`,
+`cheapReviewLevels`, `maxRunsPerDay`) are in [EFFICIENCY.md](EFFICIENCY.md).
+
 ## Review, escalation and limits
 
 - **Review.** The reviewer comes from another vendor than the writer, chosen from `routing.reviewers` first and then

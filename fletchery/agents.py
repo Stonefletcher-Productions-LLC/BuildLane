@@ -33,7 +33,7 @@ from typing import Callable
 
 EASY, MEDIUM, HARD = "easy", "medium", "hard"
 LEVELS = (EASY, MEDIUM, HARD)
-ROLES = ("worker", "fixer", "reviewer", "planner", "merger")
+ROLES = ("worker", "fixer", "reviewer", "planner", "architect", "merger")
 
 
 def restrictions(data: dict) -> dict:
@@ -64,6 +64,7 @@ class AgentSpec:
     key_env: list = None            # stored keys (keys.py) this agent's sessions get, e.g. ["DEEPSEEK_API_KEY"]
     auth: str = "plan"              # plan: the CLI's own sign-in (Claude plan, ChatGPT, OpenCode Go); key: an API key
     scores: dict = None             # your own scores (0-100) by kind of task, e.g. {"cpp": 70}; the rest are automatic
+    max_runs_per_day: int = 0       # 0 = no cap; else sessions per UTC day (every role), for agents that eat a plan fast
 
     @property
     def api_key_name(self) -> str:
@@ -77,6 +78,8 @@ class AgentSpec:
     def can(self, role: str) -> bool:
         if role == "merger" and self.never_merges:
             return False
+        if role == "architect":  # planning a task before it is written; an agent that may plan may architect
+            return self.enabled and (self.roles is None or "architect" in self.roles or "planner" in self.roles)
         return self.enabled and (self.roles is None or role in self.roles)
 
     @property
@@ -87,7 +90,7 @@ class AgentSpec:
 
 _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", "vendor": "vendor", "enabled": "enabled",
               "maxParallel": "max_parallel", "command": "command", "roles": "roles", "levels": "levels", "timeoutMinutes": "timeout_minutes",
-              "keyEnv": "key_env", "auth": "auth", "scores": "scores"}
+              "keyEnv": "key_env", "auth": "auth", "scores": "scores", "maxRunsPerDay": "max_runs_per_day"}
 DEFAULT_VENDOR = {"claude": "anthropic", "codex": "openai"}
 
 
@@ -273,6 +276,8 @@ class Stats:
             except ValueError:
                 continue
             for a in e.get("attempts") or []:
+                if a.get("env") or a.get("cant_run") or a.get("role") in ("architect", "planner"):
+                    continue  # the task or the setup failed, not the agent: no verdict on it
                 s.add(a.get("agent", "?"), a.get("difficulty", MEDIUM), bool(a.get("ok")))
                 s.attempts.append(a)
         return s
@@ -323,6 +328,72 @@ class AgentPool:
         self.accounts: dict[str, dict] = {}  # name -> {"ok": bool, "message": text, "at": iso}: is it signed in
         self.catalog_override: Path | None = None  # a refreshed model_scores.json in the state dir
         self._results: dict = {}  # scores.results of the last Stats seen
+        self.runs_today: dict = {}  # agent -> sessions started on `runs_day` (maxRunsPerDay)
+        self.runs_day = ""
+
+    # ---- daily caps ----
+    def _today(self) -> str:
+        d = _now().strftime("%Y-%m-%d")
+        if d != self.runs_day:
+            self.runs_day, self.runs_today = d, {}
+        return d
+
+    def seed_runs(self, counts: dict) -> None:
+        """Today's sessions per agent from usage.jsonl, so a restart does not reset the caps."""
+        self._today()
+        for k, v in (counts or {}).items():
+            self.runs_today[k] = max(self.runs_today.get(k, 0), int(v))
+
+    def note_run(self, name: str) -> None:
+        self._today()
+        self.runs_today[name] = self.runs_today.get(name, 0) + 1
+
+    def capped(self, name: str) -> bool:
+        s = self.specs.get(name)
+        if not s or not s.max_runs_per_day:
+            return False
+        self._today()
+        return self.runs_today.get(name, 0) >= s.max_runs_per_day
+
+    # ---- planning a task before it is written (architect) ----
+    def plan_policy(self) -> dict:
+        """routing.plan: {"levels": ["hard"], "lowerTo": "medium", "architects": [...], "minScore": 70}. Planning is on
+        when several agents are on, unless `"plan": {"levels": []}` or `"plan": false`."""
+        raw = self.routing.get("plan", {})
+        if raw is False:
+            return {"levels": []}
+        raw = raw if isinstance(raw, dict) else {}
+        return {"levels": list(raw.get("levels", [HARD])), "lowerTo": raw.get("lowerTo", MEDIUM),
+                "architects": list(raw.get("architects", [])), "minScore": int(raw.get("minScore", 70))}
+
+    def wants_plan(self, level: str, body: str) -> bool:
+        if not self.multi or plan_of(body):
+            return False
+        return level in self.plan_policy()["levels"]
+
+    def architect(self, skill: str = "") -> str | None:
+        """Who plans: the first free agent on `routing.plan.architects`, else the strongest free agent that may plan
+        (score for the task's kind, then overall), when it clears minScore. A plan is short and read-only, so a strong,
+        dear model here is what lets a cheap one write the code."""
+        pol = self.plan_policy()
+        free = [n for n in self.specs if self.available(n, "architect")]
+        for n in pol["architects"]:
+            if n in free:
+                return n
+        if not free:
+            return None
+        sc = self.scored()
+        key = (lambda n: (sc[n]["skills"][skill]["score"], sc[n]["overall"])) if skill in sc[free[0]]["skills"] else \
+              (lambda n: (sc[n]["overall"], 0))
+        best = max(free, key=key)
+        return best if key(best)[0] >= pol["minScore"] else None
+
+    def preferred_kinds(self, level: str, skill: str) -> list[str]:
+        """Agent kinds to prefer for this task: `routing.preferredKindsBySkill` (default: Codex for Blender & 3D work,
+        Alex 2026-11-06), then `preferredKindsByLevel`."""
+        by_skill = self.routing.get("preferredKindsBySkill", DEFAULT_PREFERRED_BY_SKILL)
+        kinds = list((by_skill or {}).get(skill, []))
+        return kinds or list((self.routing.get("preferredKindsByLevel") or {}).get(level, []))
 
     # ---- scores ----
     @property
@@ -355,7 +426,7 @@ class AgentPool:
         sc = self.scored(stats)
         bar = self.bar(level)
         free = [n for n in self.specs if self.available(n, role) and (self.specs[n].levels is None or level in self.specs[n].levels)]
-        preferred = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+        preferred = self.preferred_kinds(level, skill)
         preferred_free = [n for n in free if self.specs[n].kind in preferred]
         if preferred_free:
             free = preferred_free
@@ -411,11 +482,13 @@ class AgentPool:
         p = self.paused.get(name)
         if p and (at or _now()) < _parse(p.get("until", "")):
             return False
+        if not ignore_capacity and self.capped(name):
+            return False
         if self.accounts.get(name, {}).get("ok") is False:  # its last sign-in check failed
             return False
-        if not ignore_capacity and role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
+        if not ignore_capacity and role in ("worker", "fixer", "merger", "planner", "architect") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
             return False
-        if not ignore_capacity and role in ("worker", "fixer", "planner") and self.round_account is not None:
+        if not ignore_capacity and role in ("worker", "fixer", "planner", "architect") and self.round_account is not None:
             account, allowance = self.round_account
             if self.account_of(s) == account:
                 # The round's own session counts on its account; new work there is capped so the round keeps headroom.
@@ -544,10 +617,18 @@ class AgentPool:
 
     def choose(self, title: str, body: str, labels: list[str], depends: int = 0, stats: Stats | None = None,
                role: str = "worker") -> Choice | None:
+        plan = plan_of(body)
+        body = strip_plan(body)
         level, why = classify(title, body, labels, self.routing.get("hardPatterns"), self.routing.get("easyPatterns"),
                               depends, self.routing.get("hardScore"))
         import scores
         skill, skill_why = scores.classify_skill(title, body, labels, self.routing.get("defaultSkill", "cpp"))
+        if plan and role == "worker":
+            pol = self.plan_policy()
+            lower = pol.get("lowerTo") or level
+            if level in pol["levels"] and LEVELS.index(lower) < LEVELS.index(level):
+                why = f"{why}; planned by {plan['by'] or 'an architect'}, so written as {lower}"
+                level = lower
         forced = override(body, labels)
         if forced and forced in self.specs:
             if self.available(forced, role) and (self.specs[forced].levels is None or level in self.specs[forced].levels):
@@ -559,7 +640,7 @@ class AgentPool:
         order, learned = self.learned(self.preferences(level), level, stats)
         eligible = [n for n in order if self.available(n, role)
                     and (self.specs[n].levels is None or level in self.specs[n].levels)]
-        kinds = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+        kinds = self.preferred_kinds(level, skill)
         preferred = [n for n in eligible if self.specs[n].kind in kinds]
         for n in preferred or eligible:
             bits = [f"{level}: {why}"] + ([learned] if learned else [])
@@ -578,13 +659,14 @@ class AgentPool:
                     and (self.specs[n].levels is None or level in self.specs[n].levels))
 
         def preferred(names: list[str]) -> list[str]:
-            kinds = (self.routing.get("preferredKindsByLevel") or {}).get(level, [])
+            kinds = self.preferred_kinds(level, skill)
             native = [n for n in names if self.specs[n].kind in kinds]
             return native or names
 
         if self.mode == "scores":
             sc = self.scored()
-            val = (lambda n: sc[n]["skills"][skill]["score"]) if skill in ("cpp", "scripts", "ui", "docs") else \
+            import scores
+            val = (lambda n: sc[n]["skills"][skill]["score"]) if skill in scores.CODING else \
                   (lambda n: sc[n]["overall"])
             cur = val(name) if name in self.specs else -1
             up = preferred([n for n in self.specs if val(n) > cur and eligible(n)])
@@ -593,7 +675,7 @@ class AgentPool:
         up = preferred([s.name for s in self.ordered() if s.tier > cur and eligible(s.name)])
         return up[0] if up else None
 
-    def reviewer_for(self, worker: str, besides: set[str] | frozenset = frozenset()) -> str | None:
+    def reviewer_for(self, worker: str, besides: set[str] | frozenset = frozenset(), level: str = "") -> str | None:
         """A reviewer from another vendor than the worker, so nobody marks their own homework. Preference: the
         profile's `routing.reviewers`, then strongest first. With one agent, that agent reviews itself. `besides`:
         reviewers that already failed to run on this task, so the next pick is someone else."""
@@ -607,6 +689,10 @@ class AgentPool:
             need = int(self.routing.get("reviewMin", 50))
             names = sorted((n for n in self.specs if self.specs[n].enabled), key=lambda n: -sc[n]["skills"]["review"]["score"])
             names = [n for n in names if sc[n]["skills"]["review"]["score"] >= need]
+            # Easy and medium work gets the cheapest able reviewer; hard work (and unknown) the best one.
+            if level in ((self.routing.get("cheapReviewLevels")) if self.routing.get("cheapReviewLevels") is not None
+                         else (EASY, MEDIUM)):
+                names.sort(key=lambda n: (-sc[n]["cost"], -sc[n]["skills"]["review"]["score"]))
         else:
             min_tier = int(self.routing.get("reviewMinTier", 2))
             names = [n for n in (self.routing.get("reviewers") or []) if n in self.specs]
@@ -663,3 +749,26 @@ def _parse(iso: str) -> datetime:
         return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return datetime.min.replace(tzinfo=timezone.utc)
+
+
+# ---- the architect's plan, kept in the issue body so every later attempt reuses it ----
+
+PLAN_START = "<!-- fletchery-plan"
+PLAN_END = "<!-- /fletchery-plan -->"
+_PLAN_RE = re.compile(r"\n*<!-- fletchery-plan(?: by=([\w.\-]+))? -->\n(.*?)\n<!-- /fletchery-plan -->\n*", re.DOTALL)
+DEFAULT_PREFERRED_BY_SKILL = {"art": ["codex"]}
+
+
+def plan_of(body: str) -> dict | None:
+    """{"by": agent, "text": markdown} when the issue body carries an architect's plan."""
+    m = _PLAN_RE.search(body or "")
+    return {"by": m.group(1) or "", "text": m.group(2).strip()} if m else None
+
+
+def strip_plan(body: str) -> str:
+    return _PLAN_RE.sub("\n\n", body or "").strip()
+
+
+def with_plan(body: str, text: str, by: str) -> str:
+    return (strip_plan(body).rstrip() + f"\n\n{PLAN_START} by={by} -->\n## Implementation plan (written by {by} before the "
+            f"work started; follow it, and say where the code proved it wrong)\n\n{text.strip()}\n{PLAN_END}\n")

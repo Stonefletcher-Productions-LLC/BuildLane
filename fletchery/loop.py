@@ -129,6 +129,11 @@ class Engine:
         self.state_dir = state_dir
         self.state = State.load(state_dir / "state.json")
         self.dry_run = dry_run
+        if not dry_run and getattr(ctx, "usage_log", None) is None:
+            ctx.usage_log = state_dir / "usage.jsonl"
+        if ctx.agents is not None and ctx.usage_log is not None and hasattr(ctx.agents, "seed_runs"):
+            import usage
+            ctx.agents.seed_runs(usage.runs_today(ctx.usage_log))
         # Migrate old interrupted/incomplete-only exclusions without touching
         # confirmed failed heads or spending another repair attempt.
         import rounds
@@ -1474,7 +1479,7 @@ class Engine:
                 "workers_enabled": cfg.workers_enabled, "last_pass": st.last_pass, "auth": cfg.auth,
                 "max_parallel": cfg.max_parallel, "emergency_workers": {"max_parallel": cfg.emergency_workers, "live": [], "why": self.emergency_why}, "poll_minutes": cfg.poll_minutes,
                 "spent_today": round(st.spent.get(today(), 0.0), 2), "daily_budget": cfg.daily_budget_usd,
-                "usage_week": self.usage_week(),
+                "usage_week": self.usage_week(), "usage_agents": self.usage_agents(),
                 "restarting": self.restart_status(), "update_pending": self.update_pending,
                 "update_note": self.pending_update_status(),
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
@@ -1593,6 +1598,14 @@ class Engine:
                     tasks[d] += 1
         return [{"date": d, "cost": round(self.state.spent.get(d, 0.0), 2), "sessions": sessions[d], "tasks": tasks[d]}
                 for d in days]
+
+    def usage_agents(self) -> list[dict]:
+        """Tokens, sessions and hours per agent over 7 days, from usage.jsonl (usage.py)."""
+        import usage
+        try:
+            return usage.summary(getattr(self.ctx, "usage_log", None))["agents"]
+        except Exception:
+            return []
 
     def _ledger(self, o: Outcome) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
