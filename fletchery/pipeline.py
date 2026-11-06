@@ -16,11 +16,15 @@ from config import Config
 import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task
 from github import Feedback, PullRequest
-from runtime import RunResult, Runtime, role_prompt
+from runtime import RunResult, Runtime, limit_pause_minutes, role_prompt
 
 
 class Limited(Exception):
-    """A session hit a usage or rate limit. Not a verdict on the task: it goes back to the queue untouched."""
+    """A session hit a usage or rate limit. Not a verdict on the task: it goes back to the queue untouched.
+    Args are (error, cost_usd, kind, agent); str() is the error alone, so log lines and pause reasons stay readable."""
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else ""
 
 
 class _LimitGuard(Runtime):
@@ -105,7 +109,8 @@ def _paused(ctx: "Context", out: Outcome, e: Limited, what: str) -> bool:
     agent = e.args[3] if len(e.args) > 3 else ""
     if not pool or not pool.multi or not agent:
         return False
-    minutes = ctx.cfg.limit_backoff_minutes if kind == "limited" else max(120, ctx.cfg.limit_backoff_minutes)
+    minutes = (limit_pause_minutes(str(e), ctx.cfg.limit_backoff_minutes) if kind == "limited"
+               else max(120, ctx.cfg.limit_backoff_minutes))
     reason = ("usage limit: " if kind == "limited" else "needs signing in again: ") + str(e.args[0])[:160]
     who = pool.pause(agent, minutes, reason, shared=kind == "limited")
     # Occupied slots and rank limits can change while another account is backing off.
@@ -113,7 +118,7 @@ def _paused(ctx: "Context", out: Outcome, e: Limited, what: str) -> bool:
         return False
     out.result, out.detail, out.agent = "agent_paused", f"{agent} paused ({reason})", agent
     also = f" (and {', '.join(who[1:])} on the same account)" if len(who) > 1 else ""
-    ctx.log(f"{what}: {agent}{also} paused for {minutes} min ({reason}); other agents carry on")
+    ctx.log(f"{what}: {agent}{also} paused for {minutes:.0f} min ({reason}); other agents carry on")
     return True
 
 

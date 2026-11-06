@@ -94,7 +94,9 @@ Where a score comes from, strongest first:
 - **Fixers.** When the Build Lane sends a PR back, the agent that wrote it fixes it. The second attempt goes one tier
   up.
 - **Limits and sign-ins.** A usage limit or a lost sign-in pauses only that agent, for `limitBackoffMinutes`, and its
-  task goes back to the queue for another agent. Fletchery stops everything only when no agent is left. Every agent's
+  task goes back to the queue for another agent. When the limit message says when it lifts ("try again at Nov 12th,
+  2026 1:22 AM", "resets 3pm"), the pause lasts until then (at most two weeks), so a weekly cap isn't retried every
+  half hour. **Lift** on the Agents panel ends a pause early. Fletchery stops everything only when no agent is left. Every agent's
   sign-in is checked at start, every 30 minutes, and when you press **Check sign-ins**.
 
 ## The Agents panel
