@@ -326,6 +326,9 @@ class Dashboard:
             if "/" in model:
                 raise ValueError(f"Codex takes a plain model name such as gpt-6-astra, not {model}. "
                                  "For a provider/model name, add it as an OpenCode agent.")
+        if kind == "claude":
+            from agents import claude_model
+            model = claude_model(model)
         if kind == "opencode" and "/" not in model:
             raise ValueError("OpenCode models are provider/model, e.g. opencode-go/kimi-k3.")
         if kind == "opencode":

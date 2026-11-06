@@ -131,6 +131,14 @@ def codex_model(model: str) -> str:
     return m.split("/", 1)[1] if m.lower().startswith("openai/") else m
 
 
+def claude_model(model: str) -> str:
+    """Claude Code takes a bare model id: 'opencode-go/claude-haiku-5-5' (an OpenCode spelling) -> 'claude-haiku-5-5'.
+    With the prefix every session failed at once with "There's an issue with the selected model" and escalated
+    (LifeShare, 2026-11-06: the claude-haiku-5-5 agent)."""
+    m = (model or "").strip()
+    return m.rsplit("/", 1)[1] if "/" in m else m
+
+
 def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
     """The profile's `agents` list; none means one Claude agent (Fletchery before agents existed)."""
     if not raw:
@@ -152,6 +160,8 @@ def specs_from(raw: list | None, default_model: str = "") -> list[AgentSpec]:
             s.model = default_model
         if s.kind == "codex":
             s.model = codex_model(s.model)
+        if s.kind == "claude":
+            s.model = claude_model(s.model)
         out.append(s)
     return out
 

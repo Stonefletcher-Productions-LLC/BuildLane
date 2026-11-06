@@ -1528,3 +1528,11 @@ with _patch.object(ctx.gh, "open_tasks", side_effect=AssertionError("publish ref
     assert fm.snapshot["tasks"][0]["status"] == PR, "status tap must update cached Tasks as well as rows"
 
 print("RESULT: PASS (Fletchery engine checks)")
+
+# A Claude agent saved with an OpenCode-style model id runs the bare id (LifeShare claude-haiku-5-5, 2026-11-06)
+from agents import specs_from as _specs_from  # noqa: E402
+_h = _specs_from([{"name": "claude-haiku-5-5", "kind": "claude", "model": "opencode-go/claude-haiku-5-5"},
+                  {"name": "haiku", "kind": "opencode", "model": "opencode-go/claude-haiku-5-5"}])
+assert _h[0].model == "claude-haiku-5-5", _h[0].model
+assert _h[1].model == "opencode-go/claude-haiku-5-5", "OpenCode keeps provider/model"
+print("RESULT: PASS (claude model ids)")
