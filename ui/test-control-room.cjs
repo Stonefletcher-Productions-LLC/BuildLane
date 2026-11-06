@@ -115,7 +115,10 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#mergeCard .merge-aside'), true);
     assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
-    assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4/);
+    assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4 steps complete[\s\S]*1 running · 1 queued/);
+    const roundMeter = page.getByRole('progressbar', {name: 'Required round steps complete'});
+    assert.equal(await roundMeter.getAttribute('value'), '2');
+    assert.equal(await roundMeter.getAttribute('max'), '4');
     const activeStep=page.locator('.merge-step').nth(2);
     assert.equal(await activeStep.locator('.merge-step-badge').innerText(), 'Running');
     assert.equal(await activeStep.locator('summary').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(25, 60, 50)');

@@ -6,6 +6,11 @@
 details →** opens **Merging** for the full checklist, logs, and scheduled windows.
 On a narrow window, the cards stack.
 
+The round summary shows one progress bar for completed required steps and
+labels the remaining steps as **running**, **waiting**, **queued**, or
+**failed**. The current step and **Next** name the work above and below the bar.
+Previous-candidate steps stay in the checklist for context.
+
 In **Merging**, expand a row under **Round progress**. **Progress** shows the
 substeps Fletchery has received. While **Merge the PRs into the round branch**
 runs, each PR has its own row and the counter shows how many are integrated.
