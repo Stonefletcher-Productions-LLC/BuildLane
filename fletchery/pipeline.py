@@ -137,8 +137,34 @@ async def run_task(task: Task, ctx: Context) -> Outcome:
             ctx.live.done(task.number)
 
 
+def _adopt_open_pr(task: Task, ctx: Context, out: Outcome) -> Outcome | None:
+    """A task whose earlier run opened its PR but failed while labelling it (HTTP 422 on the assignee, 2026-11-05/06)
+    went back to the queue with a finished, reviewed PR left unlabelled. Adopt that PR instead of paying a worker to
+    redo the task."""
+    cfg, gh = ctx.cfg, ctx.gh
+    if not task.branch or not hasattr(gh, "orphan_pr_for"):
+        return None
+    try:
+        number = gh.orphan_pr_for(task.branch, cfg.base_branch)
+    except Exception as e:
+        ctx.log(f"#{task.number}: open PR lookup failed ({e}); running the task")
+        return None
+    if number is None:
+        return None
+    gh.add_labels(number, [graph.PREFIX, "ready"])
+    gh.set_status(task.number, PR)
+    gh.comment(task.number, f"Fletchery found PR #{number} from `{task.branch}` already open from an earlier run and "
+                            "adopted it instead of running the task again.")
+    out.result, out.pr_number, out.detail = "pr", number, f"PR #{number} (adopted)"
+    ctx.log(f"#{task.number} -> PR #{number} (adopted an open PR from an earlier run)")
+    return out
+
+
 async def _run_task(task: Task, ctx: Context, out: Outcome) -> Outcome:
     agent, history, reserved = None, [], False
+    adopted = await asyncio.to_thread(_adopt_open_pr, task, ctx, out)
+    if adopted is not None:
+        return adopted
     try:
         while True:
             transfer, reserved = reserved, False
@@ -317,6 +343,9 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
                           cfg.assignee or None)
     except Exception as e:
         return await asyncio.to_thread(_requeue_or_block, ctx, task, out, f"push or PR failed: {e}")
+    for w in getattr(gh, "warnings", [])[:]:
+        ctx.log(w)
+        gh.warnings.remove(w)
     gh.set_status(task.number, PR)
     out.attempts.append({"agent": agent or "", "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": True})
     by = f" Written by {agent}, reviewed by {out.reviewer}." if pool is not None and pool.multi else ""

@@ -10,6 +10,7 @@ from agents import AgentPool, AgentSpec
 from config import Config
 from gates import GateResult
 from github import FakeGitHub, PullRequest
+import graph
 from graph import Task
 from pipeline import Context, Outcome, _fix_pr, _requeue_or_block, _run_task, _fail, _run_task_body
 from repo import FakeRepo
@@ -76,6 +77,22 @@ class PipelineResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             command = _run_task(ctx.gh.tasks[1], ctx, Outcome(1, "requeue"))
             result = await self.check_responsive(command, ctx.repo, "commit_all")
         self.assertEqual(result.result, "pr")
+
+    async def test_unlabelled_pr_from_an_earlier_run_is_adopted_not_redone(self):
+        ctx = self.context()
+        task = ctx.gh.tasks[1]
+        ctx.gh.prs.append(PullRequest(1093, "#1 Task 1", task.branch, ctx.cfg.base_branch, "a" * 40, []))
+        result = await _run_task(task, ctx, Outcome(1, "requeue"))
+        self.assertEqual((result.result, result.pr_number), ("pr", 1093))
+        self.assertEqual(ctx.gh.prs[-1].labels, [graph.PREFIX, "ready"])
+        self.assertEqual(ctx.runtime.calls, [])
+
+    async def test_labelled_pr_does_not_skip_a_requested_continuation(self):
+        ctx = self.context()
+        task = ctx.gh.tasks[1]
+        ctx.gh.prs.append(PullRequest(1093, "#1 Task 1", task.branch, ctx.cfg.base_branch, "a" * 40, [graph.PREFIX, "ready"]))
+        result = await _run_task(task, ctx, Outcome(1, "requeue"))
+        self.assertNotIn("adopted", result.detail)
 
     def pr(self, n):
         return PullRequest(100 + n, "Existing PR", f"existing-{n}", "Test-Staging", "a" * 40, ["ready"])
