@@ -109,6 +109,8 @@ FIELDS = [
     {"group": "Workers", "key": "worker_max_turns", "label": "Writer turns", "type": "int", "min": 1, "advanced": True},
     {"group": "Workers", "key": "reviewer_max_turns", "label": "Reviewer turns", "type": "int", "min": 1, "advanced": True},
     {"group": "Workers", "key": "fixer_max_turns", "label": "Fixer turns", "type": "int", "min": 1, "advanced": True},
+    {"group": "Workers", "key": "stall_minutes", "label": "Stop a silent session after (minutes)", "type": "int", "min": 0, "advanced": True,
+     "help": "A writer or fixer that makes no progress this long is stopped and its task queued again; its checkout is kept. 0 = never."},
     {"group": "Workers", "key": "gate_timeout_s", "label": "Check timeout (seconds)", "type": "int", "min": 30, "advanced": True},
     {"group": "Workers", "key": "worktree_root", "label": "Worktrees folder", "type": "path", "restart": True, "advanced": True,
      "help": "Where task worktrees go. Empty: inside the state folder."},
