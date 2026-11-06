@@ -75,7 +75,14 @@ class AgentSpec:
         return f"{self.name} ({self.model})" if self.model else self.name
 
     def can(self, role: str) -> bool:
+        if role == "merger" and self.never_merges:
+            return False
         return self.enabled and (self.roles is None or role in self.roles)
+
+    @property
+    def never_merges(self) -> bool:
+        """Fable never runs merge rounds (Alex, 2026-11-06), whatever the dropdown or its roles say."""
+        return any("fable" in (x or "").lower() for x in (self.model, self.name))
 
 
 _SPEC_KEYS = {"name": "name", "kind": "kind", "model": "model", "tier": "tier", "vendor": "vendor", "enabled": "enabled",

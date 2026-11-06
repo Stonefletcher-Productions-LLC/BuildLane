@@ -298,7 +298,8 @@ rounds have a fixed total duration and do not keep showing their failed steps or
 Merge rounds can use any enabled, signed-in Claude, Codex or OpenCode agent allowed to take the merger role.
 Settings > Merging > **Agent for rounds** defaults to **Best active worker**: each round takes the agent with the best
 C++ score that is on, signed in and not at a usage limit, regardless of provider. Pick an agent from the same
-dropdown to prefer it; it still falls back to the best active worker while it is unavailable. The setting is saved
+dropdown to prefer it; it still falls back to the best active worker while it is unavailable. Fable (any agent whose
+name or model contains "fable") never runs a round and is not offered in the dropdown. The setting is saved
 as `workers.roundAgent` (`""` = Best active worker); the old `mergeAgent` key is ignored, so older profiles start
 on Best active worker. A round stopped by its agent's usage limit, or by an unreachable model, is not the PRs'
 fault: the same PRs run again at once on the next available agent, and a queued merge window goes back to queued
