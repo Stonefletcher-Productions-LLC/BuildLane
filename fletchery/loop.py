@@ -16,6 +16,7 @@ import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task, readiness, pick
 from github import PullRequest, Feedback
 from pipeline import Context, Outcome, fix_pr, run_task
+from runtime import limit_pause_minutes
 
 
 _STATE_SAVE_LOCK = threading.RLock()
@@ -885,7 +886,7 @@ class Engine:
         except Limited as e:
             res["result"], res["summary"] = "limited", f"{agent} hit a limit: {e}"
             if pool is not None and agent:
-                pool.pause(agent, self.cfg.limit_backoff_minutes, str(e))
+                pool.pause(agent, limit_pause_minutes(str(e), self.cfg.limit_backoff_minutes), str(e))
         except Exception as e:  # a crash in a round must never stop the loop
             res["result"], res["summary"] = "crashed", f"{type(e).__name__}: {e}"
         finally:
@@ -1092,7 +1093,7 @@ class Engine:
                 import auth
                 st.signed_out = auth.check(cfg.auth, getattr(self.ctx.runtime, "saved_key", None))[1] or o.detail
             if o.result == "limited":
-                until = datetime.now(timezone.utc) + timedelta(minutes=cfg.limit_backoff_minutes)
+                until = datetime.now(timezone.utc) + timedelta(minutes=limit_pause_minutes(o.detail, cfg.limit_backoff_minutes))
                 st.paused_until = until.isoformat(timespec="seconds")
                 st.paused_reason = o.detail
         self.recent = (outcomes + self.recent)[:20]

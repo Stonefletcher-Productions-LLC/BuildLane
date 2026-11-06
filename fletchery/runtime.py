@@ -128,6 +128,49 @@ def is_limit(text: str, status: int | None = None) -> bool:
     return status in (429, 529) or bool(_LIMIT.search(text or ""))
 
 
+_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov",
+                                        "dec"), 1)}
+_RESET_EPOCH = re.compile(r"limit reached\|(\d{10})\b", re.IGNORECASE)
+_RESET_DATE = re.compile(r"(?:try again|resets?|reset)(?: at| on)?\s+([A-Z][a-z]{2})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?"
+                         r"\s+(?:(\d{4}),?\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([AaPp][Mm])", re.IGNORECASE)
+_RESET_CLOCK = re.compile(r"(?:resets?|reset|try again)(?: at)?\s+(\d{1,2})(?::(\d{2}))?\s*([AaPp][Mm])\b", re.IGNORECASE)
+MAX_LIMIT_PAUSE_MINUTES = 14 * 24 * 60
+
+
+def limit_pause_minutes(text: str, default: float, now=None) -> float:
+    """How long to pause an agent after a usage limit. A provider that says when the limit lifts ("try again at
+    Nov 12th, 2026 1:22 AM", "resets 3pm", Claude's "limit reached|<epoch>") is paused until then, so Fletchery stops
+    retrying it every `default` minutes for days. Times without a zone are this PC's local time. Never shorter than
+    `default`, never longer than two weeks."""
+    from datetime import datetime, timedelta
+    now = now or datetime.now().astimezone()
+    when = None
+    text = text or ""
+    if m := _RESET_EPOCH.search(text):
+        when = datetime.fromtimestamp(int(m.group(1)), now.tzinfo)
+    elif (m := _RESET_DATE.search(text)) and m.group(1)[:3].lower() in _MONTHS:
+        mon, day, year, hour, minute, ampm = m.groups()
+        hour = int(hour) % 12 + (12 if ampm.lower() == "pm" else 0)
+        try:
+            when = now.replace(year=int(year) if year else now.year, month=_MONTHS[mon[:3].lower()], day=int(day),
+                               hour=hour, minute=int(minute or 0), second=0, microsecond=0)
+        except ValueError:
+            when = None
+        if when and not year and when < now - timedelta(days=1):
+            when = when.replace(year=when.year + 1)
+    elif m := _RESET_CLOCK.search(text):
+        hour, minute, ampm = m.groups()
+        hour = int(hour) % 12 + (12 if ampm.lower() == "pm" else 0)
+        if hour < 24 and int(minute or 0) < 60:
+            when = now.replace(hour=hour, minute=int(minute or 0), second=0, microsecond=0)
+            if when <= now:
+                when += timedelta(days=1)
+    if when is None:
+        return default
+    minutes = (when - now).total_seconds() / 60 + 1  # a minute's grace so the first retry is after the reset
+    return min(MAX_LIMIT_PAUSE_MINUTES, max(default, minutes))
+
+
 class Runtime:
     async def run(self, role: str, prompt: str, cwd: Path, budget_usd: float, max_turns: int,
                   on_action: Callable[[str], None] | None = None) -> RunResult:
