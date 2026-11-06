@@ -264,6 +264,78 @@ def _activity(r: dict, steps: list[dict], root, now: datetime) -> tuple[dict, li
     return activity, files
 
 
+def _live_game_specs(r: dict, steps: list[dict], root, lease_path, now: datetime, activity: dict) -> None:
+    """Overlay check events from the workspace currently running the test suite."""
+    active = [step for step in steps if step["state"] == "running" and step.get("required") is not False
+              and re.search(r"\b(?:specs?|game checks)\b", step["name"], re.I)]
+    if len(active) != 1:
+        return
+    step = active[0]
+    lease = _read(lease_path)
+    if not lease.get("token") or Path(str(lease.get("purpose", "")).replace("\\", "/")).name.lower() != "runalltests.ps1":
+        return
+    workspace = str(lease.get("workspaces") or "")
+    try:
+        age = _age_h(lease.get("acquiredUtc", ""), now)
+        round_age = _age_h(r.get("started", ""), now)
+        if age is None or round_age is None or not 0 <= age <= round_age or ";" in workspace:
+            return
+        acquired = now.timestamp() - age * 3600
+        folder = _log_folder({**r, "worktree": workspace}, root)
+        candidates = []
+        with os.scandir(folder) as entries:
+            for index, entry in enumerate(entries):
+                if index >= 256:
+                    break
+                if not re.fullmatch(r"Auto[-_][A-Za-z0-9_.-]{1,140}\.log", entry.name, re.I):
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISREG(info.st_mode) and not _linked(Path(entry.path)) and info.st_mtime >= acquired:
+                    candidates.append((info.st_mtime_ns, info.st_size, entry.path))
+        for modified, size, path in sorted(candidates, reverse=True):
+            lines = _tail(path, size, modified)
+            events = _checks(lines)
+            if events:
+                break
+        else:
+            return
+
+        checks = {check["name"]: check for check in step["checks"]}
+        for event in events:
+            name = event["name"]
+            # Ignore inner engine banners such as RESULT or unrelated PASS lines.
+            if (name in checks or re.fullmatch(r"(?:Run|Check|Scan|Validate)[A-Za-z0-9]+", name)) and (
+                    "started" in event or "duration_seconds" in event):
+                checks[name] = event
+        step["checks"] = list(checks.values())
+        running = [check["name"] for check in step["checks"] if check["state"] == "running"]
+        if running:
+            step["message"] = "Running " + ", ".join(running)
+        for check, filename in (("RunSpecs", "Specs.log"), ("ValidateData", "ValidateData.log")):
+            if check not in running:
+                continue
+            engine_log = folder.parent / "Logs" / filename
+            try:
+                info = engine_log.lstat()
+                if (stat.S_ISREG(info.st_mode) and not _linked(engine_log.parent)
+                        and not _linked(engine_log) and info.st_mtime >= acquired):
+                    engine_lines = _tail(str(engine_log), info.st_size, info.st_mtime_ns)
+                    if engine_lines:
+                        lines, modified, path = engine_lines, info.st_mtime_ns, str(engine_log)
+            except OSError:
+                pass  # The check may still be starting its engine.
+            break
+        step["activity"] = [{"line": line} for line in lines[-12:]]
+        step["activity_source"] = Path(workspace).name + "/" + Path(path).name
+        step["activity_updated"] = datetime.fromtimestamp(modified / 1e9, timezone.utc).isoformat()
+        seconds = max(0, int(now.timestamp() - modified / 1e9))
+        if not activity["lines"] or activity["age_seconds"] is None or seconds <= activity["age_seconds"]:
+            activity.update(updated=step["activity_updated"], source=step["activity_source"], lines=step["activity"],
+                            age_seconds=seconds, health="active" if seconds <= 180 else "quiet" if seconds < 900 else "possibly_stuck")
+    except (OSError, ValueError, TypeError):
+        pass  # Keep the checkpoint when the runner output is unavailable.
+
+
 def log_text(round_path, worktree_root, number: str, name: str) -> str:
     """Only the current round's exposed log files, bounded to the latest 1 MiB."""
     r = _read(round_path)
@@ -342,6 +414,7 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     merged = sum(1 for v in out["in_branch"].values() if v)
     known = sum(1 for v in out["in_branch"].values() if v is not None)
     out["activity"], out["files"] = _activity(r, steps, worktree_root, now)
+    _live_game_specs(r, steps, worktree_root, lease_path, now, out["activity"])
     out["failed_steps"] = [s["name"] for s in steps if s["state"] == "failed" and s.get("required") is not False]
     out["reported_activity"] = [s["name"] for s in steps if s["state"] == "running"]
     cur = next((i for i, s in enumerate(steps) if s["state"] == "failed" and s.get("required") is not False), None)
