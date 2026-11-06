@@ -210,6 +210,9 @@ class AgentSdkRuntime(Runtime):
             output_format={"type": "json_schema", "schema": SCHEMAS[role]},
             env={"GIT_LFS_SKIP_SMUDGE": "1", **self.env},
             plugins=[{"type": "local", "path": str(self.plugin_path)}] if self.plugin_path else [],
+            # One tool result (a big log or diff read) can exceed the SDK's 1 MB default and kill the session with
+            # CLIJSONDecodeError (LifeShare #929, 2026-11-06). The CLI runtimes already read 16 MB lines.
+            max_buffer_size=16 * 1024 * 1024,
         )
         result = RunResult(role, False)
         try:
