@@ -21,8 +21,7 @@ Workers and fixers that report heavy-work reservation contention keep their exis
 
 If a repair session stops, Fletchery records the reason before any commit or check rerun. Failed checks retain their output for the next repair attempt. Windows worker sessions and controller checks default to UTF-8 for Python so Unicode reports survive redirected output.
 
-The Control room keeps live workers and merge progress on **Overview**, with separate
-**Tasks**, **Merging**, **Building**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
+**Overview** pairs live workers with a compact summary of the current merge. Expand a worker row for its latest step, or open **Merging** for round steps, check results, logs and scheduled windows. **Tasks**, **Building**, **Agents** and **Activity** have their own views.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
 Paused merging and interrupted rounds awaiting authorization leave feature capacity available, including while cleanup finishes. Active rounds retain their reservation. See [work, merge and package policy](docs/WORK-MERGE-PACKAGE.md) for the operating plan.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.

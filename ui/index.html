@@ -508,7 +508,7 @@
   .summary-strip a { text-decoration: none; }
   .summary-strip a:hover { text-decoration: underline; }
   .summary-strip .attention { color: var(--hold); }
-  .overview-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(290px, 1fr); gap: 16px; align-items: start; }
+  .overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
   .overview-grid > * { min-width: 0; }
   .card, section.now, section.tasks, section.agents, section.lane, .col { border: 1px solid var(--rule); background: var(--panel);
     color: var(--ink); box-shadow: none; border-radius: 10px; padding: 15px 16px; margin-bottom: 0; }
@@ -605,7 +605,7 @@
   .section-only .sidebar, .section-only header.top { display: none; }
   .section-only .wrap { margin: 0; }
   @media (min-width: 1700px) { .wrap { margin-right: auto; } }
-  @media (max-width: 1100px) { .overview-grid { grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr); } .wrap { padding: 18px; } }
+  @media (max-width: 1100px) { .wrap { padding: 18px; } }
   @media (max-width: 900px) { .overview-grid, .board { grid-template-columns: 1fr; } #lane { grid-column: auto; } }
   @media (max-width: 640px) {
     .sidebar { position: static; width: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--rule); gap: 10px; }
@@ -630,7 +630,14 @@
   .merge-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, .36fr); gap: 18px; align-items: start; }
   .merge-main, .merge-aside { min-width: 0; }
   #view-overview .merge-layout { display: block; }
-  #view-overview .merge-aside { display: none; }
+  #view-overview .merge-aside,
+  #view-overview .merge-main > .round-section-label,
+  #view-overview .merge-main > .msteps,
+  #view-overview #integrationPlans,
+  #view-overview .merge-all-prs,
+  #view-merge .merge-round-details { display: none; }
+  #view-overview .merge-live { margin-bottom: 8px; }
+  #view-overview .merge-live-heading { flex-wrap: wrap; gap: 6px; }
   .merge-live { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--soft); margin: 10px 0 16px; }
   .merge-live .round-status { font-size: 16px; font-weight: 700; }
   .merge-live .round-status small { font-weight: 400; }
@@ -814,7 +821,7 @@
     <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
     <div class="overview-grid" id="overviewGrid">
       <div id="workersMount"></div>
-      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merging</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div></section>
+      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merging</h3><a class="merge-round-details" href="#merge">Round details →</a><a class="merge-all-prs" href="#tasks">All PRs →</a></div><div id="mergeMount"></div></section>
       <section class="card"><div class="card-head"><h3>Recent activity</h3><a href="#activity">View all →</a></div><ul class="preview-list" id="recentPreview"></ul></section>
       <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
     </div>
@@ -1403,7 +1410,7 @@ function renderStatus(d) {
   const slots = [];
   for (const a of ordinary) slots.push(workerSessionHtml(a, d, openWorkers));
   const free = Math.max(0, d.max_parallel - ordinary.length);
-  if (mergeWait) slots.push(`<div class="slot worker-wait" role="status"><b>${esc(mergeWait.title)}</b><p>${esc(mergeWait.detail)}</p><a href="#overview">Merge progress is shown below ↓</a></div>`);
+  if (mergeWait) slots.push(`<div class="slot worker-wait" role="status"><b>${esc(mergeWait.title)}</b><p>${esc(mergeWait.detail)}</p><a href="#merge">View merge progress →</a></div>`);
   else if (free || !ordinary.length) slots.push(`<div class="slot free">${d.max_parallel === 0 ? (emergency.available && emergency.max ? "New writing is paused. Merging, builds and emergency repairs continue." : "New writing is paused. Merging and builds continue.") : d.held ? `${free} worker slots available · paused` : free ? `${free} worker slots available` : "No active sessions."}</div>`);
   $("slots").innerHTML = slots.join("");
   renderEmergencyWorkers(d);
