@@ -1132,6 +1132,28 @@ class Engine:
         job = asyncio.ensure_future(coro)
         self.jobs[job] = (task_no, pr_no, prior_seen)
 
+    def stop_stalled(self, now_ts: float | None = None) -> list[int]:
+        """Self-repair: a session that has made no tool call for `stall_minutes` (a hung CLI, a lost connection) held its
+        slot forever. Cancel it; _settle requeues the task and its checkout stays for the next attempt."""
+        limit = getattr(self.cfg, "stall_minutes", 0) or 0
+        live = getattr(self.ctx, "live", None)
+        if limit <= 0 or live is None or not self.jobs:
+            return []
+        now_ts = now_ts if now_ts is not None else datetime.now(timezone.utc).timestamp()
+        seen = {}
+        for a in live.read().get("activity", []):
+            stamps = [a.get(k) for k in ("last_at", "stage_since", "since") if a.get(k)]
+            if stamps:
+                seen[a["task"]] = max(datetime.fromisoformat(t).timestamp() for t in stamps)
+        stopped = []
+        for job, (n, _pr, _prior) in list(self.jobs.items()):
+            if job.done() or n not in seen or now_ts - seen[n] < limit * 60:
+                continue
+            job.cancel()
+            stopped.append(n)
+            self.ctx.log(f"#{n} made no progress for {limit} min; stopped it and queued the task again (checkout kept)")
+        return stopped
+
     async def _wait_for_jobs(self, timeout: float | None) -> list[Outcome]:
         """Wait until at least one session ends (or `timeout`), and account for every one that has."""
         if not self.jobs:
@@ -1153,7 +1175,9 @@ class Engine:
                     gh.set_status(n, QUEUED if pr_n is None else PR)
                 except Exception:
                     pass
-                o = Outcome(n, "requeue", f"crashed: {type(exc).__name__}: {exc}", pr_number=pr_n)
+                why = (f"stopped: no progress for {self.cfg.stall_minutes} min" if job.cancelled()
+                       else f"crashed: {type(exc).__name__}: {exc}")
+                o = Outcome(n, "requeue", why, pr_number=pr_n)
             else:
                 o = job.result()
             if o.result == "waiting_resource":
@@ -1304,6 +1328,10 @@ class Engine:
                 waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs) + \
                     ([self.round_job] if self.round_job is not None else []) + ([self._storage_job] if self._storage_job and not self._storage_job.done() else [])
                 done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
+                try:
+                    self.stop_stalled()
+                except Exception as e:  # the watchdog must never stop the loop
+                    self.ctx.log(f"stall check failed: {type(e).__name__}: {e}")
                 if waits[0] not in done:
                     waits[0].cancel()
                 if self.round_job is not None and self.round_job in done:
