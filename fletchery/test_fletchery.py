@@ -789,6 +789,12 @@ _r = _Rules(always=["python3 .fletchery/check_conventions.py"])
 assert _r.checks_for([], ["none"]) == ["python3 .fletchery/check_conventions.py"]
 assert _r.checks_for([], ["None.", "`none`", "n/a"]) == ["python3 .fletchery/check_conventions.py"]
 assert _r.checks_for([], ["Tools/x.py"])[-1] == "python3 Tools/x.py"
+# "Gate: git diff --check" runs git, not `node git diff --check` (LifeShare PR #1035); scripts keep their runner
+assert _r.checks_for([], ["git diff --check"])[-1] == "git diff --check"
+assert _r.checks_for([], ["`git diff --check origin/Test-Staging...HEAD`"])[-1] == "git diff --check origin/Test-Staging...HEAD"
+assert _r.checks_for([], ["Tools/CI/TestLaneCut.cjs"])[-1] == "node Tools/CI/TestLaneCut.cjs"
+assert _r.checks_for([], ["node Tools/a.cjs"])[-1] == "node Tools/a.cjs"
+assert _r.checks_for([], ["git push origin main"])[-1] == "node git push origin main", "only read-only git checks run as git"
 
 # the merge fixer workflow's jobs ("find", "fix (855, ...)") fix other PRs; they are no verdict on this one (#829)
 class _FixerJobsGH(_RealGH):

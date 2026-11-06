@@ -599,11 +599,19 @@ def _resource_wait(ctx: Context, out: Outcome, resource: str) -> Outcome:
     return out
 
 
+def _one_line(text: str, limit: int = 240) -> str:
+    """A multi-line reason as one log line. "reviewer escalated:
+- finding" used to log as just
+    "reviewer escalated:", hiding why."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit - 1] + "…"
+
+
 def _block(ctx: Context, out: Outcome, why: str) -> Outcome:
     ctx.gh.set_status(out.task, BLOCKED)
     ctx.gh.comment(out.task, f"Fletchery blocked this task (cost so far ${out.cost_usd:.2f}):\n\n{why}")
     out.result, out.detail = "blocked", why
-    ctx.log(f"#{out.task} blocked: {why.splitlines()[0]}")
+    ctx.log(f"#{out.task} blocked: {_one_line(why)}")
     return out
 
 
