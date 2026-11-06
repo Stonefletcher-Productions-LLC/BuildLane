@@ -491,6 +491,8 @@ txt = rmod.role_prompt("worker", R, issue="Issue #1: x", branch="b", base="Test-
 assert "python Tools/ScanUIText.py" in txt and "python3 Tools" not in txt
 rmod.PYTHON = saved
 assert f"{rmod.PYTHON} Tools/ScanUIText.py" in rmod.role_prompt("worker", R, issue="Issue #1: x", branch="b", base="Test-Staging", freeze="")
+# Ending a turn to wait for a background job forced the final answer (round 26): every role is told not to.
+assert all("Never end a turn to wait" in rmod.role_prompt(r, R) for r in ("worker", "fixer", "merger", "reviewer"))
 rmod.PYTHON = "python3"
 full = rmod.role_prompt("worker", R, project="LifeShare", issue="Issue #1: x", branch="b", base="Test-Staging", freeze="")
 assert "python3 Tools/ScanUIText.py" in full and "People in the game are Folks." in full and "You cannot build Unreal here." in full
