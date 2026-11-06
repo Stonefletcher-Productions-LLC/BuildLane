@@ -1,5 +1,9 @@
 # Troubleshooting
 
+**Start here:** `python -m fletchery doctor` (from the installed folder or a checkout) prints what is running, every
+reason new tasks are not starting with where to change it, and the most common failures of the last 24 hours with a
+hint for each. It only reads the running dashboard and the ledger, so agents can run it too.
+
 | What you see | What to check |
 | --- | --- |
 | Setup screen; build buttons disabled | Enter project details and choose **Save and use**. |

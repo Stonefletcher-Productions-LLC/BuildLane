@@ -128,6 +128,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_limit_pause.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_doctor.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Control room browser checks
         run: |
           npm ci --prefix ui
