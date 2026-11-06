@@ -300,6 +300,14 @@ const server = http.createServer(async (req, res) => {
     data.merge_auto.running = {};
     await page.evaluate(next=>{last=next;render(next);},data);
     assert.match(await page.locator('#holdBanner').innerText(),/Running sessions finish/);
+    // Every reason shows at once: an update must not hide "Paused" or the merge-backlog pause (2026-11-06).
+    data.held = true; data.merge_auto.backlog = {count: 32, paused: true, high: 12, low: 6};
+    await page.evaluate(next=>{last=next;render(next);},data);
+    const reasons = await page.locator('#holdBanner').innerText();
+    assert.match(reasons, /Paused\. Nothing new starts until you press Resume/);
+    assert.match(reasons, /Update ready/);
+    assert.match(reasons, /32 ready PRs are waiting to merge; new tasks start again when that drops to 6/);
+    data.held = false; delete data.merge_auto.backlog;
     assert.doesNotMatch(await page.locator('.merge-aside').innerText(),/current merge continues/);
     data.update_pending=false;
     data.merge_auto.running = {};
