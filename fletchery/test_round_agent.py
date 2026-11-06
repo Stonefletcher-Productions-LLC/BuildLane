@@ -20,6 +20,18 @@ class MergerChoiceTests(unittest.TestCase):
         self.assertEqual(pool.merger("codex-sol"), "opus")
         self.assertEqual(pool.merger(""), "opus")
 
+    def test_fable_never_runs_a_round(self):
+        fable = AgentSpec("fable", kind="claude", model="claude-fable-5-1", tier=5, roles=["merger", "worker"],
+                          scores={"cpp": 100})
+        other = AgentSpec("strong", kind="claude", model="claude-fable-5-1")
+        pool = AgentPool([fable, other, AgentSpec("opus", kind="claude", model="claude-opus-5-5")], None, lambda s: None)
+        self.assertFalse(pool.available("fable", "merger"))
+        self.assertTrue(pool.available("fable", "worker"))
+        self.assertEqual(pool.merger("fable"), "opus")
+        self.assertEqual(pool.merger(""), "opus")
+        pool.pause("opus", 30, "usage limit")
+        self.assertIsNone(pool.merger(""))
+
 
 class LimitedWindowTests(unittest.TestCase):
     def test_limited_round_requeues_its_window_instead_of_blocking(self):
@@ -54,6 +66,16 @@ class RoundAgentSettingTests(unittest.TestCase):
         self.assertEqual([o["value"] for o in field["options"]], ["", "opus", "codex-sol"])
         self.assertTrue(field["options"][0]["label"].startswith("Best active worker"))
         self.assertIn("off", field["options"][2]["label"])
+
+    def test_dropdown_leaves_fable_out(self):
+        p = self.profile({})
+        data = json.loads(p.read_text(encoding="utf-8"))
+        data["workers"]["agents"].append({"name": "fable", "kind": "claude", "model": "claude-fable-5-1"})
+        p.write_text(json.dumps(data), encoding="utf-8")
+        cfg = Config.load(p)
+        self.assertNotIn("fable", [o["value"] for o in projects.agent_options(cfg)])
+        with self.assertRaises(ValueError):
+            projects.apply_settings(cfg, {"merge_agent": "fable"})
 
     def test_choosing_an_agent_saves_round_agent_and_rejects_unknown_names(self):
         p = self.profile({"mergeAgent": "codex-sol"})

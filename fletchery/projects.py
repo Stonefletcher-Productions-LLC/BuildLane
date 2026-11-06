@@ -153,6 +153,8 @@ def agent_options(cfg: Config) -> list[dict]:
     out = [{"value": "", "label": BEST_ACTIVE + " (automatic)"}]
     for a in cfg.agents or [{"name": "claude"}]:
         name = str(a.get("name") or "").strip()
+        if name and "fable" in (name + " " + str(a.get("model") or "")).lower():
+            continue  # Fable never runs merge rounds (agents.AgentSpec.never_merges)
         if name:
             off = "" if a.get("enabled", True) else ", off"
             out.append({"value": name, "label": f"{name} ({a.get('model') or a.get('kind') or 'claude'}{off})"})
