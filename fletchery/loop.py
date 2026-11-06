@@ -347,12 +347,28 @@ class Engine:
         external_dependencies.update(d for p in prs.values() for d in Task(0, "", p.body).depends_on
                                      if d not in tasks and d not in prs)
         closed_deps = {d for d in sorted(external_dependencies) if is_closed(d)}
+        repository_results: dict[tuple[str, int], bool] = {}
+
+        def verify_repository_dependencies(declarations) -> set[tuple[str, int]]:
+            refs = {ref for task in declarations for ref in task.repository_dependencies}
+            for repo, number in sorted(refs - repository_results.keys()):
+                try:
+                    repository_results[repo, number] = gh.issue_closed(number, repository=repo)
+                except Exception as e:
+                    repository_results[repo, number] = False
+                    self.dispatch_warning = f"GitHub could not verify prerequisite {repo}#{number}"
+                    self.ctx.log(f"{repo}#{number}: prerequisite lookup deferred: {e}")
+            return {ref for ref in refs if repository_results[ref]}
+
+        pr_declarations = {n: Task(n, p.title, p.body) for n, p in prs.items()}
+        repository_closed = verify_repository_dependencies([*tasks.values(), *pr_declarations.values()])
         # Merge scheduling runs first using this pass's verified task snapshot.
         # Existing sessions continue, but new workers/fixers/planners must not
         # claim the next free agent/PC opportunity ahead of a ready merge.
         self._tasks, self._prs = tasks, prs
         self._known_closed_dependencies = closed_deps
         self._dependency_lookup = is_closed
+        self._verify_repository_dependencies = verify_repository_dependencies
         if st.storage_requested:
             resume = st.merge_resume
             wait_for = resume.get("wait_for") if resume else None
@@ -391,6 +407,8 @@ class Engine:
             if task.number in self.active or resource_reason:
                 continue
             if any(d in tasks or not is_closed(d) for d in task.depends_on):
+                continue
+            if (task.repository_dependencies | pr_declarations[pr_num].repository_dependencies) - repository_closed:
                 continue
             pr = prs[pr_num]
             inspected_feedback += 1
@@ -446,6 +464,8 @@ class Engine:
             for t in sorted(tasks.values(), key=lambda t: (st.blocker_checked.get(str(t.number), ""), t.created_at, t.number)):
                 if t.status != BLOCKED or t.number in self.active or self.resource_wait_reason(t.number):
                     continue
+                if t.repository_dependencies - repository_closed:
+                    continue
                 emergency = t.number in emergency_numbers and self.emergency_free() > 0
                 if not emergency and (worker_paused or self.free_slots() <= 0):
                     continue
@@ -462,7 +482,7 @@ class Engine:
                     t.rules = rules_mod.load(Path(cfg.project_root), cfg.project_root)
                     self._start(blockers.resolve(t, self.ctx, Outcome(t.number, "blocked")), t.number, None, None, emergency=emergency)
                 break
-        rd = readiness(tasks, closed_deps)
+        rd = readiness(tasks, closed_deps, repository_closed)
         for number in rd.waiting:
             unknown = dependency_errors.intersection(tasks[number].depends_on)
             if unknown:
@@ -686,7 +706,10 @@ class Engine:
                         self.ctx.log(f"PR #{p.number}: repair task creation deferred: {e}")
                 if old and old.get("head") != p.head_sha:
                     st.merge_excluded.pop(str(p.number), None)
-            ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
+            declarations = [*self._tasks.values(), *(Task(p.number, p.title, p.body) for p in ready)]
+            verify = getattr(self, "_verify_repository_dependencies", None)
+            repository_closed = verify(declarations) if verify else set()
+            ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks, known_closed, repository_closed)
         except Exception as e:  # GitHub down: try again next pass
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
             self.ctx.log(f"merge rounds: {type(e).__name__}: {e}")

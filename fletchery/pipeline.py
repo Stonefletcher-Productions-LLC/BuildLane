@@ -623,6 +623,9 @@ def pr_body(task: Task, report: dict, results: list[gates_mod.GateResult], revie
     checks = [f"- {c}" for c in report.get("checks", [])] or ["- (none named)"]
     lines = [f"Closes #{task.number}", "", report.get("summary", ""), "",
              "## Build steps", *steps, "", "## Checks that prove it", *checks]
+    if task.repository_dependencies:
+        refs = ", ".join(f"{repo}#{number}" for repo, number in sorted(task.repository_dependencies))
+        lines[1:1] = ["", f"Depends on: {refs}"]
     if report.get("save_version"):
         lines += ["", f"**Save version:** {report['save_version']}"]
     if report.get("likely_conflicts"):

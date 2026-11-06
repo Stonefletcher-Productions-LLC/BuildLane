@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from graph import Task
+
 STEPS = ["Merge the PRs into the round branch", "Build", "Content and imports", "Checks and tests", "Land on {base}"]
 
 
@@ -373,16 +375,20 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
     return gh.create_issue("Fix merge-round failure: " + signature[:150], body, [graph.PREFIX, graph.label_for(graph.QUEUED)])
 
 
-def without_failed_dependencies(ready: list, excluded: dict, tasks: dict, known_closed: set[int] | None = None) -> list:
+def without_failed_dependencies(ready: list, excluded: dict, tasks: dict, known_closed: set[int] | None = None,
+                                repository_closed: set[tuple[str, int]] | None = None) -> list:
     """Keep failed heads and their issue/PR dependency closure out of the candidate.
 
     A PR with a changed head is not itself excluded. Existing open task dependencies
     still protect its descendants until that prerequisite actually lands.
     """
     prs = {p.number: p for p in ready}
+    declarations = {n: Task(n, p.title, p.body) for n, p in prs.items()}
+    repository_closed = repository_closed or set()
     known_closed = set(known_closed or ()) | {n for n, t in tasks.items() if t.closed}
     tasks = {n: t for n, t in tasks.items() if not t.closed}
     blocked_prs = {n for n, p in prs.items() if excluded.get(str(n), {}).get("head") == p.head_sha}
+    blocked_prs.update(n for n, t in declarations.items() if t.repository_dependencies - repository_closed)
     issue_prs: dict[int, set[int]] = {t.number: {t.pr_number} for t in tasks.values() if t.pr_number is not None}
     blocked_prs.update(n for numbers in issue_prs.values() for n in numbers if n not in prs)
     for n, p in prs.items():
@@ -392,8 +398,8 @@ def without_failed_dependencies(ready: list, excluded: dict, tasks: dict, known_
     # Every entry is an open issue. Its dependent cannot land unless its prerequisite
     # is already closed (absent here) or has a PR included in this exact candidate.
     blocked_issues: set[int] = {n for n in tasks if not (issue_prs.get(n, set()) & prs.keys())}
-    refs = {n: {int(ref) for line in re.findall(r"^\s*depends\s+on\s*:\s*(.+)$", p.body or "", re.I | re.M)
-                for ref in re.findall(r"#(\d+)", line)} for n, p in prs.items()}
+    blocked_issues.update(n for n, t in tasks.items() if t.repository_dependencies - repository_closed)
+    refs = {n: set(t.depends_on) for n, t in declarations.items()}
     # Absence from the harness issue list is not evidence of completion: it may
     # be an unlabelled open issue, a missing PR, or a failed GitHub lookup.
     dependencies = {d for t in tasks.values() for d in t.depends_on} | {d for ds in refs.values() for d in ds}

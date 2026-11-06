@@ -118,7 +118,7 @@ task lands under **Needs you**, its issue says what it needs; answer in a commen
 
 | I want to… | Do this |
 |---|---|
-| Add work | **Add task**, or label an issue on GitHub. `Depends on: #12` in the description makes it wait for #12 |
+| Add work | **Add task**, or label an issue on GitHub. Use `Depends on: #12` for local prerequisites or `Depends on: owner/repo#12` for another repository. Qualified prerequisites wait for verified completion before work, repair, or integration. |
 | Stop new work for a while | **Pause** (top right). Workers already running finish; nothing new starts until **Resume** |
 | Run more or fewer workers at once | **−** / **+** next to *Workers* (0 to 10) |
 | Stop new code but keep merging and building | Turn *Workers* down to **0**. Running sessions finish; the Build Lane carries on |

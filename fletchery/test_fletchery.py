@@ -90,6 +90,21 @@ fm, out = run_once(ctx, tmp)
 assert [o.task for o in out] == [11] and out[0].result == "pr", "the dependent runs once its dependency closed"
 assert fm.state.spent and sum(fm.state.spent.values()) == 4.0, "two tasks x (worker + reviewer) at $1 each"
 
+# A closed local issue with the same number cannot satisfy a cross-repo dependency.
+ref = ("stonefletcher-productions-llc/hearth", 42)
+task = T(944, "Import pavement", "Depends on: Stonefletcher-Productions-LLC/Hearth#42")
+ctx, tmp = ctx_with({944: task, 945: T(945, "Independent")}, closed={42})
+fm, out = run_once(ctx, tmp)
+assert task.depends_on == [] and task.repository_dependencies == {ref}
+assert [o.task for o in out] == [945] and "hearth#42" in ctx.gh.status_text
+ctx.gh.repository_closed.add(ref)
+fm, out = run_once(ctx, tmp)
+assert [o.task for o in out] == [944] and "Depends on: stonefletcher-productions-llc/hearth#42" in ctx.gh.prs[-1].body
+from rounds import without_failed_dependencies
+dependent = ctx.gh.prs[-1]
+assert without_failed_dependencies([dependent], {}, {944: task}, {42}) == []
+assert without_failed_dependencies([dependent], {}, {944: task}, {42}, {ref}) == [dependent]
+
 # ---- slots: max_parallel caps dispatch; a fixer takes a slot ----
 ctx, tmp = ctx_with({n: T(n, f"t{n}", created=f"2026-11-01T00:00:{n:02d}Z") for n in range(1, 7)},
                     cfg=Config(max_parallel=3, daily_budget_usd=60, base_branch="Test-Staging"))
