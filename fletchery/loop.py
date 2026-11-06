@@ -734,6 +734,8 @@ class Engine:
             # the rest go most-unblocking first, so each round sets the most queued work moving.
             ready = rounds.by_value(rounds.not_parked(ready, st.merge_parked), self._tasks)
         if resume:
+            resume = self._reconcile_resume(resume, ready)
+        if resume:
             wanted = {int(n) for n in resume.get("prs", {})}
             ready = [p for p in ready if p.number in wanted]
             if {p.number for p in ready} != wanted:
@@ -997,6 +999,40 @@ class Engine:
         self.state.save(self.state_dir / "state.json")
         self.wake()
         return {"round": last["round"], "resume_authorized": True, "message": "Saved round queued; heavy work waits for the PC reservation."}
+
+    def _reconcile_resume(self, resume: dict, ready: list) -> dict:
+        """A saved round resumes on its own candidate PRs. Deferred PRs that have changed head since are left for the
+        next round instead of blocking the resume. Once every candidate PR has merged or closed (e.g. the round was landed by
+        hand), the saved round is dropped so a fresh round can start. A candidate PR whose head changed still blocks:
+        its saved validation no longer applies, and an operator reconciles it."""
+        saved = {str(k): str(v) for k, v in (resume.get("prs") or {}).items()}
+        candidate = {str(n) for n in ((resume.get("progress") or {}).get("prs") or [])} & set(saved) or set(saved)
+        live = {str(p.number): p.head_sha for p in ready}
+
+        def gone(n: str) -> bool:
+            try:
+                return (self.ctx.gh.api(f"repos/{self.cfg.repo}/pulls/{int(n)}") or {}).get("state") != "open"
+            except Exception:
+                return False  # GitHub unsure: keep waiting rather than drop saved progress
+
+        if candidate.isdisjoint(live) and all(gone(n) for n in candidate):
+            stale = sorted(candidate, key=int)
+            self.ctx.log(f"merge round {resume.get('round')}: saved candidate dropped; "
+                         f"#{', #'.join(stale)} merged or closed since it was validated")
+            self.state.merge_resume = {}
+            self.state.save(self.state_dir / "state.json")
+            return {}
+        if any(n in live and live[n] != saved[n] for n in candidate):
+            return resume  # blocks below: "Saved candidate PR heads changed"
+        keep = {n: h for n, h in saved.items() if n in candidate or live.get(n) == h}
+        if keep != saved:
+            dropped = sorted(set(saved) - set(keep), key=int)
+            self.ctx.log(f"merge round {resume.get('round')}: #{', #'.join(dropped)} changed since the round stopped; "
+                         "they go to the next round and the saved candidate resumes without them")
+            resume = {**resume, "prs": keep}
+            self.state.merge_resume = resume
+            self.state.save(self.state_dir / "state.json")
+        return resume
 
     def merge_now(self) -> None:
         """Try the same PRs again now, without waiting out mergeRetryMinutes."""
