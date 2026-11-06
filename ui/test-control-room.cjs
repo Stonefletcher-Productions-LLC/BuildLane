@@ -122,6 +122,29 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await activeStep.getAttribute('open'), '', 'current step expands automatically');
     assert.match(await activeStep.innerText(), /M4b Reconnect/);
     assert.equal(await page.locator('#mergeNow script').count(), 0, 'log lines are text, never markup');
+    assert.equal(await page.locator('#mergeNow .merge-current .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('summary .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('.check-running .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('.check-done .merge-spinner').count(), 0);
+    const testMergeView = data.merge_view;
+    data.merge_view = {...testMergeView, prs: [1030, 1031, 1032, 1034],
+      activity: {...testMergeView.activity, source: 'Saved/MergeRound16/merge-1031.log'}, steps: [{
+      name: 'Merge the PRs into the round branch', state: 'running', check_kind: 'merge_prs',
+      checks: [{name: 'PR #1030', state: 'done'}, {name: 'PR #1031', state: 'running'},
+        {name: 'PR #1032', state: 'waiting', message: 'Git reported a conflict.'}, {name: 'PR #1034', state: 'todo'}],
+    }, {name: 'Build', state: 'todo'}]};
+    await page.evaluate(next => {last = next; render(next);}, data);
+    const merging = page.locator('.merge-step').first();
+    assert.match(await merging.innerText(), /1 of 4 PRs integrated/);
+    assert.match(await merging.innerText(), /Git reported a conflict/);
+    assert.equal(await merging.locator('progress').getAttribute('value'), '1');
+    assert.equal(await merging.locator('.check-waiting .merge-spinner').count(), 0);
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    assert.equal(await merging.locator('summary .merge-spinner').evaluate(el => getComputedStyle(el).animationName), 'none');
+    await page.emulateMedia({reducedMotion: 'no-preference'});
+    await page.locator('#mergeNow').screenshot({path: path.join(out, 'merge-pr-progress-dark.png')});
+    data.merge_view = testMergeView;
+    await page.evaluate(next => {last = next; render(next);}, data);
     await activeStep.locator('[data-step-tab="activity"]').click();
     await page.evaluate(() => render(last));
     assert.equal(await activeStep.locator('[data-step-tab="activity"]').getAttribute('aria-pressed'), 'true');

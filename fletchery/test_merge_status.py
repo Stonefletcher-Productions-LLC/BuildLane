@@ -146,6 +146,38 @@ class MergeStatusTests(unittest.TestCase):
         os.utime(log,(self.now.timestamp()-5,self.now.timestamp()-5))
         return log
 
+    def test_merge_pr_substeps_distinguish_git_results_and_pending_prs(self):
+        name = "Merge the PRs into the round branch"
+        self.save(state="running", updated="2026-11-05T07:59:00Z", prs=[100, 101, 102, 103, 104],
+                  steps=[{"name": name, "state": "running"}])
+        success = self.logs("merge-100.log", "Merge made by the 'ort' strategy.\n")
+        conflict = self.logs("merge-101.log", "Auto-merging README.md\nCONFLICT (content): README.md\n")
+        running = self.logs("merge-102.log", "Auto-merging docs/index.md\n")
+        old = self.logs("merge-104.log", "Merge made by the 'ort' strategy.\n")
+        for path, age in ((success, 30), (conflict, 20), (running, 5), (old, 9 * 3600)):
+            os.utime(path, (self.now.timestamp() - age,) * 2)
+        cached = {"round": "19", "in_branch": {}}
+        with patch("merge.in_branch") as query:
+            view = merge.refresh(self.progress, self.lease, cached, self.root.parent, now=self.now)
+        query.assert_not_called()
+        step = view["steps"][0]
+        self.assertEqual(step["check_kind"], "merge_prs")
+        self.assertEqual([(c["name"], c["state"]) for c in step["checks"]],
+                         [("PR #100", "done"), ("PR #101", "waiting"), ("PR #102", "running"),
+                          ("PR #103", "todo"), ("PR #104", "todo")])
+        self.assertIn("merge-102.log", step["activity_source"])
+        self.assertIn("name=merge-102.log", step["files"][0]["url"])
+        self.assertEqual(step["state"], "running")
+
+    def test_reported_merge_pr_substeps_override_log_fallback(self):
+        self.save(state="running", steps=[{"name": "Merge the PRs into the round branch", "state": "running",
+                  "checks": [{"name": "PR #100", "state": "running", "message": "Resolving conflicts"}]}])
+        self.logs("merge-100.log", "Merge made by the 'ort' strategy.\n")
+        step = merge.view(self.progress, self.lease, now=self.now, worktree_root=self.root.parent)["steps"][0]
+        self.assertEqual(step["check_kind"], "merge_prs")
+        self.assertEqual(step["checks"][0]["state"], "running")
+        self.assertEqual(step["checks"][0]["message"], "Resolving conflicts")
+
     def test_real_log_checks_activity_and_safe_full_log_link(self):
         self.save(state="running",updated="2026-11-05T07:59:00Z",steps=[{"name":"Game checks","state":"running"}])
         log=self.logs()

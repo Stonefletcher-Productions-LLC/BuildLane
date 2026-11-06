@@ -669,6 +669,15 @@
   .merge-step-label { flex: 1; font-weight: 600; min-width: 0; }
   .merge-step-time { color: var(--muted); font-size: 11px; }
   .merge-step-icon { flex: 0 0 17px; text-align: center; }
+  .merge-spinner {
+    display: inline-block; width: .85em; height: .85em; vertical-align: -.04em;
+    border: 2px solid currentColor; border-inline-end-color: transparent; border-radius: 50%;
+    animation: merge-spin .85s linear infinite;
+  }
+  @keyframes merge-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .merge-spinner { animation: none; } }
+  .merge-check-detail { display: block; margin-inline-start: 1.2em; font-size: 11px; color: var(--muted); }
+  .merge-check-meter { width: 100%; height: 7px; accent-color: var(--running); }
   .done .merge-step-icon, .check-done { color: var(--running); }
   .running .merge-step-icon, .check-running { color: var(--running); }
   .failed .merge-step-icon, .check-failed { color: var(--failed); }
@@ -1212,6 +1221,7 @@ function mergeStepTime(s) {
 function mergeActivityHtml(lines) {
   return lines && lines.length ? `<div class="merge-activity" aria-label="Recent step activity">${lines.slice(-16).map(a => `<p>${a.at ? esc(clockTime(a.at)) + "  " : ""}${esc(typeof a === "string" ? a : a.line || "")}</p>`).join("")}</div>` : `<p class="merge-empty">No detailed activity reported for this step yet.</p>`;
 }
+const MERGE_SPINNER = '<span class="merge-spinner" aria-hidden="true"></span>';
 function mergeStepHtml(s, i, mv, current, mark, word) {
   const key = `${mv.round}:${i}:${s.name}`;
   const open = mergeExpansion.has(key) ? mergeExpansion.get(key) : s === current || (s.state === "failed" && s.required !== false);
@@ -1222,15 +1232,19 @@ function mergeStepHtml(s, i, mv, current, mark, word) {
   const runningChecks = checks.filter(c => c.state === "running");
   const failedChecks = checks.filter(c => c.state === "failed");
   const otherChecks = checks.filter(c => c.state !== "running" && c.state !== "failed");
-  const checkSummary = s.state === "running" && checks.length ? `<p class="merge-check-summary"><strong>${checks.filter(c => c.state === "done").length} of ${checks.length} passed</strong><span>${runningChecks.length} running</span><span>${failedChecks.length} failed</span></p>` : "";
+  const prChecks = s.check_kind === "merge_prs";
+  const completedChecks = checks.filter(c => c.state === "done").length;
+  const checkSummary = prChecks && checks.length
+    ? `<p class="merge-check-summary"><strong>${completedChecks} of ${checks.length} PRs integrated</strong><span>${runningChecks.length} running</span><span>${checks.filter(c => c.state === "waiting").length} waiting</span><span>${failedChecks.length} failed</span></p><progress class="merge-check-meter" aria-label="PRs integrated" value="${completedChecks}" max="${checks.length}"></progress>`
+    : s.state === "running" && checks.length ? `<p class="merge-check-summary"><strong>${checks.filter(c => c.state === "done").length} of ${checks.length} passed</strong><span>${runningChecks.length} running</span><span>${failedChecks.length} failed</span></p>` : "";
   const badge = s.required !== false && ["running", "failed"].includes(s.state)
     ? `<span class="merge-step-badge">${s.state === "running" ? "Running" : "Failed"}</span>` : "";
   const log = files.find(f => f.url);
   const meta = [s.started ? `Started ${clockTime(s.started)}` : "", s.updated ? `Updated ${ago(s.updated)} ago` : "", s.ended ? `Finished ${clockTime(s.ended)}` : "", s.activity_updated ? `Activity ${ago(s.activity_updated)} ago` : "", s.activity_source || ""].filter(Boolean).join(" · ");
   const displayedChecks = s.state === "running" ? [...runningChecks, ...failedChecks, ...otherChecks] : checks;
-  const checksHtml = checks.length ? `<ul class="merge-checks">${displayedChecks.map(c => `<li class="check-${esc(c.state)}"><span>${mark[c.state] || "○"} ${esc(c.name)}</span><span class="check-state">${esc(word[c.state] || c.state || "Not reported")}${typeof c.duration_seconds === "number" ? ` · ${esc(durationText(c.duration_seconds))}` : ""}</span></li>`).join("")}</ul>` : `<p class="merge-empty">${esc(s.state === "done" ? "Completed. No individual check results were reported." : s.state === "todo" ? "Queued. Waiting for earlier checks to finish." : "Individual check results have not been reported yet.")}</p>`;
+  const checksHtml = checks.length ? `<ul class="merge-checks">${displayedChecks.map(c => `<li class="check-${esc(c.state)}"><span>${c.state === "running" && s.required !== false ? MERGE_SPINNER : mark[c.state] || "○"} ${esc(c.name)}${c.message ? `<small class="merge-check-detail">${esc(c.message)}</small>` : ""}</span><span class="check-state">${esc(word[c.state] || c.state || "Not reported")}${typeof c.duration_seconds === "number" ? ` · ${esc(durationText(c.duration_seconds))}` : ""}</span></li>`).join("")}</ul>` : `<p class="merge-empty">${esc(s.state === "done" ? "Completed. No individual check results were reported." : s.state === "todo" ? "Queued. Waiting for earlier checks to finish." : "Individual check results have not been reported yet.")}</p>`;
   const filesHtml = files.length ? `<ul class="merge-side-prs">${files.map(f => `<li>${f.url && /^\/api\/merge\/log\?/.test(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)} ↗</a>` : esc(f.name || "File")}</li>`).join("")}</ul>` : `<p class="merge-empty">No output files reported for this step.</p>`;
-  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span>${badge}<span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checkSummary}${mergeActivityHtml(activity.slice(-4))}${checksHtml}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
+  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${s.state === "running" && s.required !== false ? MERGE_SPINNER : mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span>${badge}<span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checkSummary}${prChecks ? checksHtml : mergeActivityHtml(activity.slice(-4)) + checksHtml}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
 }
 
 function durationText(seconds) {
@@ -1463,7 +1477,7 @@ function renderStatus(d) {
     const latestUpdate = headlineMatches ? mv.headline : mv.note || currentStep?.message;
     const nextStep = headlineMatches || failedSteps.length ? mv.next
       : requiredSteps.slice(requiredSteps.indexOf(currentStep) + 1).find(s => s.state === "todo")?.name;
-    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${currentStep.state === "running" ? MERGE_SPINNER + " " : ""}${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (failedSteps.length) {
       const reported = steps.filter(s => s.state === "running" && s.required !== false).map(s => s.name);
       box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${reported.length ? `<br>Reported activity: ${esc(reported.join(", "))}. This does not clear the failed check.` : ""}</p>`);
@@ -1473,7 +1487,7 @@ function renderStatus(d) {
     if (ma || history) {
       let line;
       if (!ma) line = esc(mv.headline || "No merge round running.");
-      else if (running) line = `<b>${esc(running.agent)}</b> · ${included.length} ${included.length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
+      else if (running) line = `${MERGE_SPINNER} <span class="sr">Round running.</span><b>${esc(running.agent)}</b> · ${included.length} ${included.length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
       else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {

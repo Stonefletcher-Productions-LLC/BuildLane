@@ -264,6 +264,64 @@ def _activity(r: dict, steps: list[dict], root, now: datetime) -> tuple[dict, li
     return activity, files
 
 
+def _merge_pr_checks(r: dict, steps: list[dict], prs: list[int], root, now: datetime, files=()) -> None:
+    """Show PR-sized progress from the checkpoint and the round's individual merge logs."""
+    step = next((s for s in steps if s["name"].lower().startswith("merge the prs")
+                 and s.get("required") is not False), None)
+    if step is None or not prs:
+        return
+    step["check_kind"] = "merge_prs"
+    if not step["files"]:
+        names = {f"merge-{number}.log" for number in prs}
+        step["files"] = [file for file in files if Path(file["name"]).name in names]
+    if step["checks"]:
+        return  # The merger's recorded substeps take precedence.
+
+    checks = {number: {"name": f"PR #{number}", "state": "done" if step["state"] == "done" else "todo"}
+              for number in dict.fromkeys(prs[:80])}
+    step["checks"] = list(checks.values())
+    if step["state"] not in ("running", "waiting", "failed"):
+        return
+    try:
+        folder = _log_folder(r, root)
+    except (OSError, ValueError, TypeError):
+        return
+
+    age = _age_h(r.get("started"), now)
+    if age is None:
+        return
+    started = now.timestamp() - age * 3600
+    newest = None
+    for number, check in checks.items():
+        path = folder / f"merge-{number}.log"
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or _linked(path) or info.st_mtime < started:
+                continue
+            lines = _tail(str(path), info.st_size, info.st_mtime_ns)
+        except OSError:
+            continue
+        if newest is None or info.st_mtime_ns > newest[0].st_mtime_ns:
+            newest = info, check, lines, path.name
+        if any(line.startswith(("Merge made by ", "Already up to date.")) for line in lines):
+            check.update(state="done", message="Git reported a successful merge.")
+        elif any(line.startswith(("CONFLICT ", "Automatic merge failed")) for line in lines):
+            check.update(state="waiting", message="Git reported a conflict. Waiting for a resolution.")
+        elif any(line.startswith(("error:", "fatal:")) for line in lines):
+            check.update(state="failed", message="Git reported an error.")
+
+    if newest:
+        info, check, lines, name = newest
+        if (step["state"] == "running" and check["state"] == "todo"
+                and 0 <= now.timestamp() - info.st_mtime <= 180
+                and any(line.startswith("Auto-merging ") for line in lines)):
+            check.update(state="running", message="Git merge activity reported.")
+        if lines and not step["activity"]:
+            step["activity"] = [{"line": line} for line in lines[-12:]]
+            step["activity_source"] = f"Saved/MergeRound{r['round']}/{name}"
+            step["activity_updated"] = datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat()
+
+
 def _live_game_specs(r: dict, steps: list[dict], root, lease_path, now: datetime, activity: dict) -> None:
     """Overlay check events from the workspace currently running the test suite."""
     active = [step for step in steps if step["state"] == "running" and step.get("required") is not False
@@ -399,6 +457,7 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
                     duration = int(round(age * 3600))
             except ValueError:
                 pass
+            _merge_pr_checks(r, steps, prs, None, now)
             out["previous"] = {"round": str(r.get("round", "")), "result": r.get("result") or state,
                                "steps": steps, "prs": prs, "started": r.get("started", ""),
                                "ended": ended, "duration_seconds": duration,
@@ -414,6 +473,7 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     merged = sum(1 for v in out["in_branch"].values() if v)
     known = sum(1 for v in out["in_branch"].values() if v is not None)
     out["activity"], out["files"] = _activity(r, steps, worktree_root, now)
+    _merge_pr_checks(r, steps, prs, worktree_root, now, out["files"])
     _live_game_specs(r, steps, worktree_root, lease_path, now, out["activity"])
     out["failed_steps"] = [s["name"] for s in steps if s["state"] == "failed" and s.get("required") is not False]
     required = [(i, s) for i, s in enumerate(steps) if s.get("required") is not False]

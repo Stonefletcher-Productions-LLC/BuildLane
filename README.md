@@ -268,7 +268,7 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 ## Merge progress
 
-Open **Merging** for the current round, scheduled windows, and expandable checks and logs. Running rows are highlighted green and failed rows red. Previous candidates stay muted. The active step opens automatically, and your expansion and detail-tab choices survive status refreshes. Open **Building** for the build machine and package queue.
+Open **Merging** for the current round, scheduled windows, and expandable checks and logs. The merge step shows how many PRs are integrated and which are running, waiting, or failed. Spinners mark running rounds, steps, and subchecks. Running rows are highlighted green and failed rows red. Previous candidates stay muted. The active step opens automatically, and your expansion and detail-tab choices survive status refreshes. Open **Building** for the build machine and package queue.
 
 Merge progress and saved history remain visible even while the GitHub queue is unavailable or still loading. The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards. Update messages distinguish an active merge from worker sessions draining after a round ends.
 
