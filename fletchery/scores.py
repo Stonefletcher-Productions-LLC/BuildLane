@@ -18,8 +18,10 @@ import math
 import re
 from pathlib import Path
 
-SKILLS = ["cpp", "scripts", "ui", "docs", "review"]
-SKILL_NAMES = {"cpp": "C++ / Unreal", "scripts": "Python & tools", "ui": "UI", "docs": "Docs & data", "review": "Review"}
+SKILLS = ["cpp", "scripts", "ui", "docs", "art", "review"]
+CODING = ["cpp", "scripts", "ui", "docs", "art"]  # every kind a worker writes (review is the reviewer's)
+SKILL_NAMES = {"cpp": "C++ / Unreal", "scripts": "Python & tools", "ui": "UI", "docs": "Docs & data",
+               "art": "Blender & 3D (MCP)", "review": "Review"}
 BARS = {"easy": 45, "medium": 60, "hard": 75}
 PRIOR_WEIGHT = 6   # how many tasks the seed counts as
 PASS_BONUS, FAIL_MALUS = 15, 25
@@ -30,14 +32,20 @@ BUSY_PENALTY = 10  # cost points per session an agent is already running, so wor
 SKILL_PATTERNS = {
     "cpp": [r"\.(cpp|h|hpp)\b", r"\bC\+\+", r"\bSource/", r"\bU(CLASS|FUNCTION|PROPERTY)\b", r"\bactor\b", r"\bcomponent\b",
             r"\bsubsystem\b", r"\breplicat", r"\bnav(mesh)?\b"],
-    "scripts": [r"\.py\b", r"\bpython\b", r"\bTools/", r"\bscript", r"\bBlender\b", r"\.ps1\b", r"\bPowerShell\b",
+    "scripts": [r"\.py\b", r"\bpython\b", r"\bTools/", r"\bscript", r"\.ps1\b", r"\bPowerShell\b",
                 r"\bcommandlet\b"],
+    # Blender and modelling work, usually through the Blender MCP or the art tools (Silhouette, TailorKit, Hearth).
+    # Codex is preferred for it when it is free (routing.preferredKindsBySkill, Alex 2026-11-06).
+    "art": [r"\bBlender\b", r"\bBlenderMCP\b|\bMCP\b", r"\bmesh(es)?\b", r"\bmodel(l)?ing\b|\bremodel", r"\b(re)?export",
+            r"\.(blend|fbx|glb)\b", r"\brig(ged|ging)?\b|\bskin weights?\b", r"\btextures?\b|\bUVs?\b|\bmaterials?\b",
+            r"\bSilhouette\b|\bTailorKit\b|\bHearth\b", r"\bhair\b|\bwig|\bclothing\b|\bwardrobe\b|\bcoat\b",
+            r"\bsculpt|\btopology\b|\bvert(ex|ices)\b|\btris\b"],
     "ui": [r"\bUI\b", r"\bUMG\b", r"\bwidget", r"\bHUD\b", r"\bmenu\b", r"\bbutton", r"\btooltip", r"\bscreen\b",
            r"\bpanel\b", r"\bfont\b", r"\bcard\b"],
     "docs": [r"\bdocs?/", r"\.md\b", r"\bREADME\b", r"\bstring table\b", r"\bLSStrings\b", r"\.csv\b", r"\blocali[sz]",
              r"\bdocumentation\b", r"\bwording\b", r"\btypo\b"],
 }
-_SKILL_LINE = re.compile(r"^\s*skill\s*:\s*(cpp|scripts|ui|docs)\b", re.IGNORECASE | re.MULTILINE)
+_SKILL_LINE = re.compile(r"^\s*skill\s*:\s*(cpp|scripts|ui|docs|art)\b", re.IGNORECASE | re.MULTILINE)
 
 _HERE = Path(__file__).resolve().parent
 CATALOG_FILE = _HERE / "model_scores.json"
@@ -154,7 +162,9 @@ def results(attempts: list[dict]) -> dict:
         bar = BARS.get(a.get("difficulty") or "medium", BARS["medium"])
         ev = bar + PASS_BONUS if a.get("ok") else bar - FAIL_MALUS
         role = a.get("role", "worker")
-        skills = ["review"] if role == "reviewer" else ([a["skill"]] if a.get("skill") else ["cpp", "scripts", "ui", "docs"])
+        if a.get("env") or a.get("cant_run") or role in ("architect", "planner"):
+            continue  # not a verdict on the agent: a missing repo or tool, or a model the CLI refused
+        skills = ["review"] if role == "reviewer" else ([a["skill"]] if a.get("skill") else list(CODING))
         for s in skills:
             c = out.setdefault((a.get("agent", "?"), s), [0.0, 0, 0])
             c[0] += ev
@@ -181,6 +191,6 @@ def effective(spec, catalog: dict, res: dict | None = None) -> dict:
             row["from"] = "you"
         skills[sk] = row
     cost = sd["cost"] if mine.get("cost") is None else _clip(float(mine["cost"]))
-    overall = _clip(sum(skills[s]["score"] for s in ("cpp", "scripts", "ui", "docs")) / 4)
+    overall = _clip(sum(skills[s]["score"] for s in CODING) / len(CODING))
     return {"skills": skills, "cost": cost, "cost_from": "you" if mine.get("cost") is not None else
             ("price" if "price" in sd else "strength"), "overall": overall, "seed": sd}

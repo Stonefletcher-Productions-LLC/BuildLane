@@ -274,7 +274,7 @@ def utf8_console() -> None:
 def main(argv: list[str] | None = None) -> int:
     utf8_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["once", "run", "status", "plan", "config", "demo", "doctor"])
+    ap.add_argument("command", choices=["once", "run", "status", "plan", "config", "demo", "doctor", "usage"])
     ap.add_argument("goal", nargs="?", default="")
     ap.add_argument("--dry-run", action="store_true", help="no sessions, no GitHub writes; print what a pass would do")
     ap.add_argument("--apply", action="store_true", help="plan: create the issues instead of drafting them")
@@ -295,6 +295,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.command == "config":
         print(cfg.dump())
+        return 0
+    if a.command == "usage":  # read-only: tokens per agent over the last 7 days
+        import usage
+        state = Path(cfg.state_dir) if cfg.state_dir else None
+        print(usage.text(usage.summary(state / "usage.jsonl" if state else None)))
         return 0
     if a.command == "doctor":  # read-only: the running dashboard's state and the ledger, in plain words
         import doctor

@@ -26,10 +26,10 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from runtime import SCHEMAS, RunResult, Runtime, is_limit, is_signed_out, parse_output
+from runtime import SCHEMAS, RunResult, Runtime, add_tokens, is_limit, is_signed_out, parse_output
 
-DEFAULT_TIMEOUT_MIN = {"worker": 60, "fixer": 45, "reviewer": 20, "planner": 20, "merger": 720}
-READ_ONLY = ("reviewer", "planner")
+DEFAULT_TIMEOUT_MIN = {"worker": 60, "fixer": 45, "reviewer": 20, "planner": 20, "architect": 20, "merger": 720}
+READ_ONLY = ("reviewer", "planner", "architect")
 GIT_NOTE = ("\n\n(If `git add` or `git commit` is refused by your sandbox, leave the changes in the working tree: "
             "Fletchery commits them after you finish. Do not try to work around the sandbox.)")
 
@@ -191,7 +191,7 @@ class CliRuntime(Runtime):
                 env["CODEX_API_KEY"] = value  # what `codex exec` reads for key sign-in
         env.pop("ANTHROPIC_API_KEY", None)  # other vendors never need it; keep it out of their sessions
         flags = 0x00004000 if os.name == "nt" and self.low_priority else 0  # BELOW_NORMAL_PRIORITY_CLASS
-        state: dict = {"last_text": "", "errors": [], "cost": 0.0, "turns": 0, "session": ""}
+        state: dict = {"last_text": "", "errors": [], "cost": 0.0, "turns": 0, "session": "", "tokens": {}}
         stderr_tail: list[str] = []
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -242,6 +242,7 @@ class CliRuntime(Runtime):
             result.cost_usd = round(state["cost"], 4)
             result.turns = state["turns"]
             result.session_id = state["session"]
+            result.tokens = dict(state.get("tokens") or {})
 
         text = self.finish(state, workdir)
         result.text = text
@@ -300,6 +301,9 @@ class CodexRuntime(CliRuntime):
             state["session"] = ev.get("thread_id", "")
         elif t == "turn.completed":
             state["turns"] += 1
+            # Codex on a ChatGPT plan reports no cost, only tokens; they are what its weekly limit counts
+            add_tokens(state.setdefault("tokens", {}), ev.get("usage"),
+                       {"input": "input_tokens", "output": "output_tokens", "cache_read": "cached_input_tokens"})
         elif t in ("error", "turn.failed"):
             msg = ev.get("message") or (ev.get("error") or {}).get("message") or json.dumps(ev)[:300]
             state["errors"].append(str(msg))
@@ -384,6 +388,10 @@ class OpenCodeRuntime(CliRuntime):
                 state["cost"] += float(part.get("cost") or 0)
             except (TypeError, ValueError):
                 pass
+            tk = part.get("tokens") or {}
+            add_tokens(state.setdefault("tokens", {}), {**tk, **{"cache_" + k: v for k, v in (tk.get("cache") or {}).items()},
+                                                        "output": int(tk.get("output") or 0) + int(tk.get("reasoning") or 0)},
+                       {"input": "input", "output": "output", "cache_read": "cache_read", "cache_write": "cache_write"})
         elif t == "error":
             err = ev.get("error") or {}
             msg = (err.get("data") or {}).get("message") if isinstance(err, dict) else None

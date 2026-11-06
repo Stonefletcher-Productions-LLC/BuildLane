@@ -45,6 +45,9 @@ TOOLS: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# The architect plans one task before a (usually cheaper) worker writes it: the same read-only reach as the planner.
+TOOLS["architect"] = TOOLS["planner"]
+
 # The fixed shapes each role answers in. The SDK asks the model for exactly this JSON (output_format).
 SCHEMAS: dict[str, dict[str, Any]] = {
     "worker": {"type": "object", "required": ["summary", "files", "build_steps", "checks", "unverified"],
@@ -85,6 +88,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                               "depends_on": {"type": "array", "items": {"type": "integer"}}}}}}},
 }
 
+SCHEMAS["architect"] = {"type": "object", "required": ["plan", "files"],
+                        "properties": {"plan": {"type": "string"},
+                                       "files": {"type": "array", "items": {"type": "string"}},
+                                       "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+                                       "needs_human": {"type": "string"}}}
+
 # Resource contention is explicit, never inferred from a permission/error string.
 for _role in ("worker", "fixer"):
     SCHEMAS[_role]["properties"]["waiting_resource"] = {"type": "string", "enum": ["", "heavy"]}
@@ -110,6 +119,27 @@ class RunResult:
     limited: bool = False  # hit a usage or rate limit: not a verdict on the task, the loop pauses instead
     signed_out: bool = False  # the plan sign-in expired or the key was refused: pause until someone signs in again
     agent: str = ""           # which of the project's agents ran it (set by the pipeline)
+    tokens: dict = field(default_factory=dict)  # {"input", "output", "cache_read", "cache_write"} as the CLI reports them
+    seconds: float = 0.0      # wall time of the session (set by the pipeline)
+
+
+TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
+
+
+def add_tokens(into: dict, usage: dict | None, names: dict) -> dict:
+    """Add one usage report to `into`. `names` maps our keys to the CLI's (Claude: input_tokens, ...)."""
+    for ours, theirs in names.items():
+        try:
+            v = int((usage or {}).get(theirs) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if v:
+            into[ours] = into.get(ours, 0) + v
+    return into
+
+
+CLAUDE_USAGE = {"input": "input_tokens", "output": "output_tokens", "cache_read": "cache_read_input_tokens",
+                "cache_write": "cache_creation_input_tokens"}
 
 
 _LIMIT = re.compile(r"usage limit|rate.?limit|limit reached|limit will reset|resets at|overloaded|\b429\b|\b529\b",
@@ -275,6 +305,7 @@ class AgentSdkRuntime(Runtime):
                                 pass  # the live view must never break a session
                 if isinstance(msg, ResultMessage):
                     result.cost_usd = msg.total_cost_usd or 0.0
+                    add_tokens(result.tokens, getattr(msg, "usage", None), CLAUDE_USAGE)
                     result.turns = msg.num_turns or 0
                     result.session_id = msg.session_id or ""
                     result.text = msg.result or ""
@@ -350,5 +381,6 @@ DEFAULT_ANSWERS: dict[str, dict] = {
     "fixer": {"summary": "Fixed it.", "pushed": True},
     "reviewer": {"verdict": "approve", "findings": []},
     "planner": {"issues": []},
+    "architect": {"plan": "", "files": []},
     "merger": {"state": "nothing", "landed_pr": 0, "merged": [], "left_out": [], "summary": "Nothing to merge."},
 }

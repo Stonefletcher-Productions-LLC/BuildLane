@@ -233,7 +233,23 @@ async def resolve(task, ctx, out):
             ctx.gh.comment(task.number, f"Fletchery: {out.detail}.\n{COMPLETED}{key} -->")
             ctx.log(f"#{task.number}: {out.detail}")
             return out
-        deps = list(plan.get("reuse", []))
+        reuse = list(plan.get("reuse", []))
+        linked = set(Task(task.number, "", current.get("body", "")).depends_on)
+        if (reuse and not plan.get("issues") and set(reuse) <= linked
+                and all(getattr(existing.get(n), "closed", False) for n in reuse)):
+            # Linking finished work a second time is no wait: the task runs again at once, fails the same way and is
+            # planned the same way. LifeShare #944 went round that loop 29 times on 2026-11-04/05 ("Waits for #42", a
+            # merged PR). The first time is fine: the prerequisite may have finished since the task was blocked.
+            why = ("The prerequisite planner pointed again at work that is already finished and already linked ("
+                   + ", ".join(f"#{n}" for n in reuse) + "), so waiting on it would only repeat the failure. "
+                   "A person must say what is still missing.")
+            plan = {**plan, "reuse": [], "needs_human": why}
+            ctx.gh.comment(task.number, "Fletchery: prerequisite plan\n" + why + "\n" + PLAN + key + "\n" +
+                           json.dumps(plan, ensure_ascii=False) + "\n-->")
+            out.detail = why
+            ctx.log(f"#{task.number}: {why}")
+            return out
+        deps = list(reuse)
         for index, issue in enumerate(plan.get("issues", [])):
             marker = f"{CHILD}{task.number}:{key}:{index} -->"
             found = ctx.gh.marked_issues(marker)

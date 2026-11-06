@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import json
+import time
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,8 +45,16 @@ class _LimitGuard(Runtime):
         if live and self.task and self.agent:
             live.meta(self.task, agent=self.agent, role=role)
         cb = on_action or ((lambda text: live.action(self.task, text)) if live and self.task else None)
+        pool = self.ctx.agents if self.ctx else None
+        if pool is not None and self.agent and hasattr(pool, "note_run"):
+            pool.note_run(self.agent)  # counts toward the agent's maxRunsPerDay, even if the session fails
+        started = time.monotonic()
         r = await self.inner.run(role, prompt, cwd, budget_usd, max_turns, on_action=cb)
         r.agent = self.agent
+        r.seconds = round(time.monotonic() - started, 1)
+        if self.ctx is not None and getattr(self.ctx, "usage_log", None):
+            import usage
+            usage.record(self.ctx.usage_log, r, self.task, pool)
         if r.signed_out:
             raise Limited(r.error, r.cost_usd, "signed_out", self.agent)
         if r.limited:
@@ -92,6 +101,7 @@ class Context:
     escalate: bool = True     # a failed attempt goes to a stronger agent before the task is blocked
     task_worker_ranks: dict = field(default_factory=dict)
     handoffs: object | None = None  # cooperative checkpoints owned by Engine
+    usage_log: Path | None = None   # usage.jsonl: one line per session (tokens, cost, time), see usage.py
 
 
 def _stats(ctx: "Context"):
@@ -160,12 +170,73 @@ def _adopt_open_pr(task: Task, ctx: Context, out: Outcome) -> Outcome | None:
     return out
 
 
+async def _plan_first(task: Task, ctx: Context, out: Outcome) -> "Outcome | None":
+    """Hard tasks are planned before they are written: a strong model reads the code read-only and writes a short plan
+    into the issue body, and the router then gives the writing to a cheaper agent (routing.plan). The plan stays on the
+    issue, so a retry, an escalation or a restart reuses it instead of paying for it again. Any failure here only means
+    the task is written without a plan. Returns an Outcome only when the architect says a person must decide."""
+    pool = ctx.agents
+    if pool is None or not hasattr(pool, "wants_plan") or getattr(task, "emergency_writer", False):
+        return None
+    import agents as agents_mod
+    import scores
+    level, _ = agents_mod.classify(task.title, agents_mod.strip_plan(task.body), task.labels,
+                                   pool.routing.get("hardPatterns"), pool.routing.get("easyPatterns"),
+                                   len(task.depends_on), pool.routing.get("hardScore"))
+    if not pool.wants_plan(level, task.body):
+        return None
+    skill, _ = scores.classify_skill(task.title, task.body, task.labels, pool.routing.get("defaultSkill", "cpp"))
+    name = pool.architect(skill)
+    if not name:
+        ctx.log(f"#{task.number}: no architect free; written without a plan")
+        return None
+    pool.acquire(name)
+    try:
+        if ctx.live:
+            ctx.live.stage(task.number, f"Planning ({name})")
+        import blockers
+        cwd = await asyncio.to_thread(blockers.planner_root, task, ctx)
+        await asyncio.to_thread(_load_notes, ctx, task)
+        rules = rules_mod.load(cwd, ctx.cfg.project_root)
+        prompt = role_prompt("architect", rules, project=ctx.cfg.name, issue=_issue_text(task))
+        try:
+            r = await _LimitGuard(pool.runtime(name), ctx, task.number, name).run(
+                "architect", prompt, cwd, ctx.cfg.planner_budget_usd, ctx.cfg.planner_max_turns)
+        except Limited as e:
+            kind = e.args[2] if len(e.args) > 2 else "limited"
+            pool.pause(name, limit_pause_minutes(str(e), ctx.cfg.limit_backoff_minutes) if kind == "limited"
+                       else max(120, ctx.cfg.limit_backoff_minutes), f"usage limit: {str(e)[:160]}", shared=kind == "limited")
+            ctx.log(f"#{task.number}: architect {name} hit a limit; written without a plan")
+            return None
+        _account(out, r)
+        if not r.ok or not str(r.output.get("plan", "")).strip():
+            ctx.log(f"#{task.number}: architect {name} failed ({(r.error or 'empty plan')[:120]}); written without a plan")
+            return None
+        if str(r.output.get("needs_human", "")).strip():
+            return _block(ctx, out, f"the architect ({name}) says a person must decide first: {r.output['needs_human']}")
+        files = r.output.get("files") or []
+        text = r.output["plan"].strip() + (("\n\nFiles: " + ", ".join(f"`{f}`" for f in files[:20])) if files else "")
+        task.body = agents_mod.with_plan(task.body, text, name)
+        try:
+            await asyncio.to_thread(ctx.gh.edit_body, task.number, task.body)
+        except Exception as e:  # the plan still serves this run
+            ctx.log(f"#{task.number}: could not save the plan on the issue: {e}")
+        out.attempts.append({"agent": name, "difficulty": level, "skill": skill, "role": "architect", "ok": True})
+        ctx.log(f"#{task.number}: planned by {name} ({len(text)} chars)")
+        return None
+    finally:
+        pool.release(name)
+
+
 async def _run_task(task: Task, ctx: Context, out: Outcome) -> Outcome:
     agent, history, reserved = None, [], False
     adopted = await asyncio.to_thread(_adopt_open_pr, task, ctx, out)
     if adopted is not None:
         return adopted
     try:
+        planned = await _plan_first(task, ctx, out)
+        if planned is not None:
+            return planned
         while True:
             transfer, reserved = reserved, False
             res = await _run_task_body(task, ctx, out, agent, history, transfer)
@@ -486,10 +557,33 @@ async def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | N
     (an infrastructure failure is requeued once first)."""
     pool = ctx.agents
     first_line = why.splitlines()[0] if why else ""
+    env = environmental(why)
+    cant_run = bool(infra and _CANT_RUN.search(why))
     if agent:
-        out.attempts.append({"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
-                             "why": first_line[:200]})
-    nxt = pool.escalate_without_rank_limits(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
+        row = {"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
+               "why": first_line[:200]}
+        if env:
+            row["env"] = True
+        if cant_run:
+            row["cant_run"] = True
+        out.attempts.append(row)
+    if cant_run and pool is not None and agent:
+        # The model or route is refused (LifeShare 2026-11-04/05: claude-*-5-5 via opencode/ and gpt-6.1-terra failed
+        # 0 of 57 sessions). Keep it off work until someone looks, and hand the task on without blaming it.
+        pool.pause(agent, max(120, ctx.cfg.limit_backoff_minutes), "can't run: " + first_line[:160], shared=False)
+        ctx.log(f"#{task.number}: {agent} can't run ({first_line[:100]}); paused")
+    hops = sum(1 for a in out.attempts if a.get("role") == "worker" and not a.get("cant_run")) - 1
+    limit = int((pool.routing.get("maxEscalations", MAX_ESCALATIONS) if pool is not None else MAX_ESCALATIONS))
+    if env:
+        # Another model meets the same wall (a repo outside the worktree, a person's decision, the Build PC); the
+        # blocker planner or a person handles it. 2026-11-04/05: #991 and #992 went through six agents each this way.
+        nxt = None
+        why += "\n\n(Not escalated: this blocker is outside the code, so another agent would stop at it too.)"
+    elif hops >= limit and not cant_run:
+        nxt = None
+        why += f"\n\n(Not escalated further: {hops + 1} agents tried; routing.maxEscalations is {limit}.)"
+    else:
+        nxt = pool.escalate_without_rank_limits(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
     if not nxt:
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:
@@ -520,6 +614,30 @@ async def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | N
     finally:
         if not transferred:
             pool.release(nxt)
+
+
+MAX_ESCALATIONS = 2  # a task gets its first agent and at most two stronger ones before the blocker planner sees it
+
+# A worker that stops at something outside the code. These read the worker's own words in `gave_up`.
+_ENV = re.compile(
+    r"outside (the|this) (writable )?(worktree|workspace|checkout)|(absent|missing) from the (supplied )?(workspace|worktree)|"
+    r"(needs|requires|belongs (on|in)) (the |a )?(\w+ )?(repo(sitory)?|branch and PR) (in|on|for) (Hearth|Silhouette|TailorKit|\w+/\w+)|"
+    r"only a \w+ worktree is supplied|Hearth is (absent|outside|not)|belongs (on|in|to) (a |the )?(Hearth|Silhouette|TailorKit)\b|"
+    r"\bFletchery must\b|\b(needs|requires) the (Hearth|Silhouette|TailorKit) (repo|repository)\b|"
+    r"\bneeds? (a |an )?(person|human|owner|maintainer|Alex)\b|(a person|Alex|the owner|a maintainer) must (decide|choose|settle|move|make|approve)|"
+    r"\b(Build PC|Build Lane)\b.{0,40}\b(only|must|needs)\b|no authori[sz]ed .{0,40}(tool|CLI)|"
+    r"(cannot|can't|could not) (run|reach|use) (the )?(Blender|MCP|BlenderMCP|Unreal|editor|gh|GitHub)|"
+    r"network (access )?(is )?(blocked|denied)|permission (was )?denied|requires approval|not (allowed|permitted) to run",
+    re.IGNORECASE)
+
+
+def environmental(why: str) -> bool:
+    """True when the failure is about the setup or a decision, not the code an agent wrote: escalating it to another
+    model spends a session to hit the same wall, and counting it against the agent skews the router."""
+    text = why or ""
+    if text.startswith("worker gave up:") or text.startswith("gate repair stopped:") or text.startswith("review repair stopped:"):
+        return bool(_ENV.search(text[:2000]))
+    return False
 
 
 def _branch_at(repo, wt: Path, fallback: str) -> str:
@@ -590,7 +708,7 @@ async def _review(ctx: Context, task: Task, wt: Path, out: Outcome, worker: str 
     while True:
         name = ""
         if pool is not None:
-            name = pool.reviewer_for(worker or "", besides=set(failed)) or ""
+            name = pool.reviewer_for(worker or "", besides=set(failed), level=_review_level(task, out)) or ""
             if not name:
                 if failed:  # every reviewer there is failed to run: that's Fletchery's setup, not the work
                     why = "; ".join(f"{n}: {e[:300]}" for n, e in failed.items())
@@ -619,7 +737,14 @@ async def _review(ctx: Context, task: Task, wt: Path, out: Outcome, worker: str 
 
 # Errors that mean the agent can't run at all (wrong model name, refused by the account), not a one-off failure.
 _CANT_RUN = re.compile(r"not supported|unsupported model|unknown model|model[^.\n]{0,60}(not found|does not exist|"
-                       r"not available|invalid)|invalid model|no such model|not have access to (the )?model", re.IGNORECASE)
+                       r"not available|invalid)|invalid model|no such model|not have access to (the )?model|"
+                       r"model unavailable|provider\.no-route|issue with the selected model", re.IGNORECASE)
+
+
+def _review_level(task: Task, out: Outcome) -> str:
+    """A planned task is written one level easier, but still reviewed as the hard task it is."""
+    import agents as agents_mod
+    return "hard" if agents_mod.plan_of(task.body or "") else out.difficulty
 
 
 def _findings_text(review: dict) -> str:

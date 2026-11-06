@@ -47,7 +47,12 @@
         "kind": "claude",
         "model": "claude-fable-5-1",
         "tier": 5,
-        "vendor": "anthropic"
+        "vendor": "anthropic",
+        "enabled": false,
+        "roles": [
+          "architect"
+        ],
+        "maxRunsPerDay": 3
       },
       {
         "name": "codex-astra",
@@ -78,7 +83,11 @@
         "kind": "opencode",
         "model": "opencode-go/deepseek-v4-pro",
         "tier": 2,
-        "vendor": "deepseek"
+        "vendor": "deepseek",
+        "roles": [
+          "architect"
+        ],
+        "maxRunsPerDay": 6
       },
       {
         "name": "deepseek",
@@ -91,7 +100,30 @@
     "routing": {
       "mode": "scores",
       "defaultSkill": "cpp",
-      "reviewMin": 50
+      "reviewMin": 50,
+      "plan": {
+        "levels": [
+          "hard"
+        ],
+        "lowerTo": "medium",
+        "architects": [
+          "sonnet",
+          "opus",
+          "deepseek-pro",
+          "fable"
+        ],
+        "minScore": 70
+      },
+      "preferredKindsBySkill": {
+        "art": [
+          "codex"
+        ]
+      },
+      "maxEscalations": 2,
+      "cheapReviewLevels": [
+        "easy",
+        "medium"
+      ]
     },
     "mergeRounds": true,
     "mergeLabel": "ready",

@@ -1020,6 +1020,9 @@
   <div class="wk-days" id="wkDays" aria-hidden="true"></div>
   <table class="wk-table" id="wkTable"><thead><tr><th>Day</th><th class="r">Cost</th><th class="r">Tasks</th><th class="r">Sessions</th></tr></thead><tbody></tbody></table>
   <p class="wk-note" id="wkNote"></p>
+  <h3 id="wkAgentsH" hidden>Tokens by agent</h3>
+  <table class="wk-table" id="wkAgents" hidden aria-labelledby="wkAgentsH"><thead><tr><th>Agent</th><th class="r">Tokens</th><th class="r">Sessions</th><th class="r">Hours</th><th>Spent on</th></tr></thead><tbody></tbody></table>
+  <p class="wk-note" id="wkAgentsNote" hidden>Tokens count input, output and cache writes in full and cache reads at a tenth, roughly how the plans weigh them. Codex reports tokens but no cost.</p>
   <div class="row"><button type="button" class="primary" id="weekClose">Close</button></div>
 </dialog>
 
@@ -1780,6 +1783,12 @@ function renderWeek(d) {
   $("wkNote").textContent = plan
     ? "On your Claude plan these are the SDK's estimates, not a bill. Your plan's own 5-hour and weekly limits are what stop work; Fletchery pauses by itself when it hits one."
     : "On the API key this is what the sessions cost, billed per token.";
+  const ua = d.usage_agents || [], tok = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? Math.round(v / 1e3) + "k" : String(v);
+  ["wkAgentsH", "wkAgents", "wkAgentsNote"].forEach(id => $(id).hidden = !ua.length);
+  $("wkAgents").querySelector("tbody").innerHTML = ua.map(a => {
+    const roles = Object.entries(a.by_role || {}).sort((x, y) => y[1].weighted - x[1].weighted).map(([r, v]) => `${r} ${v.sessions}`).join(", ");
+    return `<tr><td>${esc(a.agent)}</td><td class="r">${tok(a.weighted)}</td><td class="r">${a.sessions}</td><td class="r">${a.hours.toFixed(1)}</td><td>${esc(roles)}</td></tr>`;
+  }).join("");
   const tip = $("wkTip"), chart = $("wkChart");
   chart.querySelectorAll(".wk-col").forEach(col => {
     const show = () => {
@@ -2058,7 +2067,7 @@ function renderAccounts(groups, A) {
         </span></td></tr>`; }).join("")}</tbody></table></div>`;
   }).join("");
 }
-const SKILL_NAMES = {cpp: "C++ / Unreal", scripts: "Python & tools", ui: "UI", docs: "Docs & data", review: "Review"};
+const SKILL_NAMES = {cpp: "C++ / Unreal", scripts: "Python & tools", ui: "UI", docs: "Docs & data", art: "Blender & 3D (MCP)", review: "Review"};
 function scoreSource(r, seed) {
   if (r.from === "you") return ["you set it", "You set this score."];
   const base = seed.from === "benchmarks"

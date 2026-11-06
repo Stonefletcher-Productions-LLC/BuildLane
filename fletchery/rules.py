@@ -87,7 +87,7 @@ def load(*roots: Path | str | None) -> Rules:
             for rule in data.get("rules", []):
                 runs = rule.get("run", [])
                 r.by_path.append((str(rule["paths"]), [runs] if isinstance(runs, str) else [str(x) for x in runs]))
-        for role in ("worker", "reviewer", "fixer", "planner", "merger"):
+        for role in ("worker", "reviewer", "fixer", "planner", "architect", "merger"):
             f = d / f"{role}.md"
             if f.exists():
                 r.additions[role] = f.read_text(encoding="utf-8-sig")
