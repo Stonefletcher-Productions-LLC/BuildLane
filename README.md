@@ -13,6 +13,8 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
+If a repair session stops, Fletchery records the reason before any commit or check rerun. Failed checks retain their output for the next repair attempt. Windows worker sessions and controller checks default to UTF-8 for Python so Unicode reports survive redirected output.
+
 The Control room keeps live workers and merge progress on **Overview**, with separate
 **Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
