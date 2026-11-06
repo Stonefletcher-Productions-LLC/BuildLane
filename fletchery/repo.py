@@ -8,6 +8,7 @@ import json
 import threading
 import uuid
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -308,13 +309,20 @@ class Repo:
         helper = self.root / "Tools" / "CI" / "PushWithLfs.ps1"
         if not helper.is_file():
             raise RuntimeError("Authorized assets need the project's Tools/CI/PushWithLfs.ps1 delivery helper")
-        proc = subprocess.run(["pwsh", "-NoProfile", "-File", str(helper), "-Branch", branch, "-Remote", self.remote],
+        proc = subprocess.run([*powershell(), "-File", str(helper), "-Branch", branch, "-Remote", self.remote],
                               cwd=wt, env=self.env, capture_output=True, text=True, timeout=1800)
         if proc.returncode:
             raise RuntimeError("Asset delivery failed: " + (proc.stdout + proc.stderr)[-4000:])
 
     def head(self, wt: Path) -> str:
         return self.git("rev-parse", "HEAD", cwd=wt)
+
+
+def powershell() -> list[str]:
+    """PowerShell 7 when installed, else Windows PowerShell. Alex's PC has no pwsh, so every authorized asset push
+    failed with "[WinError 2] The system cannot find the file specified" (#992, #997, 2026-11-06)."""
+    exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+    return [exe, "-NoProfile", "-ExecutionPolicy", "Bypass"]
 
 
 class FakeRepo:
