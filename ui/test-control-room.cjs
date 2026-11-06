@@ -264,12 +264,15 @@ const server = http.createServer(async (req, res) => {
     // A later failure must stay visible even with an older backend.
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
     data.merge_view.state = 'running';
-    data.merge_view.steps = [{name: '<Package>', state: 'running'}, {name: 'Game specs', state: 'failed'}];
+    data.merge_view.steps = [{name: '<Package>', state: 'running'}, {name: 'Game specs', state: 'failed', checks: [{name: 'RunSpecs', state: 'running'}]}];
     await page.evaluate(next => { last = next; render(next); }, data);
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed');
     assert.match(await page.locator('.round-status').innerText(), /Game specs[\s\S]*failed/);
     assert.match(await page.locator('.round-recovery').innerText(), /Reported activity: <Package>[\s\S]*does not clear/);
     assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
+    const failedStep = page.locator('.msteps > li.failed .merge-step');
+    assert.match(await failedStep.innerText(), /RunSpecs[\s\S]*Final result not reported/);
+    assert.equal(await failedStep.locator('.merge-spinner').count(), 0, 'stale child reports do not spin in a failed step');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
     data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
       {name: 'Game specs', state: 'running', checks: [

@@ -1228,7 +1228,9 @@ function mergeStepHtml(s, i, mv, current, mark, word) {
   const tab = mergeTabs.get(key) || "progress";
   const activity = s.activity || [];
   const files = s.files || [];
-  const checks = s.checks || [];
+  const live = s.state === "running" && s.required !== false;
+  const checks = (s.checks || []).map(check => check.state === "running" && !live
+    ? {...check, state: "unreported"} : check);
   const runningChecks = checks.filter(c => c.state === "running");
   const failedChecks = checks.filter(c => c.state === "failed");
   const otherChecks = checks.filter(c => c.state !== "running" && c.state !== "failed");
@@ -1472,7 +1474,7 @@ function renderStatus(d) {
     const mergeFocus = box.contains(document.activeElement) ? document.activeElement.dataset.mergeFocus : null;
     box.className = "merge-now " + (active ? (mv.state || "running") : "idle");
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
-    const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
+    const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do", unreported: "Final result not reported"};
     const stepsHtml = (steps, label, expand = false) => `<ol class="msteps" aria-label="${label}">${steps.map((s, i) => expand ? mergeStepHtml(s, i, mv, currentStep, mark, word) : `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
     const steps = active ? mv.steps || [] : [];
     const requiredSteps = steps.filter(s => s.required !== false);
@@ -1480,7 +1482,7 @@ function renderStatus(d) {
     const currentStep = failedSteps[0] || requiredSteps.find(s => s.state === "running") || requiredSteps.find(s => s.state === "waiting");
     const activity = mv.activity || {};
     const activityAt = activity.updated;
-    const activeCheck = currentStep && (currentStep.checks || []).find(c => c.state === "running");
+    const activeCheck = currentStep?.state === "running" && (currentStep.checks || []).find(c => c.state === "running");
     const health = failedSteps.length ? "failed" : activity.health || (mv.stale ? "possibly_stuck" : "unknown");
     const checkpointOnly = activity.source === "Progress checkpoint";
     const healthText = {active: checkpointOnly ? "Recent update" : "Active", quiet: "Quiet · check activity", possibly_stuck: "May be stuck", unknown: "Activity not reported", failed: "Landing blocked"}[health] || "Activity not reported";
