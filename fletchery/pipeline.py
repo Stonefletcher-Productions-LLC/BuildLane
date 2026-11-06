@@ -223,13 +223,17 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
                                  freeze=freeze) + "\n\n## Gate failures to fix\n" + _gate_output(results)
         r2 = await rt.run("worker", fix_prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r2)
-        if r2.ok and not r2.output.get("gave_up") and r2.output.get("waiting_resource"):
+        if not r2.ok or r2.output.get("gave_up"):
+            reason = r2.error or r2.output.get("gave_up") or "session ended without a result"
+            return await fail("gate repair stopped: " + reason, infra=not r2.ok)
+        if r2.output.get("waiting_resource"):
             return _resource_wait(ctx, out, r2.output["waiting_resource"])
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if await asyncio.to_thread(repo.dirty, wt):
             await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} gate fixes")
         results = await asyncio.to_thread(_gates, ctx, task, wt)
         if not all(g.passed for g in results):
+            ctx.log(f"#{task.number} gate repair failures:\n" + _gate_output(results))
             return await fail("gates still fail after one fix pass:\n" + gates_mod.summary(results))
 
     # 3. reviewer (fresh context, read-only)
@@ -239,13 +243,17 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
             + "\n\n## Review findings to address\n" + _findings_text(review)
         r3 = await rt.run("worker", back, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r3)
-        if r3.ok and not r3.output.get("gave_up") and r3.output.get("waiting_resource"):
+        if not r3.ok or r3.output.get("gave_up"):
+            reason = r3.error or r3.output.get("gave_up") or "session ended without a result"
+            return await fail("review repair stopped: " + reason, infra=not r3.ok)
+        if r3.output.get("waiting_resource"):
             return _resource_wait(ctx, out, r3.output["waiting_resource"])
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
         if await asyncio.to_thread(repo.dirty, wt):
             await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} review fixes")
         results = await asyncio.to_thread(_gates, ctx, task, wt)
         if not all(g.passed for g in results):
+            ctx.log(f"#{task.number} review repair gate failures:\n" + _gate_output(results))
             return await fail("gates fail after the review fixes:\n" + gates_mod.summary(results))
         review = await _review(ctx, task, wt, out, agent, issue)
     if review.get("verdict") == "escalate":
@@ -373,6 +381,7 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} fix after lane feedback")
     results = await asyncio.to_thread(_gates, ctx, task, wt)
     if not all(g.passed for g in results):
+        ctx.log(f"PR #{pr.number} fixer gate failures:\n" + _gate_output(results))
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
         return out

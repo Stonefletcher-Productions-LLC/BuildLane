@@ -166,6 +166,8 @@ class CliRuntime(Runtime):
         minutes = (self.spec.timeout_minutes or {}).get(role) or DEFAULT_TIMEOUT_MIN.get(role, 30)
         import keys
         env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", **self.env, **keys.env_for(self.spec.key_env), **extra_env}
+        if os.name == "nt":
+            env.setdefault("PYTHONUTF8", "1")
         if self.spec.auth == "key":  # run on the stored API key instead of the CLI's plan sign-in
             name = self.spec.api_key_name
             value = keys.get(name) if name else None

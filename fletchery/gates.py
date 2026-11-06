@@ -3,6 +3,7 @@ the files the branch changed. A worker cannot skip them because it does not run 
 project's full build is the Build Lane's job."""
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -57,9 +58,13 @@ def resolve(cmd: str) -> str:
 
 def run(cmds: list[str], cwd: Path, timeout: int = 900, fallback_root: Path | str | None = None) -> list[GateResult]:
     out: list[GateResult] = []
+    env = os.environ.copy()
+    if os.name == "nt":
+        env.setdefault("PYTHONUTF8", "1")
     for c in cmds:
         try:
-            p = subprocess.run(resolve(localise(c, cwd, fallback_root)), shell=True, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+            p = subprocess.run(resolve(localise(c, cwd, fallback_root)), shell=True, cwd=cwd, env=env,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             text = (p.stdout + p.stderr).strip()
             out.append(GateResult(c, p.returncode == 0, text[-4000:]))
         except subprocess.TimeoutExpired:
