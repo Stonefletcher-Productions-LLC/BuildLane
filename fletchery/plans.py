@@ -204,6 +204,11 @@ class Plans:
 
     def finish_merge(self, request_id, result):
         row = next((r for r in self.rows if r["id"] == request_id), None)
+        if row and result.get("result") in ("limited", "unreachable"):
+            # The agent stopped, not the PRs: the same window runs again on the next available agent.
+            self.update(row, state="queued", result=deepcopy(result),
+                        reason=f"The round's agent stopped ({result.get('result')}); it runs again on another agent.")
+            return
         if row:
             landed = result.get("result") == "landed"
             ok = landed and {str(n) for n in result.get("merged", [])} == set(row["heads"]) and not result.get("left_out") and not result.get("deferred")

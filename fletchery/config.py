@@ -47,7 +47,7 @@ WORKER_KEYS = {
     "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
     "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
-    "mergeRoundMax": "merge_round_max", "mergeAgent": "merge_agent", "mergeNotes": "merge_notes",
+    "mergeRoundMax": "merge_round_max", "roundAgent": "merge_agent", "mergeNotes": "merge_notes",
     "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "agents": "agents", "routing": "routing", "escalate": "escalate",
 }
 # profile key (top level) -> Config field
@@ -108,7 +108,7 @@ class Config:
     merge_rounds: bool = False
     merge_label: str = "ready"               # PRs with this label into the base branch go in the next round
     merge_round_max: int = 12                # at most this many PRs per round, oldest first
-    merge_agent: str = ""                    # the agent that runs rounds; "" = the strongest available Claude/OpenCode one
+    merge_agent: str = ""                    # profile `roundAgent`: the agent that runs rounds; "" = Best active worker (the strongest available one). The old `mergeAgent` key is ignored.
     merge_notes: str = ""                    # a file with the project's round instructions when the repo has no .fletchery/merger.md
     merge_budget_usd: float = 60.0
     merge_max_turns: int = 600

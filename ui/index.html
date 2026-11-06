@@ -2024,6 +2024,13 @@ function fieldHtml(f, v) {
   const id = "sf-" + f.key, help = f.help ? `<small class="help">${esc(f.help)}</small>` : "";
   const after = f.restart ? ` <small title="Takes effect after Fletchery restarts">(restart)</small>` : "";
   if (f.type === "bool") return `<div class="f bool"><label><input type="checkbox" id="${id}" ${v ? "checked" : ""}> ${esc(f.label)}${after}</label>${help}</div>`;
+  if (f.type === "select") {
+    const cur = v === null || v === undefined ? "" : String(v), opts = f.options || [];
+    // A saved value that is no longer offered (an agent removed since) still shows, so saving doesn't change it silently.
+    const all = opts.some(o => o.value === cur) ? opts : opts.concat([{value: cur, label: cur + " (not in the agent list)"}]);
+    return `<div class="f"><label for="${id}">${esc(f.label)}${after}</label><select id="${id}">${all.map(o =>
+      `<option value="${esc(o.value)}" ${o.value === cur ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>${help}</div>`;
+  }
   const num = f.type === "int" || f.type === "float";
   return `<div class="f"><label for="${id}">${esc(f.label)}${after}</label><input id="${id}" ${num ? `type="number" step="${f.type === "int" ? 1 : "any"}"` : ""}
     ${f.min !== undefined ? `min="${f.min}"` : ""} ${f.max !== undefined ? `max="${f.max}"` : ""} value="${esc(v === null || v === undefined ? "" : v)}" autocomplete="off">${help}</div>`;
