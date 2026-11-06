@@ -99,6 +99,19 @@ class Dashboard:
                     "auth": fm.cfg.auth, "max_parallel": fm.cfg.max_parallel, "daily_budget": fm.cfg.daily_budget_usd,
                     "spent_today": 0, "held": fm.state.held, "last_pass": "", "poll_minutes": fm.cfg.poll_minutes,
                     "usage_week": fm.usage_week()}
+        from copy import deepcopy
+        ranks = deepcopy(getattr(fm, "worker_rank_view", None))
+        if ranks:
+            ranks["mode"] = "manual" if fm.cfg.worker_rank_limits is not None else "automatic"
+            if fm.cfg.worker_rank_limits is not None:
+                ranks["limits"] = dict(fm.cfg.worker_rank_limits)
+        snap["max_parallel"] = fm.cfg.max_parallel
+        snap["worker_ranks"] = ranks
+        recorded_ranks = getattr(fm.state, "task_worker_rank", {})
+        snap["tasks"] = [{**row, "worker_rank": recorded_ranks.get(str(row["number"]), row.get("worker_rank", ""))}
+                         for row in snap.get("tasks", [])]
+        snap["worker_handoffs"] = fm.handoffs.view() if hasattr(fm, "handoffs") else {}
+        snap["integration_queue"] = fm.plans.view() if hasattr(fm, "plans") else None
         snap["held"] = fm.state.held
         # Merge controls must reflect a click immediately, even during a slow GitHub poll.
         snap["merge_auto"] = {**snap.get("merge_auto", {}), "on": bool(fm.cfg.merge_rounds),
@@ -206,16 +219,27 @@ class Dashboard:
             v = int(data.get("max_parallel"))
         except (TypeError, ValueError):
             raise ValueError("The number of workers is a whole number.")
-        if not 0 <= v <= 10:
-            raise ValueError("Workers go from 0 (pause normal coding; merging, builds and emergency repairs carry on) to 10. On a plan, more "
+        if not 0 <= v <= 30:
+            raise ValueError("Workers go from 0 (pause normal coding; merging, builds and emergency repairs carry on) to 30. On a plan, more "
                              "workers use its limits faster.")
-        self.fm.cfg.save(max_parallel=v)
+        self.fm.cfg.save(max_parallel=v, worker_rank_limits=None)
         if self.fm.snapshot:
             self.fm.snapshot["max_parallel"] = v
         self.fm.ctx.log(f"workers set to {v} from the app" + (": normal writing is paused (running sessions finish); "
                                                                   "merging, builds, enabled emergency repairs and issue closing carry on" if v == 0 else ""))
         self.fm.wake()  # more workers start now; fewer: running ones finish, no new one starts until below the limit
         return {"max_parallel": v}
+
+    def set_worker_ranks(self, data: dict) -> dict:
+        limits = data.get("limits")
+        if not isinstance(limits, dict) or set(limits) != {"low", "medium", "high"} or any(type(v) is not int or not 0 <= v <= 10 for v in limits.values()):
+            raise ValueError("Set low, medium and high writing capacity to whole numbers from 0 to 10.")
+        if self.fm.ctx.agents is None:
+            raise ValueError("Configure agents before setting worker ranks.")
+        self.fm.cfg.save(max_parallel=sum(limits.values()), worker_rank_limits=dict(limits))
+        self.fm.ctx.log("Worker rank limits changed; active sessions finish normally")
+        self.fm.wake()
+        return {"limits": limits, "max_parallel": sum(limits.values())}
 
     def set_auth(self, data: dict) -> dict:
         import auth
@@ -366,6 +390,23 @@ class Dashboard:
         self.fm.wake()
         return {"unpaused": gone, "message": msg}
 
+    def queue_add(self, data: dict) -> dict:
+        return self.fm.plans.enqueue(data)
+
+    def queue_cancel(self, data: dict) -> dict:
+        return self.fm.plans.cancel(str(data.get("id", "")))
+
+    def queue_mode(self, data: dict) -> dict:
+        planned = data.get("planned")
+        if type(planned) is not bool:
+            raise ValueError("Choose planned windows or automatic merging.")
+        if not planned and any(r["state"] not in ("complete", "cancelled", "blocked") for r in self.fm.plans.rows):
+            raise ValueError("Complete or cancel queued requests before returning to automatic merging.")
+        self.fm.state.planned_integration = planned
+        self.fm.plans.save()
+        self.fm.wake()
+        return {"planned": planned}
+
     def merge_hold(self, data: dict) -> dict:
         on = bool(data.get("on"))
         self.fm.hold_merging(on)
@@ -381,6 +422,8 @@ class Dashboard:
     def merge_now(self, data: dict) -> dict:
         if not self.fm.cfg.merge_rounds:
             raise ValueError("Merge rounds are off. Turn them on in Settings > This project > Merging.")
+        if self.fm.state.planned_integration and not self.fm.state.merge_resume:
+            raise ValueError("Use Queue merge window to choose a candidate and start time in planned mode.")
         self.fm.merge_now()
         return {"message": "Looking for ready PRs now."}
 
@@ -522,6 +565,8 @@ class Dashboard:
         import projects
         res = projects.apply_settings(self.fm.cfg, data.get("changes") or {})
         cfg = self.fm.cfg
+        if "max_parallel" in res["saved"]:
+            cfg.save(worker_rank_limits=None)
         self.fm.ctx.escalate = cfg.escalate
         if self.fm.snapshot:
             self.fm.snapshot.update(max_parallel=cfg.max_parallel, daily_budget=cfg.daily_budget_usd)
@@ -657,6 +702,8 @@ class Dashboard:
                     if self.path == "/api/pause":
                         dash.fm.hold(True)
                         return self._json(200, {"held": True})
+                    if self.path == "/api/workers/handoff":
+                        return self._json(200, dash.fm.handoffs.request())
                     if self.path == "/api/resume":
                         dash.fm.hold(False)
                         return self._json(200, {"held": False})
@@ -672,7 +719,8 @@ class Dashboard:
                         return self._json(200, dash.set_workers(data))
                     if self.path == "/api/auth":
                         return self._json(200, dash.set_auth(data))
-                    routes = {"/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
+                    routes = {"/api/workers/ranks": dash.set_worker_ranks, "/api/queue/add": dash.queue_add, "/api/queue/cancel": dash.queue_cancel,
+                              "/api/queue/mode": dash.queue_mode, "/api/agents/toggle": dash.toggle_agent, "/api/agents/add": dash.add_agent,
                               "/api/agents/remove": dash.remove_agent, "/api/agents/login": dash.login_agent,
                               "/api/agents/escalate": dash.set_escalate, "/api/agents/auth": dash.set_agent_auth,
                               "/api/agents/models": dash.list_models, "/api/agents/scores": dash.set_scores, "/api/agents/routing": dash.set_routing_policy,

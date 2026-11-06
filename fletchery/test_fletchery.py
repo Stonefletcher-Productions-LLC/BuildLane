@@ -90,6 +90,21 @@ fm, out = run_once(ctx, tmp)
 assert [o.task for o in out] == [11] and out[0].result == "pr", "the dependent runs once its dependency closed"
 assert fm.state.spent and sum(fm.state.spent.values()) == 4.0, "two tasks x (worker + reviewer) at $1 each"
 
+# A closed local issue with the same number cannot satisfy a cross-repo dependency.
+ref = ("stonefletcher-productions-llc/hearth", 42)
+task = T(944, "Import pavement", "Depends on: Stonefletcher-Productions-LLC/Hearth#42")
+ctx, tmp = ctx_with({944: task, 945: T(945, "Independent")}, closed={42})
+fm, out = run_once(ctx, tmp)
+assert task.depends_on == [] and task.repository_dependencies == {ref}
+assert [o.task for o in out] == [945] and "hearth#42" in ctx.gh.status_text
+ctx.gh.repository_closed.add(ref)
+fm, out = run_once(ctx, tmp)
+assert [o.task for o in out] == [944] and "Depends on: stonefletcher-productions-llc/hearth#42" in ctx.gh.prs[-1].body
+from rounds import without_failed_dependencies
+dependent = ctx.gh.prs[-1]
+assert without_failed_dependencies([dependent], {}, {944: task}, {42}) == []
+assert without_failed_dependencies([dependent], {}, {944: task}, {42}, {ref}) == [dependent]
+
 # ---- slots: max_parallel caps dispatch; a fixer takes a slot ----
 ctx, tmp = ctx_with({n: T(n, f"t{n}", created=f"2026-11-01T00:00:{n:02d}Z") for n in range(1, 7)},
                     cfg=Config(max_parallel=3, daily_budget_usd=60, base_branch="Test-Staging"))
@@ -649,7 +664,7 @@ try:
     assert _json.loads(call("/api/status")[1])["max_parallel"] == 3
     assert call("/api/workers", "POST", {"max_parallel": 10}, token=dash.token)[0] == 200
     assert call("/api/workers", "POST", {"max_parallel": -1}, token=dash.token)[0] == 400
-    assert call("/api/workers", "POST", {"max_parallel": 11}, token=dash.token)[0] == 400
+    assert call("/api/workers", "POST", {"max_parallel": 31}, token=dash.token)[0] == 400
     assert call("/api/workers", "POST", {"max_parallel": 3})[0] == 403
 finally:
     dash.stop()
@@ -955,6 +970,15 @@ assert fm.state.agent_paused is ctx.agents.paused
 fm2, out2 = run_once(ctx, tmp)
 assert out2[0].result == "pr" and out2[0].agent == "deepseek-pro", out2
 
+# Full rank slots on another account must not turn a provider quota into a global pause.
+from pipeline import Limited, Outcome, _paused  # noqa: E402
+ctx, _ = multi_ctx({}, {})
+ctx.agents.worker_limits = {"low": 0, "medium": 0, "high": 0}
+assert not ctx.agents.any_available(besides="deepseek")
+outcome = Outcome(32, "requeue")
+assert _paused(ctx, outcome, Limited("provider quota", 0, "limited", "deepseek"), "#32")
+assert outcome.result == "agent_paused" and "claude" not in ctx.agents.paused
+
 # an asked-for agent that is off: the task waits, saying why, instead of starting and stopping
 ctx, tmp = multi_ctx({33: T(33, "x", "Agent: codex")}, {})
 fm, out = run_once(ctx, tmp)
@@ -1190,7 +1214,7 @@ saved = _json_mod.loads(prof.read_text())
 assert saved["workers"]["maxParallel"] == 0 and saved["repo"] == "acme/desk" and saved["workers"]["codeFreeze"] is True
 assert "GitHub repository" in r["restart"] and "Workers at once" not in r["restart"]
 assert saved["workers"]["reviewerMaxTurns"] == 50, "keys the page doesn't show are kept"
-for bad in ({"max_parallel": 11}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
+for bad in ({"max_parallel": 31}, {"repo": "not a repo"}, {"label": "two words"}, {"nope": 1}, {"base_branch": ""}):
     try:
         _pj.apply_settings(cfg_s, bad)
         raise AssertionError(f"bad setting accepted: {bad}")

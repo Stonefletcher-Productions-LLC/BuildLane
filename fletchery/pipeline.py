@@ -69,6 +69,7 @@ class Outcome:
     route: str = ""          # why the router picked the first agent
     reviewer: str = ""
     attempts: list[dict] = field(default_factory=list)  # [{"agent", "difficulty", "role", "ok", "why"}]: what Stats learns from
+    worker_rank: str = ""    # capacity bucket at first admission
     costs: dict = field(default_factory=dict)  # agent -> USD this outcome spent on it (writer and reviewer apart)
 
 
@@ -85,6 +86,8 @@ class Context:
     stats: Callable[[], object] | None = None  # -> agents.Stats, for the router
     task_agents: dict = field(default_factory=dict)  # task number (str) -> agent that wrote its branch (for fixers)
     escalate: bool = True     # a failed attempt goes to a stronger agent before the task is blocked
+    task_worker_ranks: dict = field(default_factory=dict)
+    handoffs: object | None = None  # cooperative checkpoints owned by Engine
 
 
 def _stats(ctx: "Context"):
@@ -105,7 +108,8 @@ def _paused(ctx: "Context", out: Outcome, e: Limited, what: str) -> bool:
     minutes = ctx.cfg.limit_backoff_minutes if kind == "limited" else max(120, ctx.cfg.limit_backoff_minutes)
     reason = ("usage limit: " if kind == "limited" else "needs signing in again: ") + str(e.args[0])[:160]
     who = pool.pause(agent, minutes, reason, shared=kind == "limited")
-    if not pool.any_available(besides=agent):
+    # Occupied slots and rank limits can change while another account is backing off.
+    if not any(pool.available(spec.name, ignore_capacity=True) for spec in pool.ordered() if spec.name != agent):
         return False
     out.result, out.detail, out.agent = "agent_paused", f"{agent} paused ({reason})", agent
     also = f" (and {', '.join(who[1:])} on the same account)" if len(who) > 1 else ""
@@ -158,19 +162,39 @@ async def _run_task_body(task: Task, ctx: Context, out: Outcome, agent: str | No
     cfg, gh, repo, pool = ctx.cfg, ctx.gh, ctx.repo, ctx.agents
     first = not history
     if pool is not None and agent is None:
-        choice = pool.choose(task.title, task.body, task.labels, len(task.depends_on), _stats(ctx))
+        choose = pool.choose_without_rank_limits if getattr(task, "emergency_writer", False) else pool.choose
+        choice = choose(task.title, task.body, task.labels, len(task.depends_on), _stats(ctx))
         if choice is None:  # every agent that could take it is paused or busy: back to the queue, untouched
             gh.set_status(task.number, QUEUED)
             out.result, out.detail = "waiting_agent", "no agent free for it"
             return out
         agent, out.difficulty, out.route, out.skill = choice.agent, choice.difficulty, choice.why, choice.skill
+    rank_reserved = False
+    if pool is not None and not getattr(task, "emergency_writer", False):
+        rank_reserved = pool.reserve_worker(task.number, agent, allow_overflow=reserved)
+        if not rank_reserved:
+            if reserved:
+                pool.release(agent)
+            out.result, out.detail = "waiting_agent", "waiting for a worker rank slot"
+            gh.set_status(task.number, QUEUED)
+            return out
+    if rank_reserved and not out.worker_rank:
+        out.worker_rank = pool.worker_slots[task.number][1]
+        ctx.task_worker_ranks[str(task.number)] = out.worker_rank
     if pool is not None and not reserved:
         pool.acquire(agent)
     try:
         return await _attempt(task, ctx, out, agent, history or [], first)
     finally:
         if pool is not None:
+            pool.release_worker(task.number)
             pool.release(agent)
+
+
+async def _checkpoint(ctx, task, out, wt, phase, report=None, pr=None):
+    if ctx.handoffs and ctx.handoffs.wanted(task.number):
+        return await asyncio.to_thread(ctx.handoffs.checkpoint, task, out, wt, phase, report, pr)
+    return False
 
 
 async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, history: list[str],
@@ -196,13 +220,19 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     task.rules = rules_mod.load(wt, cfg.project_root)
     async def fail(why, infra=False):
         return await _fail(ctx, task, out, wt, agent, why, infra)
+    if await _checkpoint(ctx, task, out, wt, "checkout preparation"):
+        return out
     issue = _issue_text(task) + _history_text(history)
+    if ctx.handoffs:
+        issue += ctx.handoffs.note(task.number, wt)
 
     # 1. worker
     freeze = _freeze_text(cfg)
     prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch, freeze=freeze)
     r = await rt.run("worker", prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
     _account(out, r)
+    if await _checkpoint(ctx, task, out, wt, "writing", r.output):
+        return out
     if not r.ok:
         return await fail(f"worker session failed: {r.error}", infra=True)
     if r.output.get("gave_up"):
@@ -218,11 +248,15 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
 
     # 2. gates (a failure goes back to the worker once)
     results = await asyncio.to_thread(_gates, ctx, task, wt)
+    if await _checkpoint(ctx, task, out, wt, "quick checks", worker_report):
+        return out
     if not all(g.passed for g in results):
         fix_prompt = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch,
                                  freeze=freeze) + "\n\n## Gate failures to fix\n" + _gate_output(results)
         r2 = await rt.run("worker", fix_prompt, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r2)
+        if await _checkpoint(ctx, task, out, wt, "gate fixes", r2.output):
+            return out
         if not r2.ok or r2.output.get("gave_up"):
             reason = r2.error or r2.output.get("gave_up") or "session ended without a result"
             return await fail("gate repair stopped: " + reason, infra=not r2.ok)
@@ -238,11 +272,15 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
 
     # 3. reviewer (fresh context, read-only)
     review = await _review(ctx, task, wt, out, agent, issue)
+    if await _checkpoint(ctx, task, out, wt, "review", worker_report):
+        return out
     if review.get("verdict") == "needs_work":
         back = role_prompt("worker", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch, freeze=freeze) \
             + "\n\n## Review findings to address\n" + _findings_text(review)
         r3 = await rt.run("worker", back, wt, cfg.worker_budget_usd, cfg.worker_max_turns)
         _account(out, r3)
+        if await _checkpoint(ctx, task, out, wt, "review fixes", r3.output):
+            return out
         if not r3.ok or r3.output.get("gave_up"):
             reason = r3.error or r3.output.get("gave_up") or "session ended without a result"
             return await fail("review repair stopped: " + reason, infra=not r3.ok)
@@ -256,6 +294,8 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
             ctx.log(f"#{task.number} review repair gate failures:\n" + _gate_output(results))
             return await fail("gates fail after the review fixes:\n" + gates_mod.summary(results))
         review = await _review(ctx, task, wt, out, agent, issue)
+    if await _checkpoint(ctx, task, out, wt, "final review", worker_report):
+        return out
     if review.get("verdict") == "escalate":
         return _block(ctx, out, "reviewer escalated:\n" + _findings_text(review))
     if review.get("verdict") != "approve":
@@ -365,10 +405,15 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
     cfg, gh, repo = ctx.cfg, ctx.gh, ctx.repo
     local_branch = await asyncio.to_thread(_branch_at, repo, wt, task.branch)
     fb += f"\n\nThe local repair branch is `{local_branch}`. The controller alone pushes the checked fix to existing PR branch `{pr.head}`; do not push or recreate its branch."
-    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=_issue_text(task), branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
+    if await _checkpoint(ctx, task, out, wt, "repair checkout preparation", pr=pr):
+        return out
+    issue = _issue_text(task) + (ctx.handoffs.note(task.number, wt) if ctx.handoffs else "")
+    prompt = role_prompt("fixer", task.rules, project=cfg.name, issue=issue, branch=local_branch, base=cfg.base_branch, pr=str(pr.number),
                          feedback=fb, freeze=_freeze_text(cfg))
     r = await rt.run("fixer", prompt, wt, cfg.fixer_budget_usd, cfg.fixer_max_turns)
     _account(out, r)
+    if await _checkpoint(ctx, task, out, wt, "repair writing", r.output, pr):
+        return out
     if not r.ok or r.output.get("gave_up"):
         out.detail = r.error or r.output.get("gave_up", "")
         out.attempts.append({"agent": agent or "", "difficulty": "", "role": "fixer", "ok": False, "why": out.detail[:200]})
@@ -380,6 +425,8 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
     if await asyncio.to_thread(repo.dirty, wt):
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} fix after lane feedback")
     results = await asyncio.to_thread(_gates, ctx, task, wt)
+    if await _checkpoint(ctx, task, out, wt, "repair checks", r.output, pr):
+        return out
     if not all(g.passed for g in results):
         ctx.log(f"PR #{pr.number} fixer gate failures:\n" + _gate_output(results))
         out.detail = "gates fail after the fix:\n" + gates_mod.summary(results)
@@ -405,7 +452,7 @@ async def _fail(ctx: Context, task: Task, out: Outcome, wt: Path, agent: str | N
     if agent:
         out.attempts.append({"agent": agent, "difficulty": out.difficulty, "skill": out.skill, "role": "worker", "ok": False,
                              "why": first_line[:200]})
-    nxt = pool.escalate(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
+    nxt = pool.escalate_without_rank_limits(agent, "worker", out.skill, out.difficulty) if pool is not None and pool.multi and ctx.escalate and agent else None
     if not nxt:
         tried = [a["agent"] for a in out.attempts if a.get("role") == "worker"]
         if len(tried) > 1:
@@ -585,6 +632,9 @@ def pr_body(task: Task, report: dict, results: list[gates_mod.GateResult], revie
     checks = [f"- {c}" for c in report.get("checks", [])] or ["- (none named)"]
     lines = [f"Closes #{task.number}", "", report.get("summary", ""), "",
              "## Build steps", *steps, "", "## Checks that prove it", *checks]
+    if task.repository_dependencies:
+        refs = ", ".join(f"{repo}#{number}" for repo, number in sorted(task.repository_dependencies))
+        lines[1:1] = ["", f"Depends on: {refs}"]
     if report.get("save_version"):
         lines += ["", f"**Save version:** {report['save_version']}"]
     if report.get("likely_conflicts"):

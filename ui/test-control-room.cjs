@@ -47,6 +47,15 @@ const server = http.createServer(async (req, res) => {
     if (req.url === '/api/settings/save' && body.changes && body.changes.emergency_workers != null) {
       data.emergency_workers.max_parallel = body.changes.emergency_workers;
     }
+    if (req.url === '/api/queue/add') {
+      const row = {...body, id: 'request-' + requests.length, state: 'queued', heads: body.kind === 'merge' ? {'1041': 'a'.repeat(40)} : undefined};
+      data.integration_queue.requests.push(row); data.integration_queue.planned = true;
+    }
+    if (req.url === '/api/queue/cancel') data.integration_queue.requests.find(r => r.id === body.id).state = 'cancelled';
+    if (req.url === '/api/queue/mode') data.integration_queue.planned = body.planned;
+    if (req.url === '/api/workers/handoff') { data.held = true; data.worker_handoffs = {'891': {task: 891, state: 'requested'}}; }
+    if (req.url === '/api/workers/ranks') { data.worker_ranks.limits = body.limits; data.worker_ranks.mode = 'manual'; data.max_parallel = Object.values(body.limits).reduce((a,b) => a+b,0); }
+    if (req.url === '/api/workers') { data.max_parallel = body.max_parallel; if (data.worker_ranks) data.worker_ranks.mode = 'automatic'; }
     if (req.url === '/api/pause') data.held = true;
     if (req.url === '/api/resume') data.held = false;
     if (req.url === '/api/storage/cleanup') data.storage.requested = true;
@@ -77,6 +86,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#queue'), false);
     assert.equal(await visible('#agents'), false);
     assert.equal(await visible('#lowerBox'), false);
+    assert.deepEqual(await page.locator('[data-view]').evaluateAll(links => links.map(link => link.dataset.view)),
+      ['overview', 'tasks', 'merge', 'build', 'agents', 'activity']);
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
@@ -102,6 +113,8 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
     assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4/);
     const activeStep=page.locator('.merge-step').nth(2);
+    assert.equal(await activeStep.locator('.merge-step-badge').innerText(), 'Running');
+    assert.equal(await activeStep.locator('summary').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(25, 60, 50)');
     assert.equal(await activeStep.getAttribute('open'), '', 'current step expands automatically');
     assert.match(await activeStep.innerText(), /M4b Reconnect/);
     assert.equal(await page.locator('#mergeNow script').count(), 0, 'log lines are text, never markup');
@@ -213,6 +226,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed', 'a failure in a live round stays visible');
     assert.match(await page.locator('.round-status').innerText(), /Build[\s\S]*failed/);
     assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
+    assert.equal(await page.locator('.merge-step-badge').innerText(), 'Failed');
+    assert.equal(await page.locator('.merge-step > summary').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(252, 231, 235)');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
     data.merge_auto.running = {};
     assert.match(await page.locator('.round-recovery').innerText(), /Landing blocked[\s\S]*repair or exclude[\s\S]*rerun affected checks/);
@@ -226,10 +241,14 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('.round-recovery').innerText(), /Reported activity: <Package>[\s\S]*does not clear/);
     assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
-    data.merge_view.steps = [{name: 'Game specs', state: 'running', checks: [
+    data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
+      {name: 'Game specs', state: 'running', checks: [
       {name: 'ValidateData', state: 'done'}, {name: 'RunSpecs', state: 'running'}, {name: 'RunNavCheck', state: 'todo'}
     ], activity: [{line: 'Running LifeShare.Pets'}]}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
+    data.merge_auto.running.prs = [1041, 1042];
+    data.merge_view.prs = [1041];
     await page.evaluate(next => { last = next; render(next); }, data);
+    assert.match(await page.locator('.merge-current').innerText(), /1 PR · started/);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
     assert.match(await page.locator('.merge-check-summary').innerText(), /1 of 3 passed[\s\S]*1 running/);
@@ -375,6 +394,127 @@ const server = http.createServer(async (req, res) => {
     await page.goto(url + '/?only=workers');
     assert.equal(await visible('#workers'), true);
     assert.equal(await visible('.sidebar'), false);
+    // Planned windows and score-ranked capacity use the real controls against the fixture.
+    data.integration_queue = {planned: false, requests: [], base: 'Test-Staging'};
+    data.worker_handoffs = {};
+    data.worker_ranks = {mode: 'automatic', limits: {low: 1, medium: 1, high: 1}, active: {}, models: {low: ['deepseek'], medium: [], high: ['expert']},
+      scores: {deepseek: 59, expert: 85}, restrictions: {deepseek: ['easy']}, ready_levels: {easy: 0, medium: 2, hard: 3},
+      thresholds: {low: 'below 60', medium: '60–74', high: '75–100'}, assignments: {'891': 'high', '899': 'low'}, agent_ranks: {sonnet: 'high', 'codex-sol': 'low'}};
+    data.merge = [{pr: 1041, title: 'Safe <preview>', ready: true, pr_url: '#1041', unblocks: [], flags: []}];
+    await page.goto(url + '/?view=overview');
+    await page.waitForFunction(() => document.querySelector('#integrationPlans').hidden === false);
+    assert.equal(await page.locator('#nowh').innerText(), 'All workers');
+    assert.equal(await page.locator('[data-rank]').count(), 3);
+    assert.equal(await page.locator('[data-worker="891"] .worker-rank-badge').textContent(), 'High');
+    const scroll = await page.evaluate(() => {
+      document.body.style.minHeight = '4000px';
+      window.scrollTo(0, 1200);
+      const before = window.scrollY;
+      render(last);
+      const after = window.scrollY;
+      document.body.style.minHeight = '';
+      window.scrollTo(0, 0);
+      return {before, after};
+    });
+    assert.equal(scroll.before, 1200);
+    assert.equal(scroll.after, scroll.before, 'refresh preserves the page scroll position');
+    assert.match(await page.locator('#rankMode').innerText(), /0 easy/);
+    await page.selectOption('#allWorkerTotal', '12');
+    await page.waitForFunction(() => document.querySelector('#wVal').textContent === '12');
+    assert.deepEqual(requests.at(-1).body, {max_parallel: 12});
+    await page.selectOption('[data-rank-cap="low"]', '7');
+    await page.waitForFunction(() => document.querySelector('#rankMode').textContent.includes('Manual'));
+    assert.equal(requests.at(-1).url, '/api/workers/ranks');
+    assert.equal(requests.at(-1).body.limits.low, 7);
+    await page.locator('#planMerge').click();
+    await page.locator('#planWhen').fill('2030-11-05T19:30');
+    await page.locator('#planSubmit').click();
+    await page.waitForFunction(() => !document.querySelector('#planDlg').open);
+    assert.equal(requests.at(-1).url, '/api/queue/add');
+    assert.deepEqual(requests.at(-1).body.prs, [1041]);
+    assert.match(requests.at(-1).body.not_before, /2030-11/);
+    const mergeId = data.integration_queue.requests[0].id;
+    await page.locator('[data-view="build"]').click();
+    assert.equal(await visible('#view-build'), true);
+    assert.equal(await visible('#view-merge'), false);
+    assert.equal(await page.locator('#lane').evaluate(el => el.closest('.view').id), 'view-build');
+    await page.locator('#planPackage').click();
+    await page.locator('#planVersion').fill('0.3.7');
+    await page.selectOption('#planAfter', mergeId);
+    assert.equal(await page.locator('#planTarget').isVisible(), false);
+    await page.locator('#planSubmit').click();
+    await page.waitForFunction(() => !document.querySelector('#planDlg').open);
+    assert.equal(await page.locator('#overviewStats a[href="#merge"]').innerText(), 'Merge round 16 running');
+    assert.equal(await page.locator('#overviewStats a[href="#build"]').innerText(), 'Package 0.3.7 queued');
+    assert.match(await page.locator('#packageRows').textContent(), /Waiting for its merge window to land/);
+    assert.equal(requests.at(-1).body.after, mergeId);
+    assert.equal(requests.at(-1).body.target, '');
+    assert.equal(requests.at(-1).token, 'fixture-token');
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.locator('#packageRows [data-plan-cancel]').first().click();
+    assert.equal(requests.at(-1).url, '/api/queue/add', 'declining cancellation leaves the request in place');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#packageRows [data-plan-cancel]').first().click();
+    await page.waitForFunction(() => document.querySelector('#packageRows .plans-history summary')?.textContent.includes('History'));
+    assert.equal(await page.locator('#packageRows .plans-history').getAttribute('open'), null, 'history is collapsed by default');
+    assert.equal(requests.at(-1).url, '/api/queue/cancel');
+    const requestsBeforePreview = [...data.integration_queue.requests];
+    data.integration_queue.requests.push(
+      {id: 'busy', kind: 'merge', state: 'running', reason: 'Merge window running.', not_before: '2026-11-06T00:30:00Z',
+        heads: Object.fromEntries(Array.from({length: 12}, (_, i) => [988 + i, 'abc'])), titles: {'988': 'Nursery actions <fixture>'}},
+      {id: 'blocked', kind: 'package', version: '0.3.8', state: 'blocked', dispatch_started: now,
+        reason: 'The selected source needs review.', receipt: {worker: {runId: 123456}}},
+      {id: 'later', kind: 'merge', state: 'queued', not_before: '2030-12-05T20:30:00Z', heads: {'1047': 'def'}},
+    );
+    await page.evaluate(next => {last = next; render(next);}, data);
+    await page.locator('[data-view="merge"]').click();
+    await page.setViewportSize({width: 1400, height: 1000});
+    const plans = page.locator('#mergePageMount #integrationPlans');
+    await plans.waitFor({state: 'visible'});
+    const busy = plans.locator('.plan-row.running');
+    assert.match(await plans.locator('h4').first().innerText(), /In progress/);
+    assert.match(await busy.innerText(), /Merge window · 12 PRs/);
+    assert.equal(await busy.getByRole('link', {name: '#988', exact: true}).isVisible(), false);
+    assert.equal(await busy.getByRole('button').count(), 0, 'a running request cannot be cancelled here');
+    await page.locator('[data-view="build"]').click();
+    const packages = page.locator('#packagePlans');
+    assert.equal(await packages.locator('.plan-row.blocked').getByRole('button').count(), 0, 'a dispatched request cannot be cancelled here');
+    assert.equal(await packages.getByRole('link', {name: 'Open build'}).getAttribute('href'), data.repo_url + '/actions/runs/123456');
+    await packages.locator('.plans-history > summary').click();
+    assert.match(await packages.locator('.plans-history').innerText(), /Cancelled/);
+    await page.locator('[data-view="merge"]').click();
+    await page.evaluate(() => document.querySelector('#planMessage').textContent = '');
+    await plans.screenshot({path: path.join(out, 'merge-windows-dark.png')});
+    await page.selectOption('#themeChoice', 'light');
+    await plans.screenshot({path: path.join(out, 'merge-windows-light.png')});
+    await busy.locator('summary').click();
+    const pr = busy.getByRole('link', {name: '#988', exact: true});
+    assert.equal(await pr.getAttribute('href'), data.repo_url + '/pull/988');
+    await pr.focus();
+    data.integration_queue.requests.find(r => r.id === 'busy').reason = 'Building the merge candidate.';
+    await page.evaluate(next => {last = next; render(next);}, data);
+    assert.equal(await busy.locator('details').getAttribute('open'), '');
+    assert.equal(await pr.evaluate(el => el === document.activeElement), true, 'updates preserve focus in the PR list');
+    await page.setViewportSize({width: 390, height: 900});
+    assert.equal(await plans.evaluate(el => el.scrollWidth <= el.clientWidth), true, 'queue fits a narrow window');
+    await plans.screenshot({path: path.join(out, 'merge-windows-narrow.png')});
+    await page.setViewportSize({width: 1400, height: 1000});
+    await page.locator('[data-view="overview"]').click();
+    data.integration_queue.requests = requestsBeforePreview;
+    await page.evaluate(next => {last = next; render(next);}, data);
+    await page.locator('#handoffWorkers').click();
+    await page.waitForFunction(() => document.querySelector('#handoffStatus').textContent.includes('next checkpoint'));
+    assert.equal(requests.at(-1).url, '/api/workers/handoff');
+    assert.equal(requests.at(-1).token, 'fixture-token');
+    data.worker_handoffs['891'] = {task: 891, state: 'checkpointed', phase: 'writing', staged: ['Source/Feature.cpp'], worktree: 'owned/task-891'};
+    await page.evaluate(() => refresh());
+    assert.match(await page.locator('#handoffStatus').innerText(), /checkpoint saved.*1 staged/);
+    await page.setViewportSize({width: 420, height: 900});
+    await page.screenshot({path: path.join(out, 'queue-and-worker-ranks-mobile.png'), fullPage: true});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2), 'queue/rank controls fit mobile width');
+    await page.setViewportSize({width: 1440, height: 1000});
+    await page.screenshot({path: path.join(out, 'queue-and-worker-ranks.png'), fullPage: true});
+    delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();
     await storageOff.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }}));
     const privatePage = await storageOff.newPage();

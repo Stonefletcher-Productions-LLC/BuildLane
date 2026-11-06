@@ -24,7 +24,7 @@ def is_status_label(name: str) -> bool:
 _DEPENDS = re.compile(r"^\s*depends\s+on\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 _GATE = re.compile(r"^\s*gate\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 _IMPORTS = re.compile(r"^\s*lane-imports\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
-_ISSUE_REF = re.compile(r"#(\d+)")
+_ISSUE_REF = re.compile(r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)")
 
 
 @dataclass
@@ -41,10 +41,15 @@ class Task:
 
     @property
     def depends_on(self) -> list[int]:
-        out: list[int] = []
-        for m in _DEPENDS.finditer(self.body or ""):
-            out += [int(n) for n in _ISSUE_REF.findall(m.group(1))]
-        return sorted(set(out))
+        return sorted({int(number) for repo, number in self._dependency_refs() if not repo})
+
+    @property
+    def repository_dependencies(self) -> set[tuple[str, int]]:
+        return {(repo.lower(), int(number)) for repo, number in self._dependency_refs() if repo}
+
+    def _dependency_refs(self):
+        for line in _DEPENDS.finditer(self.body or ""):
+            yield from _ISSUE_REF.findall(line.group(1))
 
     @property
     def gates(self) -> list[str]:
@@ -112,10 +117,12 @@ def find_cycles(tasks: dict[int, Task]) -> set[int]:
     return on_cycle
 
 
-def readiness(tasks: dict[int, Task], known_closed: set[int] | None = None) -> Readiness:
+def readiness(tasks: dict[int, Task], known_closed: set[int] | None = None,
+              repository_closed: set[tuple[str, int]] | None = None) -> Readiness:
     """Which queued tasks may run now. `tasks` are the open `foreman` issues; `known_closed` are issue numbers that are
     closed (dependencies that are done). A dependency that is neither open-and-known nor closed is treated as missing."""
     known_closed = known_closed or set()
+    repository_closed = repository_closed or set()
     cycles = find_cycles(tasks)
     ready: list[Task] = []
     waiting: dict[int, str] = {}
@@ -124,6 +131,10 @@ def readiness(tasks: dict[int, Task], known_closed: set[int] | None = None) -> R
             continue
         if n in cycles:
             waiting[n] = "dependency cycle"
+            continue
+        pending = t.repository_dependencies - repository_closed
+        if pending:
+            waiting[n] = "waits for " + ", ".join(f"{repo}#{number}" for repo, number in sorted(pending))
             continue
         open_deps, missing = [], []
         for d in t.depends_on:

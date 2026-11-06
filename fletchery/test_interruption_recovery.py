@@ -235,6 +235,30 @@ class RuntimeCheckpointRecoveryTests(unittest.TestCase):
         self.assertEqual(engine.state.merge_excluded['12']['head'],'2'*40)
         self.assertEqual(engine.state.merge_last['result'],'interrupted')
 
+    def test_landed_recovery_requires_all_saved_heads_and_clears_only_recovery(self):
+        engine, _, _ = self.saved()
+        engine.state.planned_integration = True
+        resume = engine.state.merge_resume
+        branch = "fletchery/merge-round-23-saved"
+        resume["checkpoint"]["branch"] = branch
+        base = {"ref": engine.cfg.base_branch}
+        pulls = {
+            "1080": {"merged": True, "base": base, "head": {"ref": branch}, "merge_commit_sha": "a" * 40},
+            **{n: {"merged": True, "base": base, "head": {"sha": head}} for n, head in resume["prs"].items()},
+        }
+        engine.ctx.gh.api = Mock(side_effect=lambda path: pulls[path.rsplit("/", 1)[1]])
+        payload = {"round": 23, "landing_pr": 1080, "reconcile_landed": True}
+        pulls["13"]["merged"] = False
+        with self.assertRaisesRegex(ValueError, "PR #13"):
+            engine.recover_interrupted(payload)
+        self.assertIs(engine.state.merge_resume, resume)
+        pulls["13"]["merged"] = True
+        result = engine.recover_interrupted(payload)
+        self.assertEqual(result["commit"], "a" * 40)
+        self.assertEqual(engine.state.merge_resume, {})
+        self.assertEqual(engine.state.merge_last["result"], "landed")
+        self.assertEqual(engine.state.merge_last["pr"], 1080)
+
     def test_invalid_adoption_never_changes_state(self):
         import copy
         for failure in ('wrong-round','wrong-checkout','code-failure','head-moved','unaccounted-pr','included-exclusion','missing-parent'):

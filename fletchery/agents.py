@@ -298,6 +298,9 @@ class AgentPool:
         self._make = make_runtime
         self._runtimes: dict[str, object] = {}
         self.paused: dict[str, dict] = {}   # name -> {"until": iso, "reason": text}
+        self.worker_limits = None
+        self.worker_rank_names = {}
+        self.worker_slots = {}  # task -> (agent, rank at admission)
         self.busy: dict[str, int] = {}
         self.accounts: dict[str, dict] = {}  # name -> {"ok": bool, "message": text, "at": iso}: is it signed in
         self.catalog_override: Path | None = None  # a refreshed model_scores.json in the state dir
@@ -391,7 +394,39 @@ class AgentPool:
             return False
         if not ignore_capacity and role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
             return False
+        if not ignore_capacity and role == "worker" and self.worker_limits is not None:
+            rank = self.worker_rank_names.get(name, "low")
+            used = sum(1 for _, r in self.worker_slots.values() if r == rank)
+            if used >= self.worker_limits.get(rank, 0):
+                return False
         return True
+
+    def choose_without_rank_limits(self, *args, **kwargs):
+        limits = self.worker_limits
+        self.worker_limits = None
+        try:
+            return self.choose(*args, **kwargs)
+        finally:
+            self.worker_limits = limits
+
+    def escalate_without_rank_limits(self, *args, **kwargs):
+        # Escalation continues an admitted task; it does not consume a new normal job.
+        limits = self.worker_limits
+        self.worker_limits = None
+        try:
+            return self.escalate(*args, **kwargs)
+        finally:
+            self.worker_limits = limits
+
+    def reserve_worker(self, task, agent, allow_overflow=False):
+        rank = self.worker_rank_names.get(agent, "low")
+        if not allow_overflow and self.worker_limits is not None and sum(1 for _, r in self.worker_slots.values() if r == rank) >= self.worker_limits.get(rank, 0):
+            return False
+        self.worker_slots[task] = (agent, rank)
+        return True
+
+    def release_worker(self, task):
+        self.worker_slots.pop(task, None)
 
     @staticmethod
     def account_of(s: AgentSpec) -> str:

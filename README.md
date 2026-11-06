@@ -13,11 +13,18 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
+**All workers** now allocates writing capacity across baseline strength ranks: low (<60), medium (60–74) and high (75+) using eligible ready tasks. Each rank can instead be set manually from 0–10; changing All workers (0–30) restores automatic allocation. Rank sections show baseline scores, restrictions and ready task levels. Task badges record the bucket used when work was admitted. Dashboard refreshes preserve the reader’s scroll position. Existing task eligibility, reviews, escalation and emergency repair policy remain in force.
+
+**Pause & hand off** stops new dispatch and saves active work at the next safe phase boundary. It stages the task changes, records the checkout and notes, and lets an eligible agent continue on Resume without skipping checks.
+
+**Merge windows & packages** queues durable, cancellable integration requests. Future windows leave feature work running; due windows drain active sessions and validate the selected PR heads before reserving capacity. Package requests name an exact revision or depend on a selected window, and use the existing staging release controller for full tests and verified artifact results. The dashboard groups active, blocked, and upcoming requests, with expandable PR lists and a collapsed history for finished and cancelled requests. A quota pause on one account leaves other signed-in accounts eligible even when their worker slots are full. Queues survive restart and uncertain dispatches are not resent. [Operating guide](docs/WORK-MERGE-PACKAGE.md).
+
 If a repair session stops, Fletchery records the reason before any commit or check rerun. Failed checks retain their output for the next repair attempt. Windows worker sessions and controller checks default to UTF-8 for Python so Unicode reports survive redirected output.
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
-**Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
+**Tasks**, **Merging**, **Building**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
+Paused merging and interrupted rounds awaiting authorization leave feature capacity available, including while cleanup finishes. Active rounds retain their reservation. See [work, merge and package policy](docs/WORK-MERGE-PACKAGE.md) for the operating plan.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
 Open Tasks for dependencies, PRs and build details. Settings, Pause and Add task stay
 available across views. Choose **System**, **Light** or **Dark** in the sidebar; your
@@ -113,7 +120,7 @@ task lands under **Needs you**, its issue says what it needs; answer in a commen
 
 | I want to… | Do this |
 |---|---|
-| Add work | **Add task**, or label an issue on GitHub. `Depends on: #12` in the description makes it wait for #12 |
+| Add work | **Add task**, or label an issue on GitHub. Use `Depends on: #12` for local prerequisites or `Depends on: owner/repo#12` for another repository. Qualified prerequisites wait for verified completion before work, repair, or integration. |
 | Stop new work for a while | **Pause** (top right). Workers already running finish; nothing new starts until **Resume** |
 | Run more or fewer workers at once | **−** / **+** next to *Workers* (0 to 10) |
 | Stop new code but keep merging and building | Turn *Workers* down to **0**. Running sessions finish; the Build Lane carries on |
@@ -262,7 +269,7 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 ## Merge progress
 
-Open **Merge & build** for the current round's expandable steps, individual check results, elapsed times, recent activity and output files. The active step opens automatically; your expansion and detail-tab choices survive status refreshes. The overview keeps a compact version of the same panel. Both light and dark themes work at narrow window widths.
+Open **Merging** for the current round, scheduled windows, and expandable checks and logs. Running rows are highlighted green and failed rows red. Previous candidates stay muted. The active step opens automatically, and your expansion and detail-tab choices survive status refreshes. Open **Building** for the build machine and package queue.
 
 Merge progress and saved history remain visible even while the GitHub queue is unavailable or still loading. The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards. Update messages distinguish an active merge from worker sessions draining after a round ends.
 
@@ -285,7 +292,7 @@ when the PC reservation clears, the merger gets the next opportunity. New writin
 merge is pending or running. Pausing/disabling merging, unresolved dependencies, failed-round cooldowns and
 unavailable merger accounts do not hold unrelated writing. A busy merger agent reserves its next free slot.
 
-The Merge & build panel shows the current wait separately from collapsed previous-round results. Finished
+The Merging panel shows the current wait separately from collapsed previous-round results. Finished
 rounds have a fixed total duration and do not keep showing their failed steps or PR membership as current.
 
 

@@ -99,15 +99,16 @@ class GitHub:
                                        [l["name"] for l in it["labels"]], False, it["created_at"])
         return tasks
 
-    def issue_closed(self, number: int) -> bool:
-        it = self.api(f"repos/{self.repo}/issues/{number}")
+    def issue_closed(self, number: int, repository: str | None = None) -> bool:
+        repo = repository or self.repo
+        it = self.api(f"repos/{repo}/issues/{number}")
         if it is None or it["state"] != "closed":
             return False
         if it.get("pull_request"):
             # An abandoned PR is closed too, but its implementation never landed.
-            pr = self.api(f"repos/{self.repo}/pulls/{number}")
+            pr = self.api(f"repos/{repo}/pulls/{number}")
             return bool(pr and pr.get("merged_at"))
-        return True
+        return repository is None or it.get("state_reason") == "completed"
 
     def set_status(self, number: int, status: str) -> None:
         """`status` is a plain state (queued, running, pr, blocked); the issue gets "<label>:<state>"."""
@@ -284,6 +285,7 @@ class FakeGitHub:
     def __init__(self, tasks: dict[int, Task] | None = None, closed: set[int] | None = None):
         self.tasks: dict[int, Task] = tasks or {}
         self.closed: set[int] = set(closed or ())
+        self.repository_closed: set[tuple[str, int]] = set()
         self.prs: list[PullRequest] = []
         self.comments: dict[int, list[str]] = {}
         self.feedback: dict[int, list[Feedback]] = {}
@@ -296,7 +298,9 @@ class FakeGitHub:
     def open_tasks(self):
         return {n: t for n, t in self.tasks.items() if not t.closed}
 
-    def issue_closed(self, number):
+    def issue_closed(self, number, repository=None):
+        if repository is not None:
+            return (repository.lower(), number) in self.repository_closed
         return number in self.closed or (number in self.tasks and self.tasks[number].closed)
 
     def set_status(self, number, status):

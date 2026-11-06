@@ -29,6 +29,7 @@
     --queued-bg: #DCEFFA;
     --running: #007A59;     /* bluish green #009E73, darkened */
     --running-bg: #D7F1E8;
+    --failed: #A52539; --failed-bg: #FCE7EB;
     --lane: #0072B2;
     --lane-bg: #DCEAF5;
     --blocked: #B34A00;     /* vermillion #D55E00, darkened */
@@ -189,7 +190,7 @@
   button.chip { border: 0; min-height: 0; cursor: pointer; }
   .chip.building { background: var(--running-bg); color: var(--running); }
   .chip.passed { background: var(--running-bg); color: var(--running); }
-  .chip.failed { background: var(--blocked-bg); color: var(--blocked); }
+  .chip.failed { background: var(--failed-bg); color: var(--failed); }
   .chip.cancelled, .chip.idle { background: #E6EBF0; color: var(--muted); }
   .chip.paused { background: var(--hold-bg); color: var(--hold); }
   .lane-head .disk { color: var(--muted); font-size: 14px; margin-left: auto; }
@@ -242,7 +243,7 @@
 .merge-now { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; font-size: 15px; line-height: 1.4; background: var(--blocked-bg); }
 .merge-now.idle { background: transparent; padding: 0 0 4px; color: var(--muted); font-size: 14px; }
 .merge-now.running, .merge-now.waiting { background: #E3F0FA; color: #0B3C5D; }
-.merge-now.failed { background: var(--blocked-bg); color: var(--blocked); font-weight: 700; }
+.merge-now.failed { background: var(--failed-bg); color: var(--failed); font-weight: 700; }
 .merge-now .msteps { display: flex; flex-wrap: wrap; gap: 4px 6px; list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
 .merge-now .msteps li { padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; opacity: .75; }
 .merge-now .msteps li.done { opacity: .5; }
@@ -456,6 +457,7 @@
     color-scheme: dark; --paper: #141B22; --panel: #1D2731; --soft: #24313C;
     --ink: #EDF2F6; --muted: #A5B5C4; --rule: #374652; --accent: #70DCC1; --accent-bg: #183E36;
     --running: #7DE2BC; --running-bg: #193C32; --queued: #9DCCF1; --queued-bg: #223C50;
+    --failed: #FFA4B3; --failed-bg: #492731;
     --lane: #9DCCF1; --lane-bg: #223C50; --blocked: #FFB782; --blocked-bg: #452E23;
     --hold: #EEC77E; --hold-bg: #403522;
   }
@@ -632,17 +634,18 @@
   .merge-live { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--soft); margin: 10px 0 16px; }
   .merge-live .round-status { font-size: 16px; font-weight: 700; }
   .merge-live .round-status small { font-weight: 400; }
-  .merge-live.failed { border-color: var(--blocked); }
+  .merge-live.failed { border-color: var(--failed); }
   .merge-live-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
   .merge-health { font-size: 11px; border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; white-space: nowrap; color: var(--muted); }
   .merge-health.active { color: var(--running); background: var(--running-bg); }
-  .merge-health.quiet, .merge-health.possibly_stuck, .merge-health.failed { color: var(--blocked); background: var(--blocked-bg); }
+  .merge-health.quiet, .merge-health.possibly_stuck { color: var(--blocked); background: var(--blocked-bg); }
+  .merge-health.failed { color: var(--failed); background: var(--failed-bg); }
   .merge-subline, .merge-next { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
   .merge-progress { display: flex; gap: 4px; margin: 12px 0 8px; height: 6px; }
   .merge-progress i { flex: 1; border-radius: 3px; background: var(--rule); }
   .merge-progress i.done { background: var(--running); }
   .merge-progress i.running { background: var(--queued); }
-  .merge-progress i.failed { background: var(--blocked); }
+  .merge-progress i.failed { background: var(--failed); }
   .merge-progress-label { color: var(--muted); font-size: 11px; }
   .round-section-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; margin: 8px 0; }
   .merge-now .msteps { display: block; margin: 0; padding: 0; }
@@ -660,11 +663,21 @@
   .merge-step-time { color: var(--muted); font-size: 11px; }
   .merge-step-icon { flex: 0 0 17px; text-align: center; }
   .done .merge-step-icon, .check-done { color: var(--running); }
-  .running .merge-step-icon, .check-running { color: var(--queued); }
-  .failed .merge-step-icon, .check-failed { color: var(--blocked); }
+  .running .merge-step-icon, .check-running { color: var(--running); }
+  .failed .merge-step-icon, .check-failed { color: var(--failed); }
+  .msteps > li.running > .merge-step > summary, .merge-checks > .check-running {
+    background: var(--running-bg); box-shadow: inset 4px 0 var(--running);
+  }
+  .msteps > li.failed > .merge-step > summary, .merge-checks > .check-failed {
+    background: var(--failed-bg); box-shadow: inset 4px 0 var(--failed);
+  }
+  .merge-step-badge { border: 1px solid currentColor; border-radius: 12px; padding: 2px 7px; font-size: 11px; font-weight: 750; }
+  .running .merge-step-badge { color: var(--running); }
+  .failed .merge-step-badge { color: var(--failed); }
+  .previous-candidate .merge-checks > li { background: transparent; box-shadow: none; color: var(--muted); }
   .merge-step[open] { margin: 3px 0; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
-  .running .merge-step[open] { border-color: var(--queued); }
-  .failed .merge-step[open] { border-color: var(--blocked); }
+  .running .merge-step[open] { border-color: var(--running); }
+  .failed .merge-step[open] { border-color: var(--failed); }
   .merge-step-body { padding: 0 12px 12px; font-size: 12px; }
   .merge-step-tabs { display: flex; gap: 5px; border-top: 1px solid var(--rule); padding: 8px 0; }
   .merge-step-tabs button { min-height: 28px; padding: 3px 9px; font-size: 11px; background: transparent; }
@@ -692,6 +705,56 @@
   @media(max-width: 1000px) { .merge-layout { grid-template-columns: minmax(0, 1fr) minmax(185px, .4fr); gap: 12px; } }
   @media(max-width: 700px) { .merge-layout { display: block; } .merge-step > summary { gap: 6px; } .merge-side-card { padding: 10px; } }
 
+.ranked-workers #slotsBox {height:auto !important; max-height:none !important}
+.ranked-workers [data-key="workers"] {display:none}
+#allWorkerTotal {width:90px; display:inline-block; margin:0}
+.rank-section {border-top:1px solid var(--line); margin-top:12px; padding-top:8px}
+.rank-section .slot.free {min-height:0; padding:10px}
+  .plans-header, .plans-heading, .plans-actions, .plan-top, .plan-actions {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .plans-header { justify-content: space-between; align-items: flex-start; gap: 14px; }
+  .plans-heading h3 { margin: 0; }
+  .plans-actions button, .plan-actions button { min-height: 34px; padding: 4px 10px; font-size: 13px; }
+  .plans-actions .mode-action { color: var(--muted); }
+  .plans-mode, .plan-state {
+    display: inline-flex; border-radius: 99px; padding: 2px 8px; font-size: 12px;
+    font-weight: 700; color: var(--muted); background: var(--soft);
+  }
+  .plans-mode.planned, .plan-state.queued { color: var(--queued); background: var(--queued-bg); }
+  .plan-state.running, .plan-state.submitted, .plan-state.complete { color: var(--running); background: var(--running-bg); }
+  .plan-state.draining { color: var(--hold); background: var(--hold-bg); }
+  .plan-state.blocked { color: var(--blocked); background: var(--blocked-bg); }
+  #plansMode, .plans-empty, #planMessage, #packageMessage { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  #planMessage:empty, #packageMessage:empty { margin: 0; }
+  .plans-group { margin-top: 16px; }
+  .plans-group h4, .plans-history > summary { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
+  .plans-list { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
+  .plan-row {
+    display: flex; align-items: flex-start; flex-wrap: wrap; justify-content: space-between;
+    gap: 6px 16px; padding: 10px 12px; border: 1px solid var(--rule);
+    border-radius: 8px; background: var(--soft); overflow-wrap: anywhere;
+  }
+  .plan-row.running, .plan-row.submitted { border-inline-start: 3px solid var(--running); }
+  .plan-row.blocked { border-inline-start: 3px solid var(--blocked); }
+  .plan-main { flex: 1 1 250px; min-width: 0; }
+  .plan-title { font-size: 14px; }
+  .plan-meta, .plan-reason { font-size: 13px; margin: 4px 0 0; }
+  .plan-meta { color: var(--muted); }
+  .plan-details { font-size: 13px; margin-top: 5px; }
+  .plan-details > summary, .plans-history > summary { cursor: pointer; }
+  .plan-prs { margin: 4px 0 0; padding-inline-start: 20px; }
+  .plan-prs li + li { margin-top: 3px; }
+  .plan-actions { font-size: 13px; }
+  .plans-history { border-top: 1px solid var(--rule); padding-top: 10px; }
+  .plans-history > summary { color: var(--muted); }
+  @media (max-width: 640px) {
+    .plans-actions { width: 100%; }
+    .plan-main { flex-basis: 100%; }
+  }
+#planPRChoices label {display:block}
+  html, .slots-scroll, .scroll, .hist { overflow-anchor: none; }
+  .worker-rank-badge { display: inline-block; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -700,8 +763,9 @@
   <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery</div>
   <nav aria-label="Workspace">
     <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
-    <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merge &amp; build</a>
     <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
+    <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merging</a>
+    <a href="#build" data-view="build"><span class="nav-icon" aria-hidden="true">▣</span>Building</a>
     <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true">◇</span>Agents</a>
     <a href="#activity" data-view="activity"><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
   </nav>
@@ -750,12 +814,23 @@
     <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
     <div class="overview-grid" id="overviewGrid">
       <div id="workersMount"></div>
-      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merge &amp; build</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div><div id="buildPreview"></div></section>
+      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merging</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div></section>
       <section class="card"><div class="card-head"><h3>Recent activity</h3><a href="#activity">View all →</a></div><ul class="preview-list" id="recentPreview"></ul></section>
       <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
     </div>
   </section>
-  <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merge &amp; build</h2><p>Current checks, recent activity and what happens next.</p></div><div id="mergePageMount"></div></section>
+  <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
+  <section class="view" id="view-build" aria-labelledby="buildPageHeading" hidden>
+    <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Build machine activity and package requests.</p></div>
+    <div id="buildPageMount"></div>
+    <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
+      <h3 id="packageHeading">Packages</h3>
+      <button type="button" id="planPackage">Queue package</button>
+      <p id="packageMessage" role="status"></p>
+      <div id="packageRows"></div>
+    </section>
+    <p id="buildEmpty" hidden>No build lane is configured for this project.</p>
+  </section>
   <section class="view" id="view-tasks" aria-labelledby="tasksHeading" hidden><div class="page-heading"><h2 id="tasksHeading">Tasks</h2><p>Queued work, dependencies and PRs.</p></div><div class="tasks-view" id="tasksMount"></div></section>
   <section class="view" id="view-agents" aria-labelledby="agentsHeading" hidden><div class="page-heading"><h2 id="agentsHeading">Agents</h2><p>Models, accounts and usage.</p></div><div id="agentsMount"></div></section>
   <section class="view" id="view-activity" aria-labelledby="activityHeading" hidden><div class="page-heading"><h2 id="activityHeading">Activity</h2><p>Finished sessions and the full log.</p></div><div id="activityMount"></div></section>
@@ -775,14 +850,18 @@
 
   <section class="now" id="workers" aria-labelledby="nowh">
     <div class="now-head">
-      <h2 id="nowh">Workers</h2>
+      <h2 id="nowh">All workers</h2>
+      <select id="allWorkerTotal" aria-label="All workers"></select>
       <span class="wcount" role="group" aria-label="Number of workers">
         <button type="button" class="step dark" id="wDown" aria-label="One worker fewer">−</button>
-        <b id="wVal">2</b>
+        <b id="wVal" hidden>2</b>
         <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
       </span>
-      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
+      <button type="button" id="handoffWorkers" hidden>Pause &amp; hand off</button>
+      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.</p>
     </div>
+    <div id="handoffStatus" class="emergency-help" aria-live="polite" hidden></div>
+    <p id="rankMode" class="emergency-help" hidden></p>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
     <div id="storageStatus" class="emergency-help" hidden></div>
     <section class="emergency-workers" id="emergencyWorkers" aria-labelledby="emergencyHeading" hidden>
@@ -832,6 +911,22 @@
        aria-label="Resize Workers' PRs and Needs you: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </div>
 
+  <section class="card" id="integrationPlans" aria-labelledby="plansHeading" hidden>
+    <div class="plans-header">
+      <div>
+        <div class="plans-heading"><h3 id="plansHeading">Merge windows</h3><span class="plans-mode" id="plansModeBadge"></span></div>
+        <p id="plansMode"></p>
+      </div>
+      <div class="plans-actions">
+        <button type="button" class="primary" id="planMerge">Queue merge window</button>
+        <button type="button" class="mode-action" id="planFeature">Use planned windows</button>
+        <button type="button" class="mode-action" id="planAutomatic">Use automatic merging</button>
+      </div>
+    </div>
+    <p id="planMessage" role="status"></p>
+    <div id="planRows"></div>
+  </section>
+
   <section class="lane" id="lane" aria-labelledby="laneh" hidden>
     <div class="lane-head">
       <h2 id="laneh">Build Lane</h2>
@@ -857,6 +952,24 @@
   </div>
   <p class="foot" id="foot"></p>
 </main>
+
+<dialog id="planDlg" aria-labelledby="planTitle">
+  <form id="planForm">
+    <h2 id="planTitle">Queue merge window</h2>
+    <p>Feature work continues until the window is due. Active sessions finish before integration starts.</p>
+    <label for="planWhen">Start no earlier than (your local time; leave blank for now)</label>
+    <input id="planWhen" type="datetime-local">
+    <fieldset id="planPRs"><legend>Choose the ready PRs for this window</legend><div id="planPRChoices"></div></fieldset>
+    <div id="planPackageFields" hidden>
+      <label for="planVersion">Package version</label><input id="planVersion" placeholder="0.3.7" maxlength="64">
+      <label for="planAfter">Source</label><select id="planAfter"><option value="">Exact revision</option></select>
+      <label for="planTarget" id="planTargetLabel">Full source revision</label><input id="planTarget" maxlength="40" placeholder="40-character commit SHA">
+      <p>The release controller runs full tests and packaging for that source. A request is complete only when its package is verified.</p>
+    </div>
+    <p id="planError" role="alert"></p>
+    <div class="mauto-btns"><button type="button" id="planClose">Cancel</button><button type="submit" id="planSubmit">Add to queue</button></div>
+  </form>
+</dialog>
 
 <dialog id="weekDlg" aria-labelledby="weekh">
   <h2 id="weekh">Usage, last 7 days</h2>
@@ -1035,14 +1148,14 @@ const $ = id => document.getElementById(id);
 
 // Move existing controls once: their IDs, handlers and API contracts stay intact.
 $("workersMount").append($("workers"));
-$("mergeMount").append($("mergeNow"));
-$("tasksMount").append($("lane"));
+$("mergeMount").append($("mergeNow"), $("integrationPlans"));
+$("buildPageMount").append($("lane"));
 $("tasksMount").prepend($("queue"), $("boardBox"));
 $("agentsMount").append(document.querySelector(".usage"), $("agents"));
 $("activityMount").append($("lowerBox"));
 $("sidebarBottom").prepend($("settingsBtn"));
-const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "tasks", log: "activity", lowerBox: "activity"};
-const viewNames = ["overview", "merge", "tasks", "agents", "activity"];
+const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "build", log: "activity", lowerBox: "activity"};
+const viewNames = ["overview", "tasks", "merge", "build", "agents", "activity"];
 function showView(name, remember = true) {
   name = viewAliases[name] || name;
   if (!viewNames.includes(name)) return;
@@ -1103,12 +1216,14 @@ function mergeStepHtml(s, i, mv, current, mark, word) {
   const failedChecks = checks.filter(c => c.state === "failed");
   const otherChecks = checks.filter(c => c.state !== "running" && c.state !== "failed");
   const checkSummary = s.state === "running" && checks.length ? `<p class="merge-check-summary"><strong>${checks.filter(c => c.state === "done").length} of ${checks.length} passed</strong><span>${runningChecks.length} running</span><span>${failedChecks.length} failed</span></p>` : "";
+  const badge = s.required !== false && ["running", "failed"].includes(s.state)
+    ? `<span class="merge-step-badge">${s.state === "running" ? "Running" : "Failed"}</span>` : "";
   const log = files.find(f => f.url);
   const meta = [s.started ? `Started ${clockTime(s.started)}` : "", s.updated ? `Updated ${ago(s.updated)} ago` : "", s.ended ? `Finished ${clockTime(s.ended)}` : "", s.activity_updated ? `Activity ${ago(s.activity_updated)} ago` : "", s.activity_source || ""].filter(Boolean).join(" · ");
   const displayedChecks = s.state === "running" ? [...runningChecks, ...failedChecks, ...otherChecks] : checks;
   const checksHtml = checks.length ? `<ul class="merge-checks">${displayedChecks.map(c => `<li class="check-${esc(c.state)}"><span>${mark[c.state] || "○"} ${esc(c.name)}</span><span class="check-state">${esc(word[c.state] || c.state || "Not reported")}${typeof c.duration_seconds === "number" ? ` · ${esc(durationText(c.duration_seconds))}` : ""}</span></li>`).join("")}</ul>` : `<p class="merge-empty">${esc(s.state === "done" ? "Completed. No individual check results were reported." : s.state === "todo" ? "Queued. Waiting for earlier checks to finish." : "Individual check results have not been reported yet.")}</p>`;
   const filesHtml = files.length ? `<ul class="merge-side-prs">${files.map(f => `<li>${f.url && /^\/api\/merge\/log\?/.test(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)} ↗</a>` : esc(f.name || "File")}</li>`).join("")}</ul>` : `<p class="merge-empty">No output files reported for this step.</p>`;
-  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span><span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checkSummary}${mergeActivityHtml(activity.slice(-4))}${checksHtml}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
+  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span>${badge}<span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checkSummary}${mergeActivityHtml(activity.slice(-4))}${checksHtml}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
 }
 
 function durationText(seconds) {
@@ -1158,6 +1273,11 @@ function normalWorkerSessions(d) {
   const emergencyTasks = new Set(emergency.live.map(a => a.task));
   return (d.live || []).filter(a => !a.emergency && !emergencyTasks.has(a.task));
 }
+function workerRankBadge(rank) {
+  const labels = {low: "Low", medium: "Medium", high: "High"};
+  return Object.hasOwn(labels, rank) ? ` <span class="worker-rank-badge" title="Worker capacity bucket">${labels[rank]}</span>` : "";
+}
+
 function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
   const fixing = a.kind === "fix";
@@ -1168,7 +1288,7 @@ function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   lastActions[a.task] = a.actions;
   const row = d.tasks.find(t => t.number === a.task);
   return `<details class="slot" ${attribute}="${a.task}"${expanded.has(String(a.task)) ? " open" : ""}>
-    <summary><span class="worker-title">#${a.task} ${esc(a.title)}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
     <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
     ${track}<div class="what">${esc(explain(a))}</div>
     <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
@@ -1204,7 +1324,7 @@ function workerMergeWait(d) {
   const round = ma.running && ma.running.round;
   const mv = d.merge_view || {};
   const step = mv.active && String(mv.round) === String(round)
-    ? (mv.steps || []).find(s => s.state === "running") : null;
+    ? (mv.steps || []).find(s => s.state === "running" && s.required !== false) : null;
   return {
     title: round ? `New coding waits for merge round ${round}` : "New coding waits for merging",
     detail: round
@@ -1214,7 +1334,20 @@ function workerMergeWait(d) {
 }
 
 function render(d) {
+  const {scrollX, scrollY} = window;
+  const panels = [...document.querySelectorAll(".slots-scroll, .scroll, .hist, .log")]
+    .filter(panel => panel.scrollTop || panel.scrollLeft)
+    .map(panel => [panel, panel.scrollLeft, panel.scrollTop]);
+  renderStatus(d);
+  for (const [panel, left, top] of panels) {
+    if (panel.id !== "log") panel.scrollTo(left, top);
+  }
+  if (scrollX || scrollY) window.scrollTo({left: scrollX, top: scrollY, behavior: "instant"});
+}
+
+function renderStatus(d) {
   last = d;
+  renderPlans(d);
   const ordinary = normalWorkerSessions(d);
   const emergency = emergencyWorkerState(d);
   const storage = d.storage;
@@ -1257,7 +1390,7 @@ function render(d) {
   else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
   else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
-  else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
+  else if (d.limit_until) { hb.innerHTML = `Feature workers paused by a usage limit. <span>Feature work can resume at ${esc(clockTime(d.limit_until))}. Merge windows and packages have separate queues.</span>`; hb.classList.add("show"); }
   else if (mergeWait) { hb.innerHTML = `${esc(mergeWait.title)}. <span>${esc(mergeWait.detail)}</span>`; hb.classList.add("show"); }
   else hb.classList.remove("show");
   if (d.sync_error) {
@@ -1299,6 +1432,7 @@ function render(d) {
     const settled = ma && !running && lastMatches && (terminal.has(L.result) || L.result === "waiting");
     const history = mv.previous || (legacyFinished || settled ? {...mv, result: L.result || mv.state, ended: mv.ended || mv.updated || ""} : null);
     const active = mv.active !== false && !history && !settled && (mv.round || (mv.steps || []).length) && (!running || String(running.round) === String(mv.round));
+    const included = active ? mv.prs || [] : running?.prs || [];
     const box = $("mergeNow");
     const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
     const mergeFocus = box.contains(document.activeElement) ? document.activeElement.dataset.mergeFocus : null;
@@ -1306,29 +1440,33 @@ function render(d) {
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
     const stepsHtml = (steps, label, expand = false) => `<ol class="msteps" aria-label="${label}">${steps.map((s, i) => expand ? mergeStepHtml(s, i, mv, currentStep, mark, word) : `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
-    const failedSteps = active ? (mv.steps || []).filter(s => s.state === "failed" && s.required !== false) : [];
-    const currentStep = failedSteps[0] || (active && (mv.steps || []).find(s => ["running", "waiting"].includes(s.state)));
     const steps = active ? mv.steps || [] : [];
+    const requiredSteps = steps.filter(s => s.required !== false);
+    const failedSteps = requiredSteps.filter(s => s.state === "failed");
+    const currentStep = failedSteps[0] || requiredSteps.find(s => s.state === "running") || requiredSteps.find(s => s.state === "waiting");
     const activity = mv.activity || {};
     const activityAt = activity.updated;
     const activeCheck = currentStep && (currentStep.checks || []).find(c => c.state === "running");
-    const requiredSteps = steps.filter(s => s.required !== false);
     const completed = requiredSteps.filter(s => s.state === "done").length;
     const health = failedSteps.length ? "failed" : activity.health || (mv.stale ? "possibly_stuck" : "unknown");
     const checkpointOnly = activity.source === "Progress checkpoint";
     const healthText = {active: checkpointOnly ? "Recent update" : "Active", quiet: "Quiet · check activity", possibly_stuck: "May be stuck", unknown: "Activity not reported", failed: "Landing blocked"}[health] || "Activity not reported";
-    if (failedSteps.length) box.className = "merge-now failed";
-    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${mv.next ? `<p class="merge-next">Next: ${esc(mv.next)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    if (currentStep) box.className = "merge-now " + currentStep.state;
+    const headlineMatches = currentStep && mv.headline?.includes(currentStep.name);
+    const latestUpdate = headlineMatches ? mv.headline : mv.note || currentStep?.message;
+    const nextStep = headlineMatches || failedSteps.length ? mv.next
+      : requiredSteps.slice(requiredSteps.indexOf(currentStep) + 1).find(s => s.state === "todo")?.name;
+    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (failedSteps.length) {
       const reported = steps.filter(s => s.state === "running" && s.required !== false).map(s => s.name);
       box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${reported.length ? `<br>Reported activity: ${esc(reported.join(", "))}. This does not clear the failed check.` : ""}</p>`);
     }
-    if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
+    if (currentStep && latestUpdate) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(latestUpdate)}</p></details>`);
     if (active && steps.length) box.insertAdjacentHTML("beforeend", `<h4 class="round-section-label">Round progress</h4>` + stepsHtml(steps, "Current round steps", true));
     if (ma || history) {
       let line;
       if (!ma) line = esc(mv.headline || "No merge round running.");
-      else if (running) line = `<b>${esc(running.agent)}</b> · ${(running.prs || []).length} ${(running.prs || []).length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
+      else if (running) line = `<b>${esc(running.agent)}</b> · ${included.length} ${included.length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
       else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {
@@ -1344,17 +1482,16 @@ function render(d) {
       const meta = [total ? `${total} total` : "", previous.ended ? `ended ${clockTime(previous.ended)}` : ""].filter(Boolean).join(" · ");
       const lastLine = previous.round ? `<details class="mauto-last round-history" data-detail="last"${mergeOpen.has("last") ? " open" : ""}><summary>Previous round ${esc(previous.round)} ${res}${total ? ` · ${esc(total)} total` : ""}</summary>${meta ? `<p class="history-time">${esc(meta)}</p>` : ""}<p>${esc(previous.summary || previous.note || "No additional details.")}</p>${previous.stop_reason ? `<p><b>Stopped:</b> ${esc(previous.stop_reason)}</p>` : ""}${previous.steps && previous.steps.length ? stepsHtml(previous.steps, "Previous round steps") : ""}</details>` : "";
       const btns = ma && ma.on ? `<span class="mauto-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
-        (!running && !ma.held ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
+        (!running && !ma.held && (!(d.integration_queue || {}).planned || (ma.resume && Object.keys(ma.resume).length)) ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
-    const included = active ? mv.prs || [] : running ? running.prs || [] : [];
     const side = `<aside class="merge-aside" aria-label="Round context"><section class="merge-side-card"><h4>This round</h4><p class="merge-side-number">${included.length} ${included.length === 1 ? "PR" : "PRs"} included</p><p>${active || running ? "Results appear as checks finish and PRs land." : "No active merge round."}</p><ul class="merge-side-prs">${included.slice(0, 5).map(n => {const row = mergeRows.find(r => r.pr === n); return `<li><a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}${row ? ` · ${esc(row.title)}` : ""}</a></li>`;}).join("")}${included.length > 5 ? `<li>+${included.length - 5} more</li>` : ""}</ul></section><section class="merge-side-card"><h4>Machine</h4><p>${esc(mv.pc_text || (mv.pc ? mv.pc.what : "Machine status not reported"))}</p>${ma && !running && ma.why ? `<p>${esc(ma.why)}</p>` : ""}</section>${d.update_pending || d.restarting ? `<section class="merge-side-card"><h4>App update ready</h4><p>Activates after running work finishes.</p><p>${running ? "The current merge continues." : "Running sessions finish before reloading."}</p></section>` : ""}</aside>`;
     const main = document.createElement("div"); main.className = "merge-main";
     while (box.firstChild) main.append(box.firstChild);
     const layout = document.createElement("div"); layout.className = "merge-layout"; layout.append(main); layout.insertAdjacentHTML("beforeend", side); box.append(layout);
     if (mergeFocus) [...box.querySelectorAll("[data-merge-focus]")].find(el => el.dataset.mergeFocus === mergeFocus)?.focus({preventScroll:true});
     const currentRound = active ? mv.round : running ? running.round : "";
-    const inRound = new Set(active ? (mv.prs || []) : running ? (running.prs || []) : []);
+    const inRound = new Set(included);
     $("n-pr").textContent = mergeRows.length || "";
     const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr))];
     let lastGroup = null;
@@ -1378,7 +1515,7 @@ function render(d) {
       if (!r.ready) bits.push("not labelled ready");
       if (r.repair_wait) bits.push(`<b>Waiting for repair:</b> ${esc(r.repair_wait)}`);
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
-      return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}</a>` +
+      return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}${workerRankBadge(d.tasks.find(t => t.number === r.task)?.worker_rank)}</a>` +
         `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
     }
   }
@@ -1393,18 +1530,18 @@ function render(d) {
         why = a ? `${esc(a.stage)}, started ${ago(a.since)} ago` : (t.since ? "Started " + ago(t.since) + " ago" : "");
       }
       if (k === "pr") why = t.pr ? `<a href="${esc(t.pr_url)}" target="_blank" rel="noopener">PR #${t.pr}</a>` + (t.fix_attempts ? `, fixed ${t.fix_attempts}×` : "") : "PR open";
-      if (k === "blocked") return `<li><button type="button" class="t" data-ny="${t.number}"><span class="num">#${t.number}</span> <span class="ttl">${esc(t.title)}</span></button><span class="why">Click to read and answer. Send re-queues it.</span></li>`;
+      if (k === "blocked") return `<li><button type="button" class="t" data-ny="${t.number}"><span class="num">#${t.number}</span> <span class="ttl">${esc(t.title)}${workerRankBadge(t.worker_rank)}</span></button><span class="why">Click to read and answer. Send re-queues it.</span></li>`;
       return `<li><a class="t" href="${esc(t.url)}" target="_blank" rel="noopener"><span class="num">#${t.number}</span> ${esc(t.title)}</a><span class="why">${why}</span></li>`;
     }).join("") : `<li class="empty">${empty[k]}</li>`;
   }
 
   // history
   const names = {pr: "PR opened", fixed: "Fixed", blocked: "Blocked", gave_up: "Gave up", limited: "Hit limit", requeue: "Requeued", signed_out: "Signed out",
-                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent",
+                 agent_paused: "Agent paused", waiting_agent: "Waited for an agent", handed_off: "Checkpoint saved",
                  retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
   $("history").innerHTML = d.history.length ? d.history.map(h => `<tr>
       <td class="when">${esc(stamp(h.at))}</td>
-      <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a></td>
+      <td><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)}</td>
       <td><span class="res ${esc(h.result)}">${esc(names[h.result] || h.result)}</span>${h.pr ? ` <a href="${esc(d.repo_url)}/pull/${h.pr}" target="_blank" rel="noopener">#${h.pr}</a>` : ""}
         ${h.agent ? ` <span class="ag-by">by ${esc(h.agent)}${h.reviewer ? `, reviewed by ${esc(h.reviewer)}` : ""}</span>` : ""}
         ${h.detail ? `<br><span style="color:var(--muted)">${esc(h.detail)}</span>` : ""}</td>
@@ -1438,7 +1575,15 @@ function renderOverview(d) {
   const blocked = d.tasks.filter(t => t.status === "blocked");
   const queued = d.tasks.filter(t => t.status === "queued");
   const prs = d.merge ? d.merge.length : d.tasks.filter(t => t.status === "pr").length;
-  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>`;
+  const integrations = (d.integration_queue?.requests || []).filter(r => ["queued", "draining", "running", "blocked"].includes(r.state));
+  const merge = integrations.find(r => r.kind === "merge");
+  const packageJob = integrations.find(r => r.kind === "package");
+  const round = d.merge_auto?.running?.round;
+  const mergeStatus = round ? `Merge round ${round} running` : merge ? `Merge window ${merge.state}` : "";
+  const packageStatus = packageJob ? `Package ${packageJob.version} ${packageJob.state}` : "";
+  const integrationStatus = (mergeStatus ? `<a href="#merge">${esc(mergeStatus)}</a>` : "")
+    + (packageStatus || d.lane ? `<a href="#build">${esc(packageStatus || $("laneChip").textContent || "Build machine")}</a>` : "");
+  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>${integrationStatus}`;
   $("navTasks").textContent = blocked.length || queued.length || prs || "";
   $("navTasks").hidden = !blocked.length && !queued.length && !prs;
   $("navTasks").classList.toggle("attention", !!blocked.length);
@@ -1446,11 +1591,9 @@ function renderOverview(d) {
   $("attentionCount").textContent = blocked.length ? `(${blocked.length})` : "";
   $("attentionPreview").innerHTML = blocked.length ? blocked.slice(0, 3).map(t => `<li><button type="button" data-ny="${t.number}">#${t.number} ${esc(t.title)}</button></li>`).join("") : '<li><small>Nothing needs your input.</small></li>';
   const names = {pr: "PR opened", fixed: "Fix pushed", blocked: "Needs you", requeue: "Requeued", retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
-  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a> ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
+  $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
   const active = d.merge_auto && d.merge_auto.running;
-  $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merge & build";
-  const L = d.lane;
-  $("buildPreview").innerHTML = L ? `<div class="build-preview"><a href="#lane">Build machine →</a><span>${esc($("laneChip").textContent)}</span></div>` : "";
+  $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merging";
 }
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
@@ -1458,7 +1601,28 @@ function renderWorkers(d) {
   $("wVal").textContent = d.max_parallel;
   $("wDown").disabled = d.max_parallel <= 0;
   $("wDown").title = d.max_parallel === 1 ? "0 workers: pause normal writing; merging, builds and enabled emergency repairs continue" : "";
-  $("wUp").disabled = d.max_parallel >= 10;
+  $("wUp").disabled = d.max_parallel >= 30;
+  if (!$("allWorkerTotal").options.length) $("allWorkerTotal").innerHTML = Array.from({length: 31}, (_, n) => `<option value="${n}">${n}</option>`).join("");
+  if (document.activeElement !== $("allWorkerTotal")) $("allWorkerTotal").value = d.max_parallel;
+  $("handoffWorkers").hidden = !d.worker_handoffs;
+  $("handoffWorkers").disabled = !(d.live || []).length;
+  const handoffs = Object.values(d.worker_handoffs || {}).filter(r => ["requested", "checkpointed", "interrupted"].includes(r.state));
+  $("handoffStatus").hidden = !handoffs.length;
+  $("handoffStatus").innerHTML = handoffs.map(r => `<p><b>#${esc(r.task)} ${esc(r.state === "requested" ? "will pause at the next checkpoint" : r.state === "interrupted" ? "handoff interrupted" : "checkpoint saved")}</b>${r.phase ? ` · ${esc(r.phase)} · ${r.staged.length} staged` : ""}${r.note ? `<br>${esc(r.note)}` : ""}${r.worktree ? `<br><small>${esc(r.worktree)}</small>` : ""}</p>`).join("");
+  const ranks = d.worker_ranks;
+  $("rankMode").hidden = !ranks;
+  $("workers").classList.toggle("ranked-workers", !!ranks);
+  if (!ranks) return;
+  const counts = ranks.ready_levels || {};
+  $("rankMode").textContent = `${ranks.mode === "automatic" ? "Automatic allocation from All workers" : "Manual rank capacities"}. Ready tasks: ${counts.easy || 0} easy, ${counts.medium || 0} medium, ${counts.hard || 0} hard. ${ranks.unassigned ? ranks.unassigned + " slots have no eligible model or task." : ""} Existing task restrictions and review rules still apply.`;
+  const active = normalWorkerSessions(d);
+  const expanded = new Set([...$("slots").querySelectorAll("details[open]")].map(e => e.dataset.worker));
+  $("slots").style.display = "block";
+  $("slots").innerHTML = ["high", "medium", "low"].map(rank => {
+    const sessions = active.filter(a => ((ranks.assignments || {})[String(a.task)] || (ranks.agent_ranks || {})[a.agent] || "low") === rank);
+    const models = (ranks.models[rank] || []).map(n => `${n} (${ranks.scores[n]}${ranks.restrictions[n] ? "; " + ranks.restrictions[n].join("/") + " tasks" : ""})`).join(", ");
+    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · baseline ${esc(ranks.thresholds[rank])}</h3><label>${rank} capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${esc(models || "No enabled writing models in this rank.")}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
+  }).join("");
 }
 async function setWorkers(v) {
   try { await post("/api/workers", {max_parallel: v}); await refresh(); } catch (e) { alert(e.message); }
@@ -1589,11 +1753,11 @@ function renderQueue(d) {
   const link = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
   $("tqReady").innerHTML = ready.length ? ready.map((t, i) => `<li class="${i === 0 && !held ? "next" : ""}">
       <span class="pos" aria-hidden="true">${i + 1}</span>
-      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${workerRankBadge(t.worker_rank)}</span>
       ${i === 0 && !held ? `<span class="why">next</span>` : ""}</li>`).join("")
     : `<li class="none">${queued.length ? "Nothing ready: every queued task waits on another." : `Nothing queued. Add a task, or label an issue ${esc(d.label || "fletchery")}.`}</li>`;
   $("tqWaiting").innerHTML = waiting.length ? waiting.map(t => `<li>
-      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a></span>
+      <span class="ttl"><span class="num">#${t.number}</span> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${workerRankBadge(t.worker_rank)}</span>
       <span class="why">${esc(t.why).replace(/#(\d+)/g, (m, n) => link(n))}</span></li>`).join("")
     : `<li class="none">None.</li>`;
 }
@@ -1607,6 +1771,7 @@ function renderWorkersOff(d) {
 }
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
+  $("buildEmpty").hidden = !!L;
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");
@@ -1672,7 +1837,7 @@ function renderAgents(d) {
   const A = d.agents, sec = $("agents");
   if (!A) { sec.hidden = true; return; }
   sec.hidden = d.workers_enabled === false;
-  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.";
+  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.";
   $("escBtn").setAttribute("aria-pressed", A.escalate ? "true" : "false");
   const R = A.routing || {};
   const rl = k => (R[k] && R[k].length) ? R[k].map(n => {
@@ -1929,6 +2094,138 @@ $("agRefresh").onclick = async () => {
 const PLAN_LABEL = {claude: "Claude plan", codex: "ChatGPT", opencode: "OpenCode sign-in"};
 const PLAN_NAME = {claude: "Your Claude plan (shares its limits with your own chats)", codex: "Your ChatGPT sign-in (codex login)",
                    opencode: "OpenCode's own sign-in, e.g. OpenCode Go (opencode auth login)"};
+let planKind = "merge";
+const PLAN_STATES = {
+  queued: "Queued", draining: "Finishing worker sessions", blocked: "Blocked",
+  running: "Running", submitted: "Submitted", complete: "Complete", cancelled: "Cancelled",
+};
+const PLAN_TIME = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"});
+const renderedPlans = new Map();
+const cancellingPlans = new Set();
+function planTitle(r) {
+  if (r.kind !== "merge") return "Package " + r.version;
+  const prs = Object.keys(r.heads || {});
+  return "Merge window · " + (prs.length === 1 ? "#" + prs[0] : prs.length + " PRs");
+}
+function renderPlanRow(r, repoUrl) {
+  const title = planTitle(r);
+  const state = PLAN_STATES[r.state] || r.state;
+  const prs = Object.keys(r.heads || {});
+  const date = Date.parse(r.not_before);
+  const scheduled = Number.isFinite(date) ? PLAN_TIME.format(date) : "As soon as possible";
+  const when = Number.isFinite(date) ? `Earliest start <time datetime="${esc(r.not_before)}">${esc(scheduled)}</time>` : scheduled;
+  const canCancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started;
+  const run = r.receipt?.worker?.runId;
+  const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(repoUrl)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
+  const cancel = canCancel ? `<button type="button" data-plan-cancel="${esc(r.id)}" data-plan-title="${esc(title)}" data-plan-focus="${esc(r.id)}-cancel" aria-label="Cancel request for ${esc(title)}">Cancel request</button>` : "";
+  const reason = r.reason || (r.after && !r.target && r.state === "queued" ? "Waiting for its merge window to land." : "");
+  const details = prs.length ? `<details class="plan-details" data-plan-open="${esc(r.id)}">
+    <summary data-plan-focus="${esc(r.id)}-prs">View ${prs.length} ${prs.length === 1 ? "PR" : "PRs"}</summary>
+    <ul class="plan-prs">${prs.map(n => `<li><a href="${esc(repoUrl)}/pull/${esc(n)}" data-plan-focus="${esc(r.id)}-pr-${esc(n)}" target="_blank" rel="noopener">#${esc(n)}</a>${r.titles?.[n] ? " " + esc(r.titles[n]) : ""}</li>`).join("")}</ul></details>` : "";
+  return `<li class="plan-row ${esc(r.state)}"><div class="plan-main">
+    <div class="plan-top"><strong class="plan-title">${esc(title)}</strong><span class="plan-state ${esc(r.state)}">${esc(state)}</span></div>
+    <p class="plan-meta">${when}</p>${reason ? `<p class="plan-reason">${esc(reason)}</p>` : ""}
+    ${r.target ? `<p class="plan-meta">Source <code>${esc(r.target)}</code></p>` : ""}
+    ${r.output ? `<p class="plan-meta">Package output ${esc(r.output)}</p>` : ""}${details}
+  </div>${link || cancel ? `<div class="plan-actions">${link}${cancel}</div>` : ""}</li>`;
+}
+function renderPlans(d) {
+  const queue = d.integration_queue;
+  $("integrationPlans").hidden = !queue;
+  $("packagePlans").hidden = !queue;
+  if (!queue) return;
+  $("plansModeBadge").textContent = queue.planned ? "Planned mode" : "Automatic mode";
+  $("plansModeBadge").classList.toggle("planned", queue.planned);
+  $("plansMode").textContent = queue.planned ? "Feature work continues between scheduled integrations." : "Ready PRs merge automatically. Queuing a request switches to planned mode.";
+  $("planFeature").hidden = queue.planned;
+  $("planAutomatic").hidden = !queue.planned;
+
+  const requests = queue.requests || [];
+  renderPlanGroups($("planRows"), requests.filter(r => r.kind === "merge"), d.repo_url);
+  renderPlanGroups($("packageRows"), requests.filter(r => r.kind === "package"), d.repo_url);
+}
+
+function renderPlanGroups(rows, requests, repoUrl) {
+  const groups = {active: [], upcoming: [], attention: [], history: []};
+  for (const request of requests) {
+    if (["complete", "cancelled"].includes(request.state)) groups.history.push(request);
+    else if (request.state === "blocked") groups.attention.push(request);
+    else if (request.state === "queued") groups.upcoming.push(request);
+    else groups.active.push(request);
+  }
+  groups.upcoming.sort((a, b) => (Date.parse(a.not_before) || 0) - (Date.parse(b.not_before) || 0));
+  const list = rows => `<ul class="plans-list">${rows.map(r => renderPlanRow(r, repoUrl)).join("")}</ul>`;
+  const group = (title, rows) => rows.length ? `<section class="plans-group"><h4>${title} · ${rows.length}</h4>${list(rows)}</section>` : "";
+  const html = group("In progress", groups.active) + group("Needs attention", groups.attention) + group("Upcoming", groups.upcoming)
+    + (!groups.active.length && !groups.attention.length && !groups.upcoming.length ? '<p class="plans-empty">No active or upcoming requests.</p>' : "")
+    + (groups.history.length ? `<details class="plans-group plans-history" data-plan-open="history"><summary data-plan-focus="history">History · ${groups.history.length}</summary>${list(groups.history.reverse())}</details>` : "");
+
+  if (html === renderedPlans.get(rows)) return;
+  const open = new Set([...rows.querySelectorAll("details[open]")].map(detail => detail.dataset.planOpen));
+  const focus = rows.contains(document.activeElement) && document.activeElement.dataset.planFocus;
+  rows.innerHTML = html;
+  renderedPlans.set(rows, html);
+  rows.querySelectorAll("details").forEach(detail => { detail.open = open.has(detail.dataset.planOpen); });
+  if (focus) {
+    [...rows.querySelectorAll("[data-plan-focus]")].find(el => el.dataset.planFocus === focus)?.focus({preventScroll: true});
+  }
+}
+function openPlan(kind) {
+  planKind = kind;
+  $("planTitle").textContent = kind === "merge" ? "Queue merge window" : "Queue package";
+  $("planPRs").hidden = kind !== "merge";
+  $("planPackageFields").hidden = kind !== "package";
+  $("planWhen").value = ""; $("planError").textContent = "";
+  const ready = (last.merge || []).filter(r => r.ready);
+  $("planPRChoices").innerHTML = ready.map(r => `<label><input type="checkbox" name="planPR" value="${esc(r.pr)}" checked> #${esc(r.pr)} ${esc(r.title)}</label>`).join("") || "No ready PRs are available.";
+  const merges = ((last.integration_queue || {}).requests || []).filter(r => r.kind === "merge" && r.state !== "cancelled");
+  $("planAfter").innerHTML = '<option value="">Exact revision</option>' + merges.map(r => `<option value="${esc(r.id)}">After merge ${Object.keys(r.heads || {}).map(n => "#" + n).join(", ")} (${esc(r.state)})</option>`).join("");
+  $("planTarget").hidden = false; $("planTargetLabel").hidden = false;
+  $("planDlg").showModal();
+}
+$("planMerge").onclick = () => openPlan("merge");
+$("planPackage").onclick = () => openPlan("package");
+$("planClose").onclick = () => $("planDlg").close();
+$("planAfter").onchange = () => { $("planTarget").hidden = !!$("planAfter").value; $("planTargetLabel").hidden = !!$("planAfter").value; };
+$("planFeature").onclick = () => agentCall("/api/queue/mode", {planned: true});
+$("planAutomatic").onclick = () => agentCall("/api/queue/mode", {planned: false});
+async function cancelPlan(e, message, action) {
+  const button = e.target.closest("[data-plan-cancel]");
+  if (!button || cancellingPlans.has(button.dataset.planCancel) || !confirm(`Cancel this request? ${button.dataset.planTitle}.`)) return;
+  const id = button.dataset.planCancel;
+  cancellingPlans.add(id);
+  button.disabled = true;
+  message.textContent = "";
+  try {
+    const result = await post("/api/queue/cancel", {id});
+    message.textContent = result.message || "Request cancelled.";
+    await refresh();
+    if (document.activeElement === document.body) action.focus({preventScroll: true});
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    cancellingPlans.delete(id);
+    button.disabled = false;
+  }
+}
+$("planRows").onclick = e => cancelPlan(e, $("planMessage"), $("planMerge"));
+$("packageRows").onclick = e => cancelPlan(e, $("packageMessage"), $("planPackage"));
+$("planForm").onsubmit = async e => {
+  e.preventDefault(); $("planSubmit").disabled = true;
+  try {
+    const data = {kind: planKind, not_before: $("planWhen").value ? new Date($("planWhen").value).toISOString() : ""};
+    if (planKind === "merge") {
+      data.prs = [...document.querySelectorAll('input[name="planPR"]:checked')].map(i => Number(i.value));
+      if (!data.prs.length) throw new Error("Choose at least one ready PR.");
+    } else {
+      data.version = $("planVersion").value.trim(); data.after = $("planAfter").value;
+      data.target = data.after ? "" : $("planTarget").value.trim();
+    }
+    await post("/api/queue/add", data); $("planDlg").close(); await refresh();
+  } catch (error) { $("planError").textContent = error.message; }
+  finally { $("planSubmit").disabled = false; }
+};
+
 async function agentCall(path, body, msg) {
   try { const r = await post(path, body); if (r && r.message) $("state").textContent = r.message; await refresh(); return r; }
   catch (e) { alert(e.message); }
@@ -2041,6 +2338,14 @@ $("hold").onclick = async () => {
   try { await post(last && last.held ? "/api/resume" : "/api/pause"); await refresh(); }
   catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
+$("handoffWorkers").onclick = () => agentCall("/api/workers/handoff", {});
+$("allWorkerTotal").onchange = () => setWorkers(Number($("allWorkerTotal").value));
+$("slots").addEventListener("change", e => {
+  const rank = e.target.dataset.rankCap;
+  if (!rank || !last.worker_ranks) return;
+  const limits = {...last.worker_ranks.limits, [rank]: Number(e.target.value)};
+  agentCall("/api/workers/ranks", {limits});
+});
 $("wDown").onclick = () => setWorkers(last.max_parallel - 1);
 $("wUp").onclick = () => setWorkers(last.max_parallel + 1);
 $("eDown").onclick = () => setEmergencyWorkers(0);

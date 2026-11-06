@@ -33,7 +33,7 @@ def default_state_dir(name: str) -> str:
 # profile key (in "workers") -> Config field
 WORKER_KEYS = {
     "autoCleanup": "auto_cleanup", "cleanupRetentionHours": "cleanup_retention_hours", "thinTextWorkers": "thin_text_workers",
-    "emergencyWorkers": "emergency_workers",
+    "emergencyWorkers": "emergency_workers", "workerRankLimits": "worker_rank_limits",
     "assetTasks": "asset_tasks",
     "autoPrerequisites": "auto_prerequisites",
     "enabled": "workers_enabled", "projectRoot": "project_root", "baseBranch": "base_branch", "assignee": "assignee",
@@ -67,6 +67,7 @@ class Config:
     worktree_root: str = ""                  # "" = <state_dir>/worktrees
     state_dir: str = ""                      # "" = %LOCALAPPDATA%\Fletchery\<name>
     max_parallel: int = 2                    # on a Claude plan the limits are shared with your own sessions
+    worker_rank_limits: dict = None          # None = allocate All workers by task demand; manual per-rank 0..10
     emergency_workers: int = 1              # dedicated build/merge repair slot, independently 0 or 1
     auto_cleanup: bool = True                # retire verified closed/published task copies when idle
     cleanup_retention_hours: float = 24
