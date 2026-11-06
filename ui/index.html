@@ -1382,6 +1382,7 @@ function renderStatus(d) {
     const settled = ma && !running && lastMatches && (terminal.has(L.result) || L.result === "waiting");
     const history = mv.previous || (legacyFinished || settled ? {...mv, result: L.result || mv.state, ended: mv.ended || mv.updated || ""} : null);
     const active = mv.active !== false && !history && !settled && (mv.round || (mv.steps || []).length) && (!running || String(running.round) === String(mv.round));
+    const included = active ? mv.prs || [] : running?.prs || [];
     const box = $("mergeNow");
     const mergeOpen = new Set([...box.querySelectorAll("details[open][data-detail]")].map(el => el.dataset.detail));
     const mergeFocus = box.contains(document.activeElement) ? document.activeElement.dataset.mergeFocus : null;
@@ -1415,7 +1416,7 @@ function renderStatus(d) {
     if (ma || history) {
       let line;
       if (!ma) line = esc(mv.headline || "No merge round running.");
-      else if (running) line = `<b>${esc(running.agent)}</b> · ${(running.prs || []).length} ${(running.prs || []).length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
+      else if (running) line = `<b>${esc(running.agent)}</b> · ${included.length} ${included.length === 1 ? "PR" : "PRs"} · started ${esc(clockTime(running.started))}`;
       else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {
@@ -1434,14 +1435,13 @@ function renderStatus(d) {
         (!running && !ma.held && (!(d.integration_queue || {}).planned || (ma.resume && Object.keys(ma.resume).length)) ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
-    const included = active ? mv.prs || [] : running ? running.prs || [] : [];
     const side = `<aside class="merge-aside" aria-label="Round context"><section class="merge-side-card"><h4>This round</h4><p class="merge-side-number">${included.length} ${included.length === 1 ? "PR" : "PRs"} included</p><p>${active || running ? "Results appear as checks finish and PRs land." : "No active merge round."}</p><ul class="merge-side-prs">${included.slice(0, 5).map(n => {const row = mergeRows.find(r => r.pr === n); return `<li><a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}${row ? ` · ${esc(row.title)}` : ""}</a></li>`;}).join("")}${included.length > 5 ? `<li>+${included.length - 5} more</li>` : ""}</ul></section><section class="merge-side-card"><h4>Machine</h4><p>${esc(mv.pc_text || (mv.pc ? mv.pc.what : "Machine status not reported"))}</p>${ma && !running && ma.why ? `<p>${esc(ma.why)}</p>` : ""}</section>${d.update_pending || d.restarting ? `<section class="merge-side-card"><h4>App update ready</h4><p>Activates after running work finishes.</p><p>${running ? "The current merge continues." : "Running sessions finish before reloading."}</p></section>` : ""}</aside>`;
     const main = document.createElement("div"); main.className = "merge-main";
     while (box.firstChild) main.append(box.firstChild);
     const layout = document.createElement("div"); layout.className = "merge-layout"; layout.append(main); layout.insertAdjacentHTML("beforeend", side); box.append(layout);
     if (mergeFocus) [...box.querySelectorAll("[data-merge-focus]")].find(el => el.dataset.mergeFocus === mergeFocus)?.focus({preventScroll:true});
     const currentRound = active ? mv.round : running ? running.round : "";
-    const inRound = new Set(active ? (mv.prs || []) : running ? (running.prs || []) : []);
+    const inRound = new Set(included);
     $("n-pr").textContent = mergeRows.length || "";
     const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr))];
     let lastGroup = null;

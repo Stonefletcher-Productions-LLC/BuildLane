@@ -243,7 +243,10 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
     data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
       {name: 'Game specs', state: 'running'}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
+    data.merge_auto.running.prs = [1041, 1042];
+    data.merge_view.prs = [1041];
     await page.evaluate(next => { last = next; render(next); }, data);
+    assert.match(await page.locator('.merge-current').innerText(), /1 PR · started/);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
     data.update_pending=true;
