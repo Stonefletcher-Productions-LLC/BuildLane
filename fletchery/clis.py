@@ -6,7 +6,7 @@ Both run on their own sign-in (ChatGPT for Codex, OpenCode's `auth login` for Op
 Cost is reported when the CLI reports it (OpenCode does, Codex on a ChatGPT plan does not), else 0.
 
 What each role may do, as with Claude (runtime.TOOLS):
-- worker, fixer: edit files in the worktree and run commands; no web.
+- worker, fixer: edit files in the worktree and run commands; Codex workers may reach the network (gh) and their git metadata.
 - reviewer, planner: read only.
 Codex workers use workspace-write and reviewers/planners read-only. Merger sessions use danger-full-access with
 approval_policy=never for native builds, shared inputs and GitHub. OpenCode uses a role-specific permission
@@ -65,6 +65,17 @@ def drop_nulls(d: dict) -> dict:
 def _newest(pattern: str) -> str:
     hits = sorted(glob.glob(pattern), key=lambda p: os.path.getmtime(p), reverse=True)
     return hits[0] if hits else ""
+
+
+def git_common_dir(cwd) -> str:
+    """The shared .git directory a worktree's metadata lives in, or "" when it is not a git checkout."""
+    import subprocess
+    try:
+        p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=str(cwd),
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
 
 
 def find_codex(explicit: str = "") -> str:
@@ -270,6 +281,14 @@ class CodexRuntime(CliRuntime):
                 "-s", "danger-full-access" if role == "merger" or asset else "read-only" if role in READ_ONLY else "workspace-write"]
         if role == "merger" or asset:
             argv += ["-c", 'approval_policy="never"']
+        elif role in ("worker", "fixer"):
+            # workspace-write blocked the network and the worktree's git metadata (it lives in the main checkout's
+            # .git), so Codex workers could not read PR comments or CI logs with gh and could not commit; ~20 tasks
+            # were blocked on that (2026-11-05). Let them reach GitHub and write their own git metadata.
+            argv += ["-c", "sandbox_workspace_write.network_access=true"]
+            common = git_common_dir(cwd)
+            if common:
+                argv += ["--add-dir", common]
         if self.spec.model:
             argv += ["-m", self.spec.model]
         argv.append("-")  # the prompt comes on stdin: a long prompt does not fit a Windows command line
