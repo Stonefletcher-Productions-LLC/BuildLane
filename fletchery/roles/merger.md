@@ -29,8 +29,10 @@ PRs labelled `{label}` into `{base}`, oldest first:
    execution time does not extend the editing budget). Record the culprit, failure and attempt in the progress
    file's note. A failed repair check or an exhausted budget means leave that PR out now, report it in
    `left_out` with actionable evidence, and continue with the healthy remainder. Never restart the same repair
-   budget for another symptom of that PR. If attribution is uncertain, do at most three isolation probes;
-   leave the unresolved suspect group out rather than looping. Do not omit prerequisites of included PRs.
+   budget for another symptom of that PR. If attribution is uncertain, bisect instead of probing PRs one at a
+   time: rebuild with half of the suspect PRs (keeping prerequisites together), run only the failing check, and
+   keep halving the half that fails; at most three bisection builds, then leave the unresolved suspect group out
+   rather than looping. Do not omit prerequisites of included PRs.
    Preserve generated assets and diagnostics before constructing the remaining candidate; use a separate
    owned candidate if rebuilding in place would discard work. Never reset a checkout with active processes
    or a heavy lease. Revalidate the final candidate: results from an earlier source/content tree do not count.
@@ -45,6 +47,11 @@ PRs labelled `{label}` into `{base}`, oldest first:
    Excluding a PR from the progress list alone does not remove its code: verify the remaining candidate also
    excludes its changes and excludes or defers PRs depending on it. Do not land while any required check is
    failed, waiting, running or todo. Preserve the original failure evidence in the note and final result.
+   Time box: once validation has run 90 minutes since the first build passed, start no new repair. Shrink the
+   candidate to the PRs whose checks have already passed, revalidate that candidate, land it, and defer the rest
+   with `disposition: deferred`. A PR whose named acceptance cannot run on this PC (a second PC, a missing input
+   folder, a manual or packaged check with no harness) is deferred at once with that reason, without spending
+   build or diagnosis time on it; Fletchery parks a PR deferred twice at one head until it changes.
    Never skip, disable or weaken a test to get green. Fletchery holds excluded heads out of later rounds and
    sends worker PRs to the bounded fixer queue; a changed head becomes eligible again.
 
