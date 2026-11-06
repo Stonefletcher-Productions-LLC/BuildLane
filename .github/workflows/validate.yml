@@ -102,6 +102,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_merge_priority.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_balance.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_merge_status.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_routing_policy.py

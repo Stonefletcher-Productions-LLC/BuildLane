@@ -433,3 +433,64 @@ def validation_plan(files: list[str], base: str = "Test-Staging") -> str:
             "shared systems, test/runner changes, mixed or unknown files: Game. Full remains required nightly and "
             "before release. Keep the project's named acceptance tests and strict NavCheck where required. "
             "Changed PR paths (recheck after integration fixes): " + ", ".join(shown) + suffix)
+
+
+# ---- balance: value order and parking (loop.py) ----
+
+PARK_AFTER = 2          # deferrals at one head before the PR stops taking a round slot
+PARK_HOURS = 72         # a parked PR is tried again after this long even with no new commits
+_UNTRIED = re.compile(r"\bnot\s+(?:yet\s+)?(?:attempted|reached|run)\b|\bunattempted\b|\binterrupt", re.I)
+
+
+def by_value(ready: list, tasks: dict) -> list:
+    """Most queued work unblocked first, then oldest: a PR that sets 14 tasks moving goes before one that sets none."""
+    import graph
+
+    def value(p) -> int:
+        linked = [t for t in tasks.values() if t.pr_number == p.number or p.head == t.branch
+                  or re.search(r"\bcloses\s+#" + str(t.number) + r"\b", p.body or "", re.I)]
+        return max((len(graph.unblocks(tasks, t.number)) for t in linked), default=0)
+    return sorted(ready, key=lambda p: (-value(p), p.number))
+
+
+def record_deferrals(parked: dict, batch: list, deferred: list, round_no, at: str) -> list[int]:
+    """Count deferrals per PR head; returns the PRs that just became parked. A deferral because the round never got
+    to the PR (not attempted, interrupted) is not evidence that this PC cannot accept it, so it does not count."""
+    heads = {p.number: p.head_sha for p in batch}
+    newly = []
+    for item in deferred or []:
+        if not isinstance(item, dict) or not str(item.get("pr", "")).isdigit():
+            continue
+        number = int(item["pr"])
+        why = str(item.get("why", ""))
+        if number not in heads or _UNTRIED.search(why):
+            continue
+        old = parked.get(str(number)) or {}
+        count = old.get("count", 0) + 1 if old.get("head") == heads[number] else 1
+        parked[str(number)] = {"head": heads[number], "count": count, "why": why[:1000], "round": round_no,
+                               "at": at, "parked": old.get("parked") or (at if count >= PARK_AFTER else "")}
+        if count >= PARK_AFTER and not old.get("parked"):
+            newly.append(number)
+    return newly
+
+
+def not_parked(ready: list, parked: dict, now: datetime | None = None) -> list:
+    """Drop parked PRs whose head is unchanged; a new head or PARK_HOURS unparks (the entry is removed)."""
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for p in ready:
+        entry = parked.get(str(p.number))
+        if entry and entry.get("head") != p.head_sha:
+            parked.pop(str(p.number), None)
+            entry = None
+        if entry and entry.get("parked"):
+            try:
+                since = datetime.fromisoformat(str(entry["parked"]).replace("Z", "+00:00"))
+            except ValueError:
+                since = now
+            if now - since < timedelta(hours=PARK_HOURS):
+                continue
+            parked.pop(str(p.number), None)
+        out.append(p)
+    return out
+

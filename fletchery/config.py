@@ -48,7 +48,8 @@ WORKER_KEYS = {
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
     "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
     "mergeRoundMax": "merge_round_max", "roundAgent": "merge_agent", "mergeNotes": "merge_notes",
-    "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "agents": "agents", "routing": "routing", "escalate": "escalate",
+    "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "roundSharedSessions": "round_shared_sessions",
+    "mergeBacklogHigh": "merge_backlog_high", "mergeBacklogLow": "merge_backlog_low", "agents": "agents", "routing": "routing", "escalate": "escalate",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -107,12 +108,19 @@ class Config:
     # merge rounds (rounds.py): Fletchery merges, builds, tests and lands `ready` PRs by itself, one round at a time
     merge_rounds: bool = False
     merge_label: str = "ready"               # PRs with this label into the base branch go in the next round
-    merge_round_max: int = 12                # at most this many PRs per round, oldest first
+    merge_round_max: int = 6                 # at most this many PRs per round, most-unblocking first
     merge_agent: str = ""                    # profile `roundAgent`: the agent that runs rounds; "" = Best active worker (the strongest available one). The old `mergeAgent` key is ignored.
     merge_notes: str = ""                    # a file with the project's round instructions when the repo has no .fletchery/merger.md
     merge_budget_usd: float = 60.0
     merge_max_turns: int = 600
     merge_retry_minutes: float = 45          # after a round that landed nothing, wait this long before trying the same PRs
+    # balance (loop.py): a running round no longer stops every new session. Agents on other accounts keep working;
+    # the round agent's own account (its plan's limits) starts at most this many new sessions. -1 = stop all new work.
+    round_shared_sessions: int = 2
+    # backpressure: new feature tasks pause once this many of the workers' PRs wait labelled for merging, and resume
+    # at the low mark. 0 = two rounds' worth (high) and one round's worth (low). Fixers and repairs always run.
+    merge_backlog_high: int = 0
+    merge_backlog_low: int = 0
     # the coding agents (agents.py): [{"name", "kind": claude|codex|opencode, "model", "tier", "vendor", "enabled",
     # "maxParallel", "keyEnv"}]; None = Claude only. `routing` says which agent takes which difficulty.
     agents: list = None
