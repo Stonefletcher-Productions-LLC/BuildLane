@@ -107,6 +107,31 @@ class InterruptedRoundTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rt.calls),before)
         self.assertIn('heads changed',engine.merge_why)
 
+    async def test_changed_deferred_pr_leaves_the_resume_and_candidate_resumes(self):
+        engine,gh,rt=await self.stopped()
+        engine.merge_now()
+        engine.state.merge_resume['prs']={'13':'3'*40,'12':'2'*40}
+        engine.state.merge_resume['progress']['prs']=[13]
+        gh.prs[0].head_sha='f'*40  # #12 was deferred, not in the candidate
+        rt.script[('merger',0)]={'state':'landed','landed_pr':77,'merged':[13],'left_out':[],'summary':'Saved candidate landed'}
+        with patch('rounds.prepare_worktree', side_effect=AssertionError('must never reset')), \
+             patch('recovery.resume_worktree', return_value=Path(engine.state.merge_resume['checkpoint']['worktree'])):
+            await engine.once()
+        self.assertEqual(engine.state.merge_last['merged'],[13])
+        self.assertEqual(engine.state.merge_resume,{})
+
+    async def test_candidate_landed_by_hand_drops_the_saved_round(self):
+        engine,gh,rt=await self.stopped()
+        engine.merge_now()
+        engine.state.merge_resume['prs']={'13':'3'*40,'12':'2'*40}
+        engine.state.merge_resume['progress']['prs']=[13]
+        gh.prs=[p for p in gh.prs if p.number!=13]
+        gh.api=Mock(side_effect=lambda path,*a,**k: {'state':'closed','merged':True} if path.endswith('/pulls/13') else {})
+        await engine.once()
+        self.assertEqual(engine.state.merge_resume,{})
+        self.assertNotIn('heads changed',engine.merge_why)
+        self.assertNotIn('Saved merge candidate waits',engine.merge_why)
+
     async def test_startup_removes_only_legacy_deferred_exclusions(self):
         engine, gh, rt = self.engine()
         engine.state.merge_last={'round':23}
