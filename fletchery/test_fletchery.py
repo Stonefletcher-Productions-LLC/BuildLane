@@ -1168,6 +1168,13 @@ seeds = {n: sc[n]["skills"]["cpp"]["score"] for n in sc}
 assert seeds == {"claude": 91, "haiku": 64, "deepseek-pro": 66, "deepseek": 56, "mystery": 50}, seeds
 assert sc["haiku"]["seed"]["from"] == "benchmarks" and sc["mystery"]["seed"]["from"] == "strength"
 assert sc["haiku"]["cost"] > sc["deepseek-pro"]["cost"] > sc["claude"]["cost"]
+# cheap first: by default a first try may use an agent 8 points under the bar, so flash (56) is able on medium C++
+c = sp.choose("Clock 12/24h", "Change LSClock.cpp.", [])
+assert c.agent == "haiku" and "first try 52" in c.why and "deepseek 56" in c.why, c.why
+sp.specs["haiku"].enabled = False
+assert sp.choose("Clock 12/24h", "Change LSClock.cpp.", []).agent == "deepseek"
+sp.specs["haiku"].enabled = True
+sp.routing["firstTryMargin"] = 0  # the full bar, as retries use
 c = sp.choose("Clock 12/24h", "Change LSClock.cpp.", [])
 assert c.agent == "haiku" and c.skill == "cpp" and "bar 60" in c.why, c.why
 assert sp.choose("Save v12 migration", "Bump the save version; migration for old saves.", []).agent == "claude"

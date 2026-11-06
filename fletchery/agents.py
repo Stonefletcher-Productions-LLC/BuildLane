@@ -361,13 +361,16 @@ class AgentPool:
             free = preferred_free
         if not free:
             return None
-        able = [n for n in free if sc[n]["skills"][skill]["score"] >= bar]
+        # Cheap first: a first attempt may go to the cheapest agent within `firstTryMargin` points under the bar; a
+        # failed attempt escalates under the full bar (escalate), so a costly model is spent only where it is needed.
+        margin = max(0, int(self.routing.get("firstTryMargin", scores.FIRST_TRY_MARGIN)))
+        able = [n for n in free if sc[n]["skills"][skill]["score"] >= bar - margin]
         kind = scores.SKILL_NAMES[skill]
         if able:
             pick = max(able, key=lambda n: (sc[n]["cost"] - scores.BUSY_PENALTY * self.busy.get(n, 0),
                                             sc[n]["skills"][skill]["score"]))
             note = (f"{level}, {kind} ({why}; {skill_why}): {pick} scores {sc[pick]['skills'][skill]['score']} "
-                    f"(bar {bar}) and is the cheapest that clears it")
+                    f"(bar {bar}{f', first try {bar - margin}' if margin else ''}) and is the cheapest that clears it")
             others = [n for n in able if n != pick]
             if others:
                 note += "; also able: " + ", ".join(f"{n} {sc[n]['skills'][skill]['score']}" for n in others[:3])

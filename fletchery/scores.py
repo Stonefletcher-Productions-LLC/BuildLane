@@ -23,6 +23,7 @@ SKILL_NAMES = {"cpp": "C++ / Unreal", "scripts": "Python & tools", "ui": "UI", "
 BARS = {"easy": 45, "medium": 60, "hard": 75}
 PRIOR_WEIGHT = 6   # how many tasks the seed counts as
 PASS_BONUS, FAIL_MALUS = 15, 25
+FIRST_TRY_MARGIN = 8  # a first attempt may use an agent this many points under the bar; retries need the bar
 BUSY_PENALTY = 10  # cost points per session an agent is already running, so work spreads out
 
 # signs of what kind of task it is; the kind with most hits wins, ties go to the profile's defaultSkill
