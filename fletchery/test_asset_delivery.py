@@ -38,10 +38,11 @@ class AssetRepairDeliveryTests(unittest.TestCase):
         def deliver(*args, **kwargs):
             self.assertEqual(self.repo.ensure_repair_checkout.call_count, 2)
             return Mock(returncode=0, stdout="", stderr="")
-        with patch("repo.subprocess.run", side_effect=deliver) as run:
+        with patch("repo.subprocess.run", side_effect=deliver) as run,                 patch("repo.shutil.which", side_effect=lambda name: None if name == "pwsh" else r"C:\WPS\powershell.exe"):
             self.push()
-        self.assertEqual(run.call_args.args[0], ["pwsh", "-NoProfile", "-File", str(self.helper),
-                                                "-Branch", "feature-hair", "-Remote", "origin"])
+        # No PowerShell 7 on the PC: Windows PowerShell runs the helper (2026-11-06: bare "pwsh" was WinError 2).
+        self.assertEqual(run.call_args.args[0], [r"C:\WPS\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                                "-File", str(self.helper), "-Branch", "feature-hair", "-Remote", "origin"])
         self.assertEqual(run.call_args.kwargs["cwd"], self.wt)
         self.repo.git.assert_any_call("merge-base", "--is-ancestor", "a" * 40, "HEAD", cwd=self.wt)
         self.assertFalse(any(call.args[0] == "push" for call in self.repo.git.call_args_list))
