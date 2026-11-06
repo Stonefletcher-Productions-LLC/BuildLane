@@ -1172,9 +1172,13 @@ $("activityMount").append($("lowerBox"));
 $("sidebarBottom").prepend($("settingsBtn"));
 const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "build", log: "activity", lowerBox: "activity"};
 const viewNames = ["overview", "tasks", "merge", "build", "agents", "activity"];
+let currentView = "";
 function showView(name, remember = true) {
   name = viewAliases[name] || name;
   if (!viewNames.includes(name)) return;
+  // A different view opens at its top, not at the previous view's scroll position.
+  const changed = currentView && currentView !== name;
+  currentView = name;
   if (name === "merge") $("mergePageMount").append($("mergeCard"));
   else if (name === "overview") $("overviewGrid").insertBefore($("mergeCard"), $("workersMount").nextSibling);
   document.querySelectorAll(".view").forEach(el => { el.hidden = el.id !== "view-" + name; });
@@ -1182,6 +1186,7 @@ function showView(name, remember = true) {
     if (a.dataset.view === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   if (remember) { try { localStorage.setItem("fletchery.view", name); } catch (_) {} }
+  if (changed) window.scrollTo({left: 0, top: 0, behavior: "instant"});
 }
 function routeView() { showView(location.hash.slice(1)); }
 addEventListener("hashchange", routeView);

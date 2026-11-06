@@ -168,6 +168,14 @@ const server = http.createServer(async (req, res) => {
     await page.setViewportSize({width:420,height:900});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true,'expanded merge fits narrow windows');
     await page.screenshot({path:path.join(out,'merge-expanded-mobile.png'),fullPage:true});
+    // Another view opens at its top, not at this view's scroll position.
+    await page.evaluate(() => window.scrollTo(0, 200));
+    assert.ok(await page.evaluate(() => scrollY > 0), 'the merge view is tall enough to scroll in a narrow window');
+    // Click in place: Playwright's own click would scroll the sidebar link into view first.
+    await page.evaluate(() => document.querySelector('[data-view="tasks"]').click());
+    assert.ok(await page.evaluate(() => document.documentElement.scrollHeight - innerHeight >= 200), 'the tasks view can scroll as far');
+    assert.equal(await page.evaluate(() => scrollY), 0, 'switching views starts at the top');
+    await page.locator('[data-view="merge"]').click();
     await page.setViewportSize({width:1400,height:1000});
     await page.locator('[data-view="overview"]').click();
     await page.selectOption('#themeChoice', 'dark');
