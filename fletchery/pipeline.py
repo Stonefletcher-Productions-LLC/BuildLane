@@ -391,12 +391,15 @@ def fixer_agent(ctx: Context, task: Task, attempt: int) -> str | None:
     pool = ctx.agents
     if pool is None:
         return None
-    from agents import classify
+    from agents import classify, override
     import scores
     level, _ = classify(task.title, task.body, task.labels, pool.routing.get("hardPatterns"),
                         pool.routing.get("easyPatterns"), len(task.depends_on), pool.routing.get("hardScore"))
     skill, _ = scores.classify_skill(task.title, task.body, task.labels, pool.routing.get("defaultSkill", "cpp"))
-    agent = ctx.task_agents.get(str(task.number))
+    # An `agent:` label or line on the issue wins over the agent that wrote the branch, as it does for workers; a second
+    # attempt still escalates from it. While it is off or paused, the router's choice also waits for it.
+    forced = override(task.body, task.labels)
+    agent = forced if forced in pool.specs else ctx.task_agents.get(str(task.number))
     if agent and attempt >= 2:
         agent = pool.escalate(agent, "fixer", skill, level) or agent
     if (agent and pool.available(agent, "fixer")

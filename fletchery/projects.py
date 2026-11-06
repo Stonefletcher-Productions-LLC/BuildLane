@@ -123,6 +123,14 @@ FIELDS = [
     {"group": "Merging", "key": "merge_agent", "label": "Agent for rounds", "type": "select", "options_from": "agents",
      "help": "Best active worker picks the strongest agent that is on, signed in and not at a usage limit, each round. "
              "Pick one to always use it while it is available."},
+    {"group": "Merging", "key": "merge_backlog_high", "label": "Pause new tasks at this many PRs waiting", "type": "int", "min": 0,
+     "help": "New feature tasks wait while this many workers' PRs are labelled for merging, until the low mark. "
+             "0: two rounds' worth. Fixes always run."},
+    {"group": "Merging", "key": "merge_backlog_low", "label": "Start new tasks again at", "type": "int", "min": 0,
+     "advanced": True, "help": "0: one round's worth."},
+    {"group": "Merging", "key": "round_shared_sessions", "label": "New sessions on the round's account during a round",
+     "type": "int", "min": -1, "advanced": True,
+     "help": "Other accounts keep working during a round. -1 stops all new work while a round runs."},
     {"group": "Merging", "key": "merge_notes", "label": "Round instructions file", "type": "path", "advanced": True,
      "help": "How a round builds and tests, when the repository has no .fletchery/merger.md."},
     {"group": "Merging", "key": "merge_budget_usd", "label": "Per round ($)", "type": "float", "min": 0, "advanced": True},
