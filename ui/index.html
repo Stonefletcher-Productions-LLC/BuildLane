@@ -1979,6 +1979,9 @@ function modelRow(a, A) {
       ${S ? scoreRows(a) : ""}
       <div class="rates">${rates.length ? "Passed: " + rates.join(", ") : "No finished tasks yet"}${spent}${a.levels ? ` · tasks: ${a.levels.map(esc).join(", ")}` : ""}${a.roles ? ` · roles: ${a.roles.map(esc).join(", ")}` : ""} · vendor ${esc(a.vendor)} · runs on <a href="#" data-acct-link="1">${esc(runs)}</a></div>
       <div class="row2">
+        <span class="seg" role="group" aria-label="${esc(a.name)} takes these tasks">Tasks:${["easy", "medium", "hard"].map(l => {
+          const on = !a.levels || a.levels.includes(l);
+          return ` <button type="button" data-ag-level="${l}" data-ag="${esc(a.name)}" aria-pressed="${on}" title="${on ? "Takes" : "Doesn't take"} ${l} tasks; press to change">${l}</button>`; }).join("")}</span>
         ${S ? `<button type="button" data-ag-scores="${esc(a.name)}">Edit scores</button>` : ""}
         <button type="button" class="linkbtn" data-ag-remove="${esc(a.name)}">Remove</button>
       </div></div></details>`;
@@ -2299,6 +2302,11 @@ function agentClick(ev) {
     if (b.getAttribute("aria-pressed") === "true") return;
     if (b.dataset.agAuth === "key" && !confirm(`Run ${b.dataset.ag} on its API key? Its sessions are then billed per token. Running sessions finish as they are.`)) return;
     agentCall("/api/agents/auth", {name: b.dataset.ag, mode: b.dataset.agAuth});
+  } else if (b.dataset.agLevel) {
+    const row = [...b.parentElement.querySelectorAll("[data-ag-level]")];
+    const levels = row.filter(x => (x === b) !== (x.getAttribute("aria-pressed") === "true")).map(x => x.dataset.agLevel);
+    if (!levels.length) { alert("An agent needs at least one task level. Switch it off instead to stop new work."); return; }
+    agentCall("/api/agents/routing", {agents: [{name: b.dataset.ag, levels: levels.length === 3 ? null : levels}]});
   } else if (b.dataset.agScores) {
     openScores(b.dataset.agScores);
   } else if (b.dataset.agToggle) {

@@ -998,6 +998,14 @@ t40 = T(40, "y")
 assert fixer_agent(ctx, t40, 1) == "deepseek" and fixer_agent(ctx, t40, 2) == "deepseek-pro"
 ctx.agents.set_enabled("deepseek", False)
 assert fixer_agent(ctx, t40, 1) == "claude", "the writer is off: the router's pick for the task (medium -> claude)"
+# an agent: label beats the branch's writer, on every attempt; while it can't run, the fix waits
+ctx.agents.set_enabled("deepseek", True)
+t41 = T(41, "y"); t41.labels.append("agent:claude")
+ctx.task_agents["41"] = "deepseek"
+assert fixer_agent(ctx, t41, 1) == "claude"
+ctx.agents.pause("claude", 30, "fixture", shared=False)
+assert fixer_agent(ctx, t41, 1) is None
+ctx.agents.paused.clear()
 
 # a reviewer that can't run (a model its CLI refuses) is paused and another reviewer takes the task; it isn't blocked
 fakes = {"claude": FakeRuntime(), "deepseek": FakeRuntime(),
