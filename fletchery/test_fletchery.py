@@ -946,6 +946,15 @@ assert fm.state.agent_paused is ctx.agents.paused
 fm2, out2 = run_once(ctx, tmp)
 assert out2[0].result == "pr" and out2[0].agent == "deepseek-pro", out2
 
+# Full rank slots on another account must not turn a provider quota into a global pause.
+from pipeline import Limited, Outcome, _paused  # noqa: E402
+ctx, _ = multi_ctx({}, {})
+ctx.agents.worker_limits = {"low": 0, "medium": 0, "high": 0}
+assert not ctx.agents.any_available(besides="deepseek")
+outcome = Outcome(32, "requeue")
+assert _paused(ctx, outcome, Limited("provider quota", 0, "limited", "deepseek"), "#32")
+assert outcome.result == "agent_paused" and "claude" not in ctx.agents.paused
+
 # an asked-for agent that is off: the task waits, saying why, instead of starting and stopping
 ctx, tmp = multi_ctx({33: T(33, "x", "Agent: codex")}, {})
 fm, out = run_once(ctx, tmp)

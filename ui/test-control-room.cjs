@@ -425,6 +425,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#planTarget').isVisible(), false);
     await page.locator('#planSubmit').click();
     await page.waitForFunction(() => !document.querySelector('#planDlg').open);
+    assert.match(await page.locator('#overviewStats').textContent(), /Merge round 16 running \/ Package 0\.3\.7 queued/);
+    assert.match(await page.locator('#planRows').textContent(), /Waiting for its merge window to land/);
     assert.equal(requests.at(-1).body.after, mergeId);
     assert.equal(requests.at(-1).body.target, '');
     assert.equal(requests.at(-1).token, 'fixture-token');

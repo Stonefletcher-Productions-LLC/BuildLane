@@ -1309,7 +1309,7 @@ function renderStatus(d) {
   else if (d.restarting) { hb.innerHTML = `Restarting. <span>${esc(d.restarting)}: running sessions finish first, then Fletchery starts again.</span>`; hb.classList.add("show"); }
   else if (d.setup_needed) { hb.innerHTML = `Set up your project. <span>Fletchery doesn't know which GitHub repository to work on yet. <button type="button" class="linkbtn" onclick="openSettings('projects')">Open Settings</button></span>`; hb.classList.add("show"); }
   else if (d.held) { hb.innerHTML = "Paused. <span>Running work finishes; nothing new starts until you press Resume.</span>"; hb.classList.add("show"); }
-  else if (d.limit_until) { hb.innerHTML = `Usage limit reached. <span>Nothing new starts until ${esc(clockTime(d.limit_until))}; queued work waits and keeps what it had done.</span>`; hb.classList.add("show"); }
+  else if (d.limit_until) { hb.innerHTML = `Feature workers paused by a usage limit. <span>Feature work can resume at ${esc(clockTime(d.limit_until))}. Merge windows and packages have separate queues.</span>`; hb.classList.add("show"); }
   else if (mergeWait) { hb.innerHTML = `${esc(mergeWait.title)}. <span>${esc(mergeWait.detail)}</span>`; hb.classList.add("show"); }
   else hb.classList.remove("show");
   if (d.sync_error) {
@@ -1490,7 +1490,14 @@ function renderOverview(d) {
   const blocked = d.tasks.filter(t => t.status === "blocked");
   const queued = d.tasks.filter(t => t.status === "queued");
   const prs = d.merge ? d.merge.length : d.tasks.filter(t => t.status === "pr").length;
-  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>`;
+  const integrations = (d.integration_queue?.requests || []).filter(r => ["queued", "draining", "running", "blocked"].includes(r.state));
+  const merge = integrations.find(r => r.kind === "merge");
+  const packageJob = integrations.find(r => r.kind === "package");
+  const round = d.merge_auto?.running?.round;
+  const mergeStatus = round ? `Merge round ${round} running` : merge ? `Merge window ${merge.state}` : "";
+  const packageStatus = packageJob ? `Package ${packageJob.version} ${packageJob.state}` : "";
+  const integrationStatus = [mergeStatus, packageStatus].filter(Boolean).join(" / ");
+  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>${integrationStatus ? `<a href="#merge">${esc(integrationStatus)}</a>` : ""}`;
   $("navTasks").textContent = blocked.length || queued.length || prs || "";
   $("navTasks").hidden = !blocked.length && !queued.length && !prs;
   $("navTasks").classList.toggle("attention", !!blocked.length);
@@ -2016,7 +2023,8 @@ function renderPlans(d) {
     const cancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started ? `<button type="button" data-plan-cancel="${esc(r.id)}">Cancel request</button>` : "";
     const run = r.receipt && r.receipt.worker && r.receipt.worker.runId;
     const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(d.repo_url)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
-    return `<div class="mauto"><b>${esc(label)}</b> · ${esc(r.state)}<br><small>No earlier than ${esc(when)}</small><p>${esc(r.reason || "Queued")}</p>${r.target ? `<small>Source: ${esc(r.target)}</small>` : ""}${r.output ? `<p>Package: ${esc(r.output)}</p>` : ""}${link}${cancel}</div>`;
+    const reason = r.reason || (r.after && !r.target && r.state === "queued" ? "Waiting for its merge window to land." : "Queued");
+    return `<div class="mauto"><b>${esc(label)}</b> · ${esc(r.state)}<br><small>No earlier than ${esc(when)}</small><p>${esc(reason)}</p>${r.target ? `<small>Source: ${esc(r.target)}</small>` : ""}${r.output ? `<p>Package: ${esc(r.output)}</p>` : ""}${link}${cancel}</div>`;
   }).join("") || "<p>No merge windows or packages queued.</p>";
 }
 function openPlan(kind) {
