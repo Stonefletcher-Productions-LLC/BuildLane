@@ -306,6 +306,19 @@ const server = http.createServer(async (req, res) => {
     delete data.merge_auto.resume;
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
     await page.locator('[data-view="overview"]').click();
+    // Results read as words on Overview too, and a PR fixer is not counted as writing a task.
+    const savedHistory = data.history, savedLive = data.live;
+    data.history = [{task: 901, result: 'gave_up', at: now, agent: 'opus'}, {task: 902, result: 'some_new_code', at: now}];
+    data.live = [{task: 903, title: 'Fix a PR', kind: 'fix', stage: 'Fixing PR #1041', since: now, agent: 'opus'},
+      {task: 904, title: 'Write a task', kind: 'task', stage: 'Writing', since: now}];
+    await page.evaluate(d => render(d), data);
+    const recent = await page.locator('#recentPreview').innerText();
+    assert.match(recent, /Gave up/);
+    assert.match(recent, /Some new code/);
+    assert.doesNotMatch(recent, /_/);
+    assert.match(await page.locator('#state').innerText(), /2 of \d+ workers busy · 1 on tasks, 1 fixing a PR/);
+    assert.match(await page.locator('#slots').innerText(), /Choosing an agent/);
+    data.history = savedHistory; data.live = savedLive;
     // Worker availability explains merge scheduling, without presenting it as a manual pause.
     data.live = [];
     data.merge_auto.priority = true;
