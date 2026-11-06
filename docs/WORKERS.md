@@ -58,6 +58,9 @@ Lane.
   repository root (forward slashes).
 - `run` is one command or a list. Commands run from the change's folder; a check script the branch does not have yet
   runs from your project's main checkout.
+- A task can add its own checks with `Gate:` lines in the issue. A `.py` path runs with Python, `node …` or `python …`
+  runs as written, a read-only git check (`git diff --check`, `git status`, `git log`, `git show`, `git ls-files`,
+  `git grep`) runs as written, and anything else runs with `node`. `Gate: none` adds nothing.
 - On Windows, write `python`, not `python3`: Fletchery runs Python checks with its own Python either way.
 
 A good first gate is a small script that looks for your conventions' most common slips (a banned word, text written

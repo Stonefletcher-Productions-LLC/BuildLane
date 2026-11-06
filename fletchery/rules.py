@@ -47,8 +47,25 @@ class Rules:
             if e.lower().rstrip(".") in NO_GATE:
                 continue  # "Gate: none" means no extra check; it used to run `node none` and block (LifeShare #846-#848)
             if e and e not in cmds:
-                cmds.append(e if e.split()[0] in ("python3", "python", "node") else f"python3 {e}" if e.endswith(".py") else f"node {e}")
+                cmds.append(gate_command(e))
         return cmds
+
+
+# Read-only git checks an issue may name as a gate as they are ("Gate: git diff --check"). Anything else that is not
+# already a python or node command is treated as a script path, as before.
+GIT_CHECKS = {"diff", "status", "log", "show", "ls-files", "grep", "check-attr", "check-ignore", "rev-parse", "merge-base"}
+
+
+def gate_command(e: str) -> str:
+    """An issue's `Gate:` line as a command. It used to prefix `node` to everything that was not a .py script, so
+    `Gate: git diff --check` ran `node git diff --check` and failed every fix (LifeShare PR #1035, 2026-11-06)."""
+    words = e.split()
+    first = words[0].lower()
+    if first in ("python3", "python", "py", "node"):
+        return e
+    if first in ("git", "git.exe") and len(words) > 1 and words[1] in GIT_CHECKS:
+        return e
+    return f"python3 {e}" if first.endswith(".py") else f"node {e}"
 
 
 def load(*roots: Path | str | None) -> Rules:
