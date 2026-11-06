@@ -1,5 +1,37 @@
 # Plan feature work, merge windows and packages
 
+## Follow work in the dashboard
+
+**Overview** puts **All workers** beside the current merge summary. **Round
+details →** opens **Merging** for the full checklist, logs, and scheduled windows.
+On a narrow window, the cards stack.
+
+The round summary shows one progress bar for completed required steps and
+labels the remaining steps as **running**, **waiting**, **queued**, or
+**failed**. The current step and **Next** name the work above and below the bar.
+Previous-candidate steps stay in the checklist for context.
+
+In **Merging**, expand a row under **Round progress**. **Progress** shows the
+substeps Fletchery has received. While **Merge the PRs into the round branch**
+runs, each PR has its own row and the counter shows how many are integrated.
+Running work has a spinner at the round, step, and substep levels. With reduced
+motion enabled, the spinner stays still and the text still shows the state.
+**Activity** shows recent log lines. **Files** links to available output logs.
+
+Fletchery uses the merge agent's reported substeps when available and reads
+the current round's Git logs as a fallback. A reported conflict waits for
+resolution. An integrated PR still needs the round's validation before landing.
+
+![Expanded Progress tab showing four PRs, one integrated and one running](images/fletchery/merge-pr-progress.png)
+
+**Merge windows** groups requests under **In progress**, **Needs attention**,
+and **Upcoming**. Upcoming requests show their earliest start, and their PR lists
+expand on demand. Open **History** for completed and cancelled requests.
+**Cancel request** asks for confirmation. The **Building** view uses the same
+grouping for packages.
+
+![Planned merge windows with current work and upcoming requests](images/fletchery/merge-windows.png)
+
 ## Worker capacity
 
 Use **All workers** at the top of Overview to choose 0–30 normal jobs. Changing
@@ -136,7 +168,9 @@ X-Fletchery-Token protections apply. Status exposes `integration_queue` and
 
 Run `python fletchery/test_plans.py`, `python fletchery/test_worker_ranks.py`, the
 existing engine/recovery suites and `node ui/test-control-room.cjs`. UI tests use
-an isolated headless fixture and synthetic data, never the user's desktop or a
-live release request.
+an isolated headless fixture with synthetic data. To regenerate the screenshots,
+run `npm ci --prefix ui` followed by `npm test --prefix ui`. Set
+`FLETCHERY_SCREENSHOTS` to choose an output folder. The relevant outputs are
+`overview-light.png`, `merge-pr-progress-dark.png`, and `merge-windows-dark.png`.
 
 If an interrupted round lands through a separate recovery, the CLI recovery route can reconcile it using the round number and landing PR. Planned windows or a merge hold must be active. Fletchery verifies the landing branch and every saved PR head with GitHub before clearing recovery.

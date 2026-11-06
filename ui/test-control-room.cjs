@@ -115,13 +115,39 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#mergeCard .merge-aside'), true);
     assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
-    assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4/);
+    assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4 steps complete[\s\S]*1 running · 1 queued/);
+    const roundMeter = page.getByRole('progressbar', {name: 'Required round steps complete'});
+    assert.equal(await roundMeter.getAttribute('value'), '2');
+    assert.equal(await roundMeter.getAttribute('max'), '4');
     const activeStep=page.locator('.merge-step').nth(2);
     assert.equal(await activeStep.locator('.merge-step-badge').innerText(), 'Running');
     assert.equal(await activeStep.locator('summary').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(25, 60, 50)');
     assert.equal(await activeStep.getAttribute('open'), '', 'current step expands automatically');
     assert.match(await activeStep.innerText(), /M4b Reconnect/);
     assert.equal(await page.locator('#mergeNow script').count(), 0, 'log lines are text, never markup');
+    assert.equal(await page.locator('#mergeNow .merge-current .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('summary .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('.check-running .merge-spinner').count(), 1);
+    assert.equal(await activeStep.locator('.check-done .merge-spinner').count(), 0);
+    const testMergeView = data.merge_view;
+    data.merge_view = {...testMergeView, prs: [1030, 1031, 1032, 1034],
+      activity: {...testMergeView.activity, source: 'Saved/MergeRound16/merge-1031.log'}, steps: [{
+      name: 'Merge the PRs into the round branch', state: 'running', check_kind: 'merge_prs',
+      checks: [{name: 'PR #1030', state: 'done'}, {name: 'PR #1031', state: 'running'},
+        {name: 'PR #1032', state: 'waiting', message: 'Git reported a conflict.'}, {name: 'PR #1034', state: 'todo'}],
+    }, {name: 'Build', state: 'todo'}]};
+    await page.evaluate(next => {last = next; render(next);}, data);
+    const merging = page.locator('.merge-step').first();
+    assert.match(await merging.innerText(), /1 of 4 PRs integrated/);
+    assert.match(await merging.innerText(), /Git reported a conflict/);
+    assert.equal(await merging.locator('progress').getAttribute('value'), '1');
+    assert.equal(await merging.locator('.check-waiting .merge-spinner').count(), 0);
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    assert.equal(await merging.locator('summary .merge-spinner').evaluate(el => getComputedStyle(el).animationName), 'none');
+    await page.emulateMedia({reducedMotion: 'no-preference'});
+    await page.locator('#mergeNow').screenshot({path: path.join(out, 'merge-pr-progress-dark.png')});
+    data.merge_view = testMergeView;
+    await page.evaluate(next => {last = next; render(next);}, data);
     await activeStep.locator('[data-step-tab="activity"]').click();
     await page.evaluate(() => render(last));
     assert.equal(await activeStep.locator('[data-step-tab="activity"]').getAttribute('aria-pressed'), 'true');
@@ -238,12 +264,15 @@ const server = http.createServer(async (req, res) => {
     // A later failure must stay visible even with an older backend.
     data.merge_auto.running = {round: 20, agent: 'codex-sol', started: now, prs: [1041]};
     data.merge_view.state = 'running';
-    data.merge_view.steps = [{name: '<Package>', state: 'running'}, {name: 'Game specs', state: 'failed'}];
+    data.merge_view.steps = [{name: '<Package>', state: 'running'}, {name: 'Game specs', state: 'failed', checks: [{name: 'RunSpecs', state: 'running'}]}];
     await page.evaluate(next => { last = next; render(next); }, data);
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed');
     assert.match(await page.locator('.round-status').innerText(), /Game specs[\s\S]*failed/);
     assert.match(await page.locator('.round-recovery').innerText(), /Reported activity: <Package>[\s\S]*does not clear/);
     assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
+    const failedStep = page.locator('.msteps > li.failed .merge-step');
+    assert.match(await failedStep.innerText(), /RunSpecs[\s\S]*Final result not reported/);
+    assert.equal(await failedStep.locator('.merge-spinner').count(), 0, 'stale child reports do not spin in a failed step');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
     data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
       {name: 'Game specs', state: 'running', checks: [

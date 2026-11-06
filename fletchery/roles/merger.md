@@ -65,7 +65,10 @@ PRs labelled `{label}` into `{base}`, oldest first:
    (`name`, `state`, optional measured duration). Record outcomes as passed, failed, pending or reused in the message;
    do not invent progress percentages or treat capture-only output as visual approval. Keep logs under
    `Saved/MergeRound{round}/` with bounded readable START/PASS/FAIL lines for each subcheck. Update after each
-   subcheck or phase transition, and record the next automatic action when waiting. Required failed steps stay failed
+   subcheck or phase transition, and record the next automatic action when waiting. In "Merge the PRs into the round
+   branch", use one check per PR named "PR #123". List pending PRs as todo, set the current PR to running before its merge
+   or conflict resolution, and record the result immediately. Include the reason when a PR is deferred. Keep the current
+   candidate PR numbers in the top-level prs list. Required failed steps stay failed
    until a matching repaired candidate passes; another running test never clears the failure.
 
 {freeze}
