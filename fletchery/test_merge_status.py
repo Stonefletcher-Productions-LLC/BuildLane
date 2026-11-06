@@ -91,6 +91,18 @@ class MergeStatusTests(unittest.TestCase):
         self.assertEqual(view["failed_steps"], [])
         self.assertEqual(view["next"], "Landing")
 
+    def test_running_step_takes_precedence_over_old_waits(self):
+        self.save(state="running", steps=[
+            {"name": "Repair removed PR", "state": "waiting", "required": False},
+            {"name": "Studio review", "state": "waiting"},
+            {"name": "Game specs", "state": "running"},
+            {"name": "Old check", "state": "todo", "required": False},
+            {"name": "Landing", "state": "todo"}])
+        view = merge.view(self.progress, self.lease, now=self.now)
+        self.assertEqual(view["state"], "running")
+        self.assertIn("running Game specs", view["headline"])
+        self.assertEqual(view["next"], "Landing")
+
     def test_excluded_candidate_failure_stays_visible_without_blocking_revalidation(self):
         self.save(state="running", steps=[
             {"name": "Build eight-PR candidate", "state": "running"},

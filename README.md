@@ -20,7 +20,7 @@ Workers and fixers that report heavy-work reservation contention keep their exis
 **Merge windows & packages** queues durable, cancellable integration requests. Future windows leave feature work running; due windows drain active sessions and validate the selected PR heads before reserving capacity. Package requests name an exact revision or depend on a selected window, and use the existing staging release controller for full tests and verified artifact results. Overview shows the active merge and queued package together. A quota pause on one account leaves other signed-in accounts eligible even when their worker slots are full. Queues survive restart and uncertain dispatches are not resent. [Operating guide](docs/WORK-MERGE-PACKAGE.md).
 
 The Control room keeps live workers and merge progress on **Overview**, with separate
-**Merge & build**, **Tasks**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
+**Tasks**, **Merging**, **Building**, **Agents** and **Activity** views. Expand a worker row for its latest step, or a merge step for check results, activity and logs.
 When merging has priority, the Workers panel and status banner explain why new coding waits, show the current merge step, and confirm automatic resumption.
 Paused merging and interrupted rounds awaiting authorization leave feature capacity available, including while cleanup finishes. Active rounds retain their reservation. See [work, merge and package policy](docs/WORK-MERGE-PACKAGE.md) for the operating plan.
 Merge progress is read from the local progress file on every dashboard refresh, independently of scheduler and GitHub polling. A failed required merge check stays prominent even when another step reports activity. The panel explains that landing is blocked until the failing PRs are repaired or excluded and affected checks pass on the remaining candidate; merge agents reset affected checks after changing that candidate.
@@ -267,7 +267,7 @@ The profile setting is `workers.emergencyWorkers` (0 or 1). Settings and the das
 
 ## Merge progress
 
-Open **Merge & build** for the current round's expandable steps, individual check results, elapsed times, recent activity and output files. The active step opens automatically; your expansion and detail-tab choices survive status refreshes. The overview keeps a compact version of the same panel. Both light and dark themes work at narrow window widths.
+Open **Merging** for the current round, scheduled windows, and expandable checks and logs. Running rows are highlighted green and failed rows red. Previous candidates stay muted. The active step opens automatically, and your expansion and detail-tab choices survive status refreshes. Open **Building** for the build machine and package queue.
 
 Merge progress and saved history remain visible even while the GitHub queue is unavailable or still loading. The live summary separates recent log activity from a checkpoint update, shows completed steps and the next action, and keeps previous attempts collapsed. Missing telemetry is shown as not reported; quiet output is a warning to inspect activity, not proof of a hang. Failed required checks block landing even while another step reports activity. Machine reservations and pending app updates have their own context cards. Update messages distinguish an active merge from worker sessions draining after a round ends.
 
@@ -290,7 +290,7 @@ when the PC reservation clears, the merger gets the next opportunity. New writin
 merge is pending or running. Pausing/disabling merging, unresolved dependencies, failed-round cooldowns and
 unavailable merger accounts do not hold unrelated writing. A busy merger agent reserves its next free slot.
 
-The Merge & build panel shows the current wait separately from collapsed previous-round results. Finished
+The Merging panel shows the current wait separately from collapsed previous-round results. Finished
 rounds have a fixed total duration and do not keep showing their failed steps or PR membership as current.
 
 

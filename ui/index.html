@@ -29,6 +29,7 @@
     --queued-bg: #DCEFFA;
     --running: #007A59;     /* bluish green #009E73, darkened */
     --running-bg: #D7F1E8;
+    --failed: #A52539; --failed-bg: #FCE7EB;
     --lane: #0072B2;
     --lane-bg: #DCEAF5;
     --blocked: #B34A00;     /* vermillion #D55E00, darkened */
@@ -189,7 +190,7 @@
   button.chip { border: 0; min-height: 0; cursor: pointer; }
   .chip.building { background: var(--running-bg); color: var(--running); }
   .chip.passed { background: var(--running-bg); color: var(--running); }
-  .chip.failed { background: var(--blocked-bg); color: var(--blocked); }
+  .chip.failed { background: var(--failed-bg); color: var(--failed); }
   .chip.cancelled, .chip.idle { background: #E6EBF0; color: var(--muted); }
   .chip.paused { background: var(--hold-bg); color: var(--hold); }
   .lane-head .disk { color: var(--muted); font-size: 14px; margin-left: auto; }
@@ -242,7 +243,7 @@
 .merge-now { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; font-size: 15px; line-height: 1.4; background: var(--blocked-bg); }
 .merge-now.idle { background: transparent; padding: 0 0 4px; color: var(--muted); font-size: 14px; }
 .merge-now.running, .merge-now.waiting { background: #E3F0FA; color: #0B3C5D; }
-.merge-now.failed { background: var(--blocked-bg); color: var(--blocked); font-weight: 700; }
+.merge-now.failed { background: var(--failed-bg); color: var(--failed); font-weight: 700; }
 .merge-now .msteps { display: flex; flex-wrap: wrap; gap: 4px 6px; list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
 .merge-now .msteps li { padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; opacity: .75; }
 .merge-now .msteps li.done { opacity: .5; }
@@ -456,6 +457,7 @@
     color-scheme: dark; --paper: #141B22; --panel: #1D2731; --soft: #24313C;
     --ink: #EDF2F6; --muted: #A5B5C4; --rule: #374652; --accent: #70DCC1; --accent-bg: #183E36;
     --running: #7DE2BC; --running-bg: #193C32; --queued: #9DCCF1; --queued-bg: #223C50;
+    --failed: #FFA4B3; --failed-bg: #492731;
     --lane: #9DCCF1; --lane-bg: #223C50; --blocked: #FFB782; --blocked-bg: #452E23;
     --hold: #EEC77E; --hold-bg: #403522;
   }
@@ -632,17 +634,18 @@
   .merge-live { padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--soft); margin: 10px 0 16px; }
   .merge-live .round-status { font-size: 16px; font-weight: 700; }
   .merge-live .round-status small { font-weight: 400; }
-  .merge-live.failed { border-color: var(--blocked); }
+  .merge-live.failed { border-color: var(--failed); }
   .merge-live-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
   .merge-health { font-size: 11px; border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; white-space: nowrap; color: var(--muted); }
   .merge-health.active { color: var(--running); background: var(--running-bg); }
-  .merge-health.quiet, .merge-health.possibly_stuck, .merge-health.failed { color: var(--blocked); background: var(--blocked-bg); }
+  .merge-health.quiet, .merge-health.possibly_stuck { color: var(--blocked); background: var(--blocked-bg); }
+  .merge-health.failed { color: var(--failed); background: var(--failed-bg); }
   .merge-subline, .merge-next { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
   .merge-progress { display: flex; gap: 4px; margin: 12px 0 8px; height: 6px; }
   .merge-progress i { flex: 1; border-radius: 3px; background: var(--rule); }
   .merge-progress i.done { background: var(--running); }
   .merge-progress i.running { background: var(--queued); }
-  .merge-progress i.failed { background: var(--blocked); }
+  .merge-progress i.failed { background: var(--failed); }
   .merge-progress-label { color: var(--muted); font-size: 11px; }
   .round-section-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .08em; margin: 8px 0; }
   .merge-now .msteps { display: block; margin: 0; padding: 0; }
@@ -660,11 +663,21 @@
   .merge-step-time { color: var(--muted); font-size: 11px; }
   .merge-step-icon { flex: 0 0 17px; text-align: center; }
   .done .merge-step-icon, .check-done { color: var(--running); }
-  .running .merge-step-icon, .check-running { color: var(--queued); }
-  .failed .merge-step-icon, .check-failed { color: var(--blocked); }
+  .running .merge-step-icon, .check-running { color: var(--running); }
+  .failed .merge-step-icon, .check-failed { color: var(--failed); }
+  .msteps > li.running > .merge-step > summary, .merge-checks > .check-running {
+    background: var(--running-bg); box-shadow: inset 4px 0 var(--running);
+  }
+  .msteps > li.failed > .merge-step > summary, .merge-checks > .check-failed {
+    background: var(--failed-bg); box-shadow: inset 4px 0 var(--failed);
+  }
+  .merge-step-badge { border: 1px solid currentColor; border-radius: 12px; padding: 2px 7px; font-size: 11px; font-weight: 750; }
+  .running .merge-step-badge { color: var(--running); }
+  .failed .merge-step-badge { color: var(--failed); }
+  .previous-candidate .merge-checks > li { background: transparent; box-shadow: none; color: var(--muted); }
   .merge-step[open] { margin: 3px 0; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
-  .running .merge-step[open] { border-color: var(--queued); }
-  .failed .merge-step[open] { border-color: var(--blocked); }
+  .running .merge-step[open] { border-color: var(--running); }
+  .failed .merge-step[open] { border-color: var(--failed); }
   .merge-step-body { padding: 0 12px 12px; font-size: 12px; }
   .merge-step-tabs { display: flex; gap: 5px; border-top: 1px solid var(--rule); padding: 8px 0; }
   .merge-step-tabs button { min-height: 28px; padding: 3px 9px; font-size: 11px; background: transparent; }
@@ -707,8 +720,9 @@
   <div class="sidebar-brand"><span class="brandmark" aria-hidden="true">ϟ</span> Fletchery</div>
   <nav aria-label="Workspace">
     <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
-    <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merge &amp; build</a>
     <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
+    <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merging</a>
+    <a href="#build" data-view="build"><span class="nav-icon" aria-hidden="true">▣</span>Building</a>
     <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true">◇</span>Agents</a>
     <a href="#activity" data-view="activity"><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
   </nav>
@@ -757,12 +771,22 @@
     <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
     <div class="overview-grid" id="overviewGrid">
       <div id="workersMount"></div>
-      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merge &amp; build</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div><div id="buildPreview"></div></section>
+      <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merging</h3><a href="#tasks">All PRs →</a></div><div id="mergeMount"></div></section>
       <section class="card"><div class="card-head"><h3>Recent activity</h3><a href="#activity">View all →</a></div><ul class="preview-list" id="recentPreview"></ul></section>
       <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
     </div>
   </section>
-  <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merge &amp; build</h2><p>Current checks, recent activity and what happens next.</p></div><div id="mergePageMount"></div></section>
+  <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
+  <section class="view" id="view-build" aria-labelledby="buildPageHeading" hidden>
+    <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Build machine activity and package requests.</p></div>
+    <div id="buildPageMount"></div>
+    <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
+      <h3 id="packageHeading">Packages</h3>
+      <button type="button" id="planPackage">Queue package</button>
+      <div id="packageRows" aria-live="polite"></div>
+    </section>
+    <p id="buildEmpty" hidden>No build lane is configured for this project.</p>
+  </section>
   <section class="view" id="view-tasks" aria-labelledby="tasksHeading" hidden><div class="page-heading"><h2 id="tasksHeading">Tasks</h2><p>Queued work, dependencies and PRs.</p></div><div class="tasks-view" id="tasksMount"></div></section>
   <section class="view" id="view-agents" aria-labelledby="agentsHeading" hidden><div class="page-heading"><h2 id="agentsHeading">Agents</h2><p>Models, accounts and usage.</p></div><div id="agentsMount"></div></section>
   <section class="view" id="view-activity" aria-labelledby="activityHeading" hidden><div class="page-heading"><h2 id="activityHeading">Activity</h2><p>Finished sessions and the full log.</p></div><div id="activityMount"></div></section>
@@ -790,7 +814,7 @@
         <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
       </span>
       <button type="button" id="handoffWorkers" hidden>Pause &amp; hand off</button>
-      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.</p>
+      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.</p>
     </div>
     <div id="handoffStatus" class="emergency-help" aria-live="polite" hidden></div>
     <p id="rankMode" class="emergency-help" hidden></p>
@@ -844,11 +868,10 @@
   </div>
 
   <section class="card" id="integrationPlans" aria-labelledby="plansHeading" hidden>
-    <h3 id="plansHeading">Merge windows &amp; packages</h3>
+    <h3 id="plansHeading">Merge windows</h3>
     <p id="plansMode"></p>
     <div class="mauto-btns"><button type="button" id="planFeature">Use planned windows</button>
       <button type="button" id="planMerge">Queue merge window</button>
-      <button type="button" id="planPackage">Queue package</button>
       <button type="button" id="planAutomatic">Use automatic merging</button></div>
     <div id="planRows" aria-live="polite"></div><p id="planMessage" role="status"></p>
   </section>
@@ -1075,13 +1098,13 @@ const $ = id => document.getElementById(id);
 // Move existing controls once: their IDs, handlers and API contracts stay intact.
 $("workersMount").append($("workers"));
 $("mergeMount").append($("mergeNow"), $("integrationPlans"));
-$("tasksMount").append($("lane"));
+$("buildPageMount").append($("lane"));
 $("tasksMount").prepend($("queue"), $("boardBox"));
 $("agentsMount").append(document.querySelector(".usage"), $("agents"));
 $("activityMount").append($("lowerBox"));
 $("sidebarBottom").prepend($("settingsBtn"));
-const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "tasks", log: "activity", lowerBox: "activity"};
-const viewNames = ["overview", "merge", "tasks", "agents", "activity"];
+const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "build", log: "activity", lowerBox: "activity"};
+const viewNames = ["overview", "tasks", "merge", "build", "agents", "activity"];
 function showView(name, remember = true) {
   name = viewAliases[name] || name;
   if (!viewNames.includes(name)) return;
@@ -1138,11 +1161,13 @@ function mergeStepHtml(s, i, mv, current, mark, word) {
   const activity = s.activity || [];
   const files = s.files || [];
   const checks = s.checks || [];
+  const badge = s.required !== false && ["running", "failed"].includes(s.state)
+    ? `<span class="merge-step-badge">${s.state === "running" ? "Running" : "Failed"}</span>` : "";
   const log = files.find(f => f.url);
   const meta = [s.started ? `Started ${clockTime(s.started)}` : "", s.updated ? `Updated ${ago(s.updated)} ago` : "", s.ended ? `Finished ${clockTime(s.ended)}` : "", s.activity_updated ? `Activity ${ago(s.activity_updated)} ago` : "", s.activity_source || ""].filter(Boolean).join(" · ");
   const checksHtml = checks.length ? `<ul class="merge-checks">${checks.map(c => `<li class="check-${esc(c.state)}"><span>${mark[c.state] || "○"} ${esc(c.name)}</span><span class="check-state">${esc(word[c.state] || c.state || "Not reported")}${typeof c.duration_seconds === "number" ? ` · ${esc(durationText(c.duration_seconds))}` : ""}</span></li>`).join("")}</ul>` : `<p class="merge-empty">${esc(s.state === "done" ? "Completed. No individual check results were reported." : s.state === "todo" ? "Queued. Waiting for earlier checks to finish." : "Individual check results have not been reported yet.")}</p>`;
   const filesHtml = files.length ? `<ul class="merge-side-prs">${files.map(f => `<li>${f.url && /^\/api\/merge\/log\?/.test(f.url) ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)} ↗</a>` : esc(f.name || "File")}</li>`).join("")}</ul>` : `<p class="merge-empty">No output files reported for this step.</p>`;
-  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span><span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checksHtml}${mergeActivityHtml(activity.slice(-4))}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
+  return `<li class="${s.required === false ? "previous-candidate" : esc(s.state)}"><details class="merge-step" data-step-key="${esc(key)}"${open ? " open" : ""}><summary data-merge-focus="step-${i}"><span class="merge-step-icon" aria-hidden="true">${mark[s.state] || "○"}</span><span class="merge-step-label">${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}</span><span class="sr"> (${esc(word[s.state] || s.state)})</span>${badge}<span class="merge-step-time">${s.required === false ? "Excluded" : esc(mergeStepTime(s))}</span></summary><div class="merge-step-body"><div class="merge-step-tabs" role="group" aria-label="Step details">${["progress", "activity", "files"].map(t => `<button type="button" data-step-tab="${t}" data-merge-focus="step-${i}-${t}" aria-pressed="${tab === t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div>${meta ? `<p class="merge-step-meta">${esc(meta)}</p>` : ""}${s.message || s.note ? `<p>${esc(s.message || s.note)}</p>` : ""}<div${tab === "progress" ? "" : " hidden"} data-step-panel="progress">${checksHtml}${mergeActivityHtml(activity.slice(-4))}</div><div${tab === "activity" ? "" : " hidden"} data-step-panel="activity">${mergeActivityHtml(activity)}</div><div${tab === "files" ? "" : " hidden"} data-step-panel="files">${filesHtml}</div>${log && /^\/api\/merge\/log\?/.test(log.url) ? `<a class="merge-log-link" href="${esc(log.url)}" target="_blank" rel="noopener">Open full log ↗</a>` : ""}</div></details></li>`;
 }
 
 function durationText(seconds) {
@@ -1243,7 +1268,7 @@ function workerMergeWait(d) {
   const round = ma.running && ma.running.round;
   const mv = d.merge_view || {};
   const step = mv.active && String(mv.round) === String(round)
-    ? (mv.steps || []).find(s => s.state === "running") : null;
+    ? (mv.steps || []).find(s => s.state === "running" && s.required !== false) : null;
   return {
     title: round ? `New coding waits for merge round ${round}` : "New coding waits for merging",
     detail: round
@@ -1358,24 +1383,28 @@ function renderStatus(d) {
     const mark = {done: "✓", running: "▶", waiting: "⏸", failed: "✗", todo: "○"};
     const word = {done: "done", running: "running", waiting: "waiting", failed: "failed", todo: "to do"};
     const stepsHtml = (steps, label, expand = false) => `<ol class="msteps" aria-label="${label}">${steps.map((s, i) => expand ? mergeStepHtml(s, i, mv, currentStep, mark, word) : `<li class="${esc(s.state)}"><span aria-hidden="true">${mark[s.state] || "○"}</span> ${esc(s.name)}${s.required === false ? " (previous candidate)" : ""}<span class="sr"> (${word[s.state] || s.state})</span></li>`).join("")}</ol>`;
-    const failedSteps = active ? (mv.steps || []).filter(s => s.state === "failed" && s.required !== false) : [];
-    const currentStep = failedSteps[0] || (active && (mv.steps || []).find(s => ["running", "waiting"].includes(s.state)));
     const steps = active ? mv.steps || [] : [];
+    const requiredSteps = steps.filter(s => s.required !== false);
+    const failedSteps = requiredSteps.filter(s => s.state === "failed");
+    const currentStep = failedSteps[0] || requiredSteps.find(s => s.state === "running") || requiredSteps.find(s => s.state === "waiting");
     const activity = mv.activity || {};
     const activityAt = activity.updated;
     const activeCheck = currentStep && (currentStep.checks || []).find(c => c.state === "running");
-    const requiredSteps = steps.filter(s => s.required !== false);
     const completed = requiredSteps.filter(s => s.state === "done").length;
     const health = failedSteps.length ? "failed" : activity.health || (mv.stale ? "possibly_stuck" : "unknown");
     const checkpointOnly = activity.source === "Progress checkpoint";
     const healthText = {active: checkpointOnly ? "Recent update" : "Active", quiet: "Quiet · check activity", possibly_stuck: "May be stuck", unknown: "Activity not reported", failed: "Landing blocked"}[health] || "Activity not reported";
-    if (failedSteps.length) box.className = "merge-now failed";
-    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${mv.next ? `<p class="merge-next">Next: ${esc(mv.next)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    if (currentStep) box.className = "merge-now " + currentStep.state;
+    const headlineMatches = currentStep && mv.headline?.includes(currentStep.name);
+    const latestUpdate = headlineMatches ? mv.headline : mv.note || currentStep?.message;
+    const nextStep = headlineMatches || failedSteps.length ? mv.next
+      : requiredSteps.slice(requiredSteps.indexOf(currentStep) + 1).find(s => s.state === "todo")?.name;
+    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p><div class="merge-progress" aria-hidden="true">${requiredSteps.map(s => `<i class="${esc(s.state)}"></i>`).join("")}</div><div class="merge-progress-label">${completed} of ${requiredSteps.length} steps complete</div>${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (failedSteps.length) {
       const reported = steps.filter(s => s.state === "running" && s.required !== false).map(s => s.name);
       box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${reported.length ? `<br>Reported activity: ${esc(reported.join(", "))}. This does not clear the failed check.` : ""}</p>`);
     }
-    if (currentStep && mv.headline) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(mv.headline)}</p></details>`);
+    if (currentStep && latestUpdate) box.insertAdjacentHTML("beforeend", `<details class="round-detail" data-detail="round"${mergeOpen.has("round") ? " open" : ""}><summary>Latest update</summary><p>${esc(latestUpdate)}</p></details>`);
     if (active && steps.length) box.insertAdjacentHTML("beforeend", `<h4 class="round-section-label">Round progress</h4>` + stepsHtml(steps, "Current round steps", true));
     if (ma || history) {
       let line;
@@ -1496,8 +1525,9 @@ function renderOverview(d) {
   const round = d.merge_auto?.running?.round;
   const mergeStatus = round ? `Merge round ${round} running` : merge ? `Merge window ${merge.state}` : "";
   const packageStatus = packageJob ? `Package ${packageJob.version} ${packageJob.state}` : "";
-  const integrationStatus = [mergeStatus, packageStatus].filter(Boolean).join(" / ");
-  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>${integrationStatus ? `<a href="#merge">${esc(integrationStatus)}</a>` : ""}`;
+  const integrationStatus = (mergeStatus ? `<a href="#merge">${esc(mergeStatus)}</a>` : "")
+    + (packageStatus || d.lane ? `<a href="#build">${esc(packageStatus || $("laneChip").textContent || "Build machine")}</a>` : "");
+  $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>${integrationStatus}`;
   $("navTasks").textContent = blocked.length || queued.length || prs || "";
   $("navTasks").hidden = !blocked.length && !queued.length && !prs;
   $("navTasks").classList.toggle("attention", !!blocked.length);
@@ -1507,9 +1537,7 @@ function renderOverview(d) {
   const names = {pr: "PR opened", fixed: "Fix pushed", blocked: "Needs you", requeue: "Requeued", retry_fix: "Correction queued", waiting_dependencies: "Waiting for prerequisites"};
   $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(names[h.result] || h.result)}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
   const active = d.merge_auto && d.merge_auto.running;
-  $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merge & build";
-  const L = d.lane;
-  $("buildPreview").innerHTML = L ? `<div class="build-preview"><a href="#lane">Build machine →</a><span>${esc($("laneChip").textContent)}</span></div>` : "";
+  $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merging";
 }
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
@@ -1687,6 +1715,7 @@ function renderWorkersOff(d) {
 }
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
+  $("buildEmpty").hidden = !!L;
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");
@@ -1752,7 +1781,7 @@ function renderAgents(d) {
   const A = d.agents, sec = $("agents");
   if (!A) { sec.hidden = true; return; }
   sec.hidden = d.workers_enabled === false;
-  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Nothing here builds, tests in Unreal or merges: that happens in the Build Lane below, once the PR exists.";
+  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.";
   $("escBtn").setAttribute("aria-pressed", A.escalate ? "true" : "false");
   const R = A.routing || {};
   const rl = k => (R[k] && R[k].length) ? R[k].map(n => {
@@ -2013,11 +2042,13 @@ let planKind = "merge";
 function renderPlans(d) {
   const queue = d.integration_queue;
   $("integrationPlans").hidden = !queue;
+  $("packagePlans").hidden = !queue;
   if (!queue) return;
   $("plansMode").textContent = queue.planned ? "Planned windows: feature work continues between integrations." : "Automatic merging is enabled. Queuing a window switches to planned mode.";
   $("planFeature").hidden = queue.planned;
   $("planAutomatic").hidden = !queue.planned;
-  $("planRows").innerHTML = (queue.requests || []).map(r => {
+  const requests = queue.requests || [];
+  const requestRow = r => {
     const label = r.kind === "merge" ? `Merge ${Object.keys(r.heads || {}).map(n => "#" + n).join(", ")}` : `Package ${r.version}`;
     const when = Number.isFinite(Date.parse(r.not_before)) ? new Date(r.not_before).toLocaleString() : "Now";
     const cancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started ? `<button type="button" data-plan-cancel="${esc(r.id)}">Cancel request</button>` : "";
@@ -2025,7 +2056,9 @@ function renderPlans(d) {
     const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(d.repo_url)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
     const reason = r.reason || (r.after && !r.target && r.state === "queued" ? "Waiting for its merge window to land." : "Queued");
     return `<div class="mauto"><b>${esc(label)}</b> · ${esc(r.state)}<br><small>No earlier than ${esc(when)}</small><p>${esc(reason)}</p>${r.target ? `<small>Source: ${esc(r.target)}</small>` : ""}${r.output ? `<p>Package: ${esc(r.output)}</p>` : ""}${link}${cancel}</div>`;
-  }).join("") || "<p>No merge windows or packages queued.</p>";
+  };
+  $("planRows").innerHTML = requests.filter(r => r.kind === "merge").map(requestRow).join("") || "<p>No merge windows queued.</p>";
+  $("packageRows").innerHTML = requests.filter(r => r.kind === "package").map(requestRow).join("") || "<p>No packages queued.</p>";
 }
 function openPlan(kind) {
   planKind = kind;
@@ -2046,7 +2079,9 @@ $("planClose").onclick = () => $("planDlg").close();
 $("planAfter").onchange = () => { $("planTarget").hidden = !!$("planAfter").value; $("planTargetLabel").hidden = !!$("planAfter").value; };
 $("planFeature").onclick = () => agentCall("/api/queue/mode", {planned: true});
 $("planAutomatic").onclick = () => agentCall("/api/queue/mode", {planned: false});
-$("planRows").onclick = e => { const b = e.target.closest("[data-plan-cancel]"); if (b) agentCall("/api/queue/cancel", {id: b.dataset.planCancel}); };
+for (const id of ["planRows", "packageRows"]) {
+  $(id).onclick = e => { const b = e.target.closest("[data-plan-cancel]"); if (b) agentCall("/api/queue/cancel", {id: b.dataset.planCancel}); };
+}
 $("planForm").onsubmit = async e => {
   e.preventDefault(); $("planSubmit").disabled = true;
   try {

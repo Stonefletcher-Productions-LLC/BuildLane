@@ -343,13 +343,11 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     known = sum(1 for v in out["in_branch"].values() if v is not None)
     out["activity"], out["files"] = _activity(r, steps, worktree_root, now)
     out["failed_steps"] = [s["name"] for s in steps if s["state"] == "failed" and s.get("required") is not False]
-    out["reported_activity"] = [s["name"] for s in steps if s["state"] == "running"]
-    cur = next((i for i, s in enumerate(steps) if s["state"] == "failed" and s.get("required") is not False), None)
-    if cur is None:
-        cur = next((i for i, s in enumerate(steps) if s["state"] in ("running", "waiting")), None)
-    if cur is None:
-        cur = next((i for i, s in enumerate(steps) if s["state"] == "todo"), None)
-    nxt = next((s["name"] for s in steps[(cur + 1 if cur is not None else 0):] if s["state"] == "todo"), "")
+    required = [(i, s) for i, s in enumerate(steps) if s.get("required") is not False]
+    out["reported_activity"] = [s["name"] for _, s in required if s["state"] == "running"]
+    cur = next((i for status in ("failed", "running", "waiting", "todo")
+                for i, s in required if s["state"] == status), None)
+    nxt = next((s["name"] for i, s in required if (cur is None or i > cur) and s["state"] == "todo"), "")
     if out["failed_steps"]:
         nxt = "Repair or exclude the failing PRs, then revalidate the remaining candidate before landing"
     out["next"] = nxt
@@ -363,7 +361,7 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
         verb = {"running": "running", "waiting": "waiting to run", "failed": "FAILED at", "todo": "next is"}[s["state"]]
         bits.append(f"step {cur + 1} of {len(steps)}, {verb} {s['name']}")
         out["state"] = "failed" if s["state"] == "failed" else "waiting" if s["state"] == "waiting" else "running"
-    elif steps and all(s["state"] == "done" for s in steps):
+    elif required and all(s["state"] == "done" for _, s in required):
         bits.append("every step done, landing")
         out["state"] = "running"
     head = ": ".join([bits[0], ", ".join(bits[1:])]) if len(bits) > 1 else bits[0]

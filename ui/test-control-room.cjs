@@ -86,6 +86,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#queue'), false);
     assert.equal(await visible('#agents'), false);
     assert.equal(await visible('#lowerBox'), false);
+    assert.deepEqual(await page.locator('[data-view]').evaluateAll(links => links.map(link => link.dataset.view)),
+      ['overview', 'tasks', 'merge', 'build', 'agents', 'activity']);
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
@@ -111,6 +113,8 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
     assert.match(await page.locator('#mergeNow .merge-progress-label').innerText(), /2 of 4/);
     const activeStep=page.locator('.merge-step').nth(2);
+    assert.equal(await activeStep.locator('.merge-step-badge').innerText(), 'Running');
+    assert.equal(await activeStep.locator('summary').first().evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(25, 60, 50)');
     assert.equal(await activeStep.getAttribute('open'), '', 'current step expands automatically');
     assert.match(await activeStep.innerText(), /M4b Reconnect/);
     assert.equal(await page.locator('#mergeNow script').count(), 0, 'log lines are text, never markup');
@@ -222,6 +226,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now failed', 'a failure in a live round stays visible');
     assert.match(await page.locator('.round-status').innerText(), /Build[\s\S]*failed/);
     assert.equal(await page.locator('[aria-label="Current round steps"]').count(), 1);
+    assert.equal(await page.locator('.merge-step-badge').innerText(), 'Failed');
+    assert.equal(await page.locator('.merge-step > summary').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(252, 231, 235)');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-active-failure-light.png')});
     data.merge_auto.running = {};
     assert.match(await page.locator('.round-recovery').innerText(), /Landing blocked[\s\S]*repair or exclude[\s\S]*rerun affected checks/);
@@ -235,7 +241,8 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('.round-recovery').innerText(), /Reported activity: <Package>[\s\S]*does not clear/);
     assert.equal(await page.locator('.round-recovery package').count(), 0, 'activity names are escaped');
     await page.locator('#mergeCard').screenshot({path: path.join(out, 'merge-recovery-light.png')});
-    data.merge_view.steps = [{name: 'Game specs', state: 'running'}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
+    data.merge_view.steps = [{name: 'Old repair', state: 'waiting', required: false}, {name: 'Studio', state: 'waiting'},
+      {name: 'Game specs', state: 'running'}, {name: 'Old low-VRAM check', state: 'failed', required: false}, {name: 'Landing', state: 'todo'}];
     await page.evaluate(next => { last = next; render(next); }, data);
     assert.equal(await page.locator('.round-recovery').count(), 0);
     assert.match(await page.locator('[aria-label="Current round steps"]').innerText(), /Old low-VRAM check \(previous candidate\)/);
@@ -419,20 +426,26 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(requests.at(-1).body.prs, [1041]);
     assert.match(requests.at(-1).body.not_before, /2030-11/);
     const mergeId = data.integration_queue.requests[0].id;
+    await page.locator('[data-view="build"]').click();
+    assert.equal(await visible('#view-build'), true);
+    assert.equal(await visible('#view-merge'), false);
+    assert.equal(await page.locator('#lane').evaluate(el => el.closest('.view').id), 'view-build');
     await page.locator('#planPackage').click();
     await page.locator('#planVersion').fill('0.3.7');
     await page.selectOption('#planAfter', mergeId);
     assert.equal(await page.locator('#planTarget').isVisible(), false);
     await page.locator('#planSubmit').click();
     await page.waitForFunction(() => !document.querySelector('#planDlg').open);
-    assert.match(await page.locator('#overviewStats').textContent(), /Merge round 16 running \/ Package 0\.3\.7 queued/);
-    assert.match(await page.locator('#planRows').textContent(), /Waiting for its merge window to land/);
+    assert.equal(await page.locator('#overviewStats a[href="#merge"]').innerText(), 'Merge round 16 running');
+    assert.equal(await page.locator('#overviewStats a[href="#build"]').innerText(), 'Package 0.3.7 queued');
+    assert.match(await page.locator('#packageRows').textContent(), /Waiting for its merge window to land/);
     assert.equal(requests.at(-1).body.after, mergeId);
     assert.equal(requests.at(-1).body.target, '');
     assert.equal(requests.at(-1).token, 'fixture-token');
-    await page.locator('[data-plan-cancel]').first().click();
-    await page.waitForFunction(() => document.querySelector('#planRows').textContent.includes('cancelled'));
+    await page.locator('#packageRows [data-plan-cancel]').first().click();
+    await page.waitForFunction(() => document.querySelector('#packageRows').textContent.includes('cancelled'));
     assert.equal(requests.at(-1).url, '/api/queue/cancel');
+    await page.locator('[data-view="overview"]').click();
     await page.locator('#handoffWorkers').click();
     await page.waitForFunction(() => document.querySelector('#handoffStatus').textContent.includes('next checkpoint'));
     assert.equal(requests.at(-1).url, '/api/workers/handoff');
