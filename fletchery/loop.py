@@ -161,6 +161,8 @@ class Engine:
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
+        self.merge_backlog = 0          # the workers' PRs labelled for merging, last pass
+        self.backlog_paused = False     # backpressure: new feature tasks wait until the backlog falls to the low mark
         self.merge_why = ""             # why no round is starting, for the Merge section
         from plans import Plans
         self.plans = Plans(self)
@@ -387,7 +389,12 @@ class Engine:
             self.plans.update(self.plans.active_merge, state="queued", reason=self.merge_why)
         plan_draining = bool(self.merge_priority and self.plans.active_merge and self.plans.active_merge["state"] == "draining")
         paused = paused or plan_draining
-        worker_paused = paused or self.merge_priority
+        # A running round reserves its own account, not the whole PC: other accounts keep writing and fixing, and the
+        # round's account starts at most `round_shared_sessions` new ones. Without an agent pool (one Claude for
+        # everything) or with -1, the round still holds every new session, as before.
+        round_shares = self._round_shares(pool)
+        worker_paused = paused or (self.merge_priority and not round_shares)
+        backlog_full = self._backlog_full(prs)
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         emergency_numbers = self.repair_numbers(tasks)
         self.emergency_why = ("Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else
@@ -527,7 +534,7 @@ class Engine:
         if emergency_ready and cfg.emergency_workers and not paused and budget_left:
             self.emergency_why = "Waiting for the emergency repair slot or a suitable agent."
         emergency_chosen = pick(emergency_ready, self.emergency_free()) if budget_left and not paused else []
-        chosen = pick([t for t in rd.ready if t not in emergency_chosen], self.free_slots()) if budget_left and not worker_paused else []
+        chosen = pick([t for t in rd.ready if t not in emergency_chosen], self.free_slots()) if budget_left and not worker_paused and not backlog_full else []
         chosen += emergency_chosen
         for t in rd.ready:
             if t in chosen:
@@ -542,8 +549,11 @@ class Engine:
                 rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
             elif t.number in emergency_numbers and cfg.emergency_workers:
                 rd.waiting[t.number] = "waiting for the emergency repair slot"
-            elif self.merge_priority:
+            elif self.merge_priority and not round_shares:
                 rd.waiting[t.number] = "waiting for merge priority; existing jobs continue"
+            elif backlog_full:
+                rd.waiting[t.number] = (f"merge backlog full: {self.merge_backlog} PRs wait to merge; new tasks start again "
+                                        f"at {self._backlog_marks()[1]} (fixes continue)")
             else:
                 rd.waiting[t.number] = ("daily budget spent" if not budget_left else
                                         "writing paused: workers set to 0" if cfg.max_parallel <= 0 else
@@ -1011,6 +1021,43 @@ class Engine:
         except Exception as e:  # GitHub down, a run file half-written: try again next time
             self.ctx.log(f"lane watcher: {type(e).__name__}: {e}")
 
+    def _round_shares(self, pool) -> bool:
+        """While a round runs with an agent pool, cap only the round agent's account; True when new work may start."""
+        if pool is not None:
+            pool.round_account = None
+        if self.round_job is None or pool is None or int(self.cfg.round_shared_sessions) < 0:
+            return False
+        spec = pool.specs.get(self.round_info.get("agent", ""))
+        if spec is None:
+            return False
+        pool.round_account = (pool.account_of(spec), int(self.cfg.round_shared_sessions))
+        return True
+
+    def _backlog_marks(self) -> tuple[int, int]:
+        size = max(1, int(self.cfg.merge_round_max or 12))
+        high = int(self.cfg.merge_backlog_high or 0) or 2 * size
+        low = int(self.cfg.merge_backlog_low or 0) or size
+        return high, min(low, high)
+
+    def _backlog_full(self, prs: dict) -> bool:
+        """Backpressure with hysteresis: the workers' PRs labelled for merging pause new tasks at the high mark and
+        let them start again at the low mark. Off when merge rounds are off: nothing would drain the backlog."""
+        label = (self.cfg.merge_label or "ready").lower()
+        excluded = self.state.merge_excluded
+        # A PR left out at its current head waits for its repair, not for a round: it does not count.
+        self.merge_backlog = sum(1 for p in prs.values() if p.base == self.cfg.base_branch
+                                 and label in [l.lower() for l in p.labels] and not getattr(p, "draft", False)
+                                 and (excluded.get(str(p.number)) or {}).get("head") != p.head_sha)
+        if not self.cfg.merge_rounds:
+            self.backlog_paused = False
+            return False
+        high, low = self._backlog_marks()
+        if self.merge_backlog >= high:
+            self.backlog_paused = True
+        elif self.merge_backlog <= low:
+            self.backlog_paused = False
+        return self.backlog_paused
+
     def free_slots(self) -> int:
         """Normal capacity excludes the independently bounded emergency slot."""
         return max(0, self.cfg.max_parallel) - (len(self.jobs) - len(self.emergency_active))
@@ -1360,7 +1407,11 @@ class Engine:
                 "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
-                "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority, "running": dict(self.round_info),
+                "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority,
+                               "backlog": {"count": self.merge_backlog, "paused": self.backlog_paused,
+                                           "high": self._backlog_marks()[0], "low": self._backlog_marks()[1]},
+                               "round_shares": (list(self.ctx.agents.round_account) if self.ctx.agents is not None
+                                                and self.ctx.agents.round_account else None), "running": dict(self.round_info),
                                "why": self.merge_why, "resume": dict(st.merge_resume), "last": dict(st.merge_last or {}), "label": cfg.merge_label or "ready"},
                 "this_pass": [{"task": o.task, "result": o.result, "detail": (o.detail or "").splitlines()[0] if o.detail else "",
                                "pr": o.pr_number, "cost": round(o.cost_usd, 2)} for o in outcomes],

@@ -319,6 +319,7 @@ class AgentPool:
         self.worker_rank_names = {}
         self.worker_slots = {}  # task -> (agent, rank at admission)
         self.busy: dict[str, int] = {}
+        self.round_account = None  # (account, new sessions allowed on it) while a merge round runs on that account
         self.accounts: dict[str, dict] = {}  # name -> {"ok": bool, "message": text, "at": iso}: is it signed in
         self.catalog_override: Path | None = None  # a refreshed model_scores.json in the state dir
         self._results: dict = {}  # scores.results of the last Stats seen
@@ -411,6 +412,13 @@ class AgentPool:
             return False
         if not ignore_capacity and role in ("worker", "fixer", "merger", "planner") and s.max_parallel and self.busy.get(name, 0) >= s.max_parallel:
             return False
+        if not ignore_capacity and role in ("worker", "fixer", "planner") and self.round_account is not None:
+            account, allowance = self.round_account
+            if self.account_of(s) == account:
+                # The round's own session counts on its account; new work there is capped so the round keeps headroom.
+                used = sum(self.busy.get(n, 0) for n, other in self.specs.items() if self.account_of(other) == account)
+                if used - 1 >= allowance:
+                    return False
         if not ignore_capacity and role == "worker" and self.worker_limits is not None:
             rank = self.worker_rank_names.get(name, "low")
             used = sum(1 for _, r in self.worker_slots.values() if r == rank)

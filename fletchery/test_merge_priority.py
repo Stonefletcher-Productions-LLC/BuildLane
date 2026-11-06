@@ -108,7 +108,8 @@ class MergePriorityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(engine.jobs)
         pool.release("native")
         await engine.once()
-        self.assertEqual([role for role, _, _ in rt.calls], ["merger"])
+        # The round starts first; the writer is on another account, so it no longer waits for the round to end.
+        self.assertEqual([role for role, _, _ in rt.calls][0], "merger")
 
     async def test_unavailable_merger_does_not_pause_other_providers(self):
         for state in ("off", "signed_out", "rate_limited"):
@@ -200,7 +201,8 @@ class MergePriorityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["result"], "failed")
 
     async def test_unbatchable_dependency_cycle_does_not_hold_unrelated_workers(self):
-        engine, gh, rt = self.engine({1: Task(1, "Independent worker")}, merge_rounds=True, merge_round_max=1)
+        engine, gh, rt = self.engine({1: Task(1, "Independent worker")}, merge_rounds=True, merge_round_max=1,
+                                       merge_backlog_high=5)
         gh.prs = [self.ready_pr(12, "Depends on: #13"), self.ready_pr(13, "Depends on: #12")]
         await engine.once()
         self.assertFalse(engine.merge_priority)
