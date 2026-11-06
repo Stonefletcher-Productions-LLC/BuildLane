@@ -445,10 +445,58 @@ const server = http.createServer(async (req, res) => {
     assert.equal(requests.at(-1).body.after, mergeId);
     assert.equal(requests.at(-1).body.target, '');
     assert.equal(requests.at(-1).token, 'fixture-token');
+    page.once('dialog', dialog => dialog.dismiss());
     await page.locator('#packageRows [data-plan-cancel]').first().click();
-    await page.waitForFunction(() => document.querySelector('#packageRows').textContent.includes('cancelled'));
+    assert.equal(requests.at(-1).url, '/api/queue/add', 'declining cancellation leaves the request in place');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#packageRows [data-plan-cancel]').first().click();
+    await page.waitForFunction(() => document.querySelector('#packageRows .plans-history summary')?.textContent.includes('History'));
+    assert.equal(await page.locator('#packageRows .plans-history').getAttribute('open'), null, 'history is collapsed by default');
     assert.equal(requests.at(-1).url, '/api/queue/cancel');
+    const requestsBeforePreview = [...data.integration_queue.requests];
+    data.integration_queue.requests.push(
+      {id: 'busy', kind: 'merge', state: 'running', reason: 'Merge window running.', not_before: '2026-11-06T00:30:00Z',
+        heads: Object.fromEntries(Array.from({length: 12}, (_, i) => [988 + i, 'abc'])), titles: {'988': 'Nursery actions <fixture>'}},
+      {id: 'blocked', kind: 'package', version: '0.3.8', state: 'blocked', dispatch_started: now,
+        reason: 'The selected source needs review.', receipt: {worker: {runId: 123456}}},
+      {id: 'later', kind: 'merge', state: 'queued', not_before: '2030-12-05T20:30:00Z', heads: {'1047': 'def'}},
+    );
+    await page.evaluate(next => {last = next; render(next);}, data);
+    await page.locator('[data-view="merge"]').click();
+    await page.setViewportSize({width: 1400, height: 1000});
+    const plans = page.locator('#mergePageMount #integrationPlans');
+    await plans.waitFor({state: 'visible'});
+    const busy = plans.locator('.plan-row.running');
+    assert.match(await plans.locator('h4').first().innerText(), /In progress/);
+    assert.match(await busy.innerText(), /Merge window · 12 PRs/);
+    assert.equal(await busy.getByRole('link', {name: '#988', exact: true}).isVisible(), false);
+    assert.equal(await busy.getByRole('button').count(), 0, 'a running request cannot be cancelled here');
+    await page.locator('[data-view="build"]').click();
+    const packages = page.locator('#packagePlans');
+    assert.equal(await packages.locator('.plan-row.blocked').getByRole('button').count(), 0, 'a dispatched request cannot be cancelled here');
+    assert.equal(await packages.getByRole('link', {name: 'Open build'}).getAttribute('href'), data.repo_url + '/actions/runs/123456');
+    await packages.locator('.plans-history > summary').click();
+    assert.match(await packages.locator('.plans-history').innerText(), /Cancelled/);
+    await page.locator('[data-view="merge"]').click();
+    await page.evaluate(() => document.querySelector('#planMessage').textContent = '');
+    await plans.screenshot({path: path.join(out, 'merge-windows-dark.png')});
+    await page.selectOption('#themeChoice', 'light');
+    await plans.screenshot({path: path.join(out, 'merge-windows-light.png')});
+    await busy.locator('summary').click();
+    const pr = busy.getByRole('link', {name: '#988', exact: true});
+    assert.equal(await pr.getAttribute('href'), data.repo_url + '/pull/988');
+    await pr.focus();
+    data.integration_queue.requests.find(r => r.id === 'busy').reason = 'Building the merge candidate.';
+    await page.evaluate(next => {last = next; render(next);}, data);
+    assert.equal(await busy.locator('details').getAttribute('open'), '');
+    assert.equal(await pr.evaluate(el => el === document.activeElement), true, 'updates preserve focus in the PR list');
+    await page.setViewportSize({width: 390, height: 900});
+    assert.equal(await plans.evaluate(el => el.scrollWidth <= el.clientWidth), true, 'queue fits a narrow window');
+    await plans.screenshot({path: path.join(out, 'merge-windows-narrow.png')});
+    await page.setViewportSize({width: 1400, height: 1000});
     await page.locator('[data-view="overview"]').click();
+    data.integration_queue.requests = requestsBeforePreview;
+    await page.evaluate(next => {last = next; render(next);}, data);
     await page.locator('#handoffWorkers').click();
     await page.waitForFunction(() => document.querySelector('#handoffStatus').textContent.includes('next checkpoint'));
     assert.equal(requests.at(-1).url, '/api/workers/handoff');

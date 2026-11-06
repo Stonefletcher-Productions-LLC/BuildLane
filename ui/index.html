@@ -709,7 +709,48 @@
 #allWorkerTotal {width:90px; display:inline-block; margin:0}
 .rank-section {border-top:1px solid var(--line); margin-top:12px; padding-top:8px}
 .rank-section .slot.free {min-height:0; padding:10px}
-#planRows {overflow-wrap:anywhere}
+  .plans-header, .plans-heading, .plans-actions, .plan-top, .plan-actions {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .plans-header { justify-content: space-between; align-items: flex-start; gap: 14px; }
+  .plans-heading h3 { margin: 0; }
+  .plans-actions button, .plan-actions button { min-height: 34px; padding: 4px 10px; font-size: 13px; }
+  .plans-actions .mode-action { color: var(--muted); }
+  .plans-mode, .plan-state {
+    display: inline-flex; border-radius: 99px; padding: 2px 8px; font-size: 12px;
+    font-weight: 700; color: var(--muted); background: var(--soft);
+  }
+  .plans-mode.planned, .plan-state.queued { color: var(--queued); background: var(--queued-bg); }
+  .plan-state.running, .plan-state.submitted, .plan-state.complete { color: var(--running); background: var(--running-bg); }
+  .plan-state.draining { color: var(--hold); background: var(--hold-bg); }
+  .plan-state.blocked { color: var(--blocked); background: var(--blocked-bg); }
+  #plansMode, .plans-empty, #planMessage, #packageMessage { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  #planMessage:empty, #packageMessage:empty { margin: 0; }
+  .plans-group { margin-top: 16px; }
+  .plans-group h4, .plans-history > summary { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
+  .plans-list { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
+  .plan-row {
+    display: flex; align-items: flex-start; flex-wrap: wrap; justify-content: space-between;
+    gap: 6px 16px; padding: 10px 12px; border: 1px solid var(--rule);
+    border-radius: 8px; background: var(--soft); overflow-wrap: anywhere;
+  }
+  .plan-row.running, .plan-row.submitted { border-inline-start: 3px solid var(--running); }
+  .plan-row.blocked { border-inline-start: 3px solid var(--blocked); }
+  .plan-main { flex: 1 1 250px; min-width: 0; }
+  .plan-title { font-size: 14px; }
+  .plan-meta, .plan-reason { font-size: 13px; margin: 4px 0 0; }
+  .plan-meta { color: var(--muted); }
+  .plan-details { font-size: 13px; margin-top: 5px; }
+  .plan-details > summary, .plans-history > summary { cursor: pointer; }
+  .plan-prs { margin: 4px 0 0; padding-inline-start: 20px; }
+  .plan-prs li + li { margin-top: 3px; }
+  .plan-actions { font-size: 13px; }
+  .plans-history { border-top: 1px solid var(--rule); padding-top: 10px; }
+  .plans-history > summary { color: var(--muted); }
+  @media (max-width: 640px) {
+    .plans-actions { width: 100%; }
+    .plan-main { flex-basis: 100%; }
+  }
 #planPRChoices label {display:block}
   html, .slots-scroll, .scroll, .hist { overflow-anchor: none; }
   .worker-rank-badge { display: inline-block; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
@@ -784,7 +825,8 @@
     <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
       <h3 id="packageHeading">Packages</h3>
       <button type="button" id="planPackage">Queue package</button>
-      <div id="packageRows" aria-live="polite"></div>
+      <p id="packageMessage" role="status"></p>
+      <div id="packageRows"></div>
     </section>
     <p id="buildEmpty" hidden>No build lane is configured for this project.</p>
   </section>
@@ -869,12 +911,19 @@
   </div>
 
   <section class="card" id="integrationPlans" aria-labelledby="plansHeading" hidden>
-    <h3 id="plansHeading">Merge windows</h3>
-    <p id="plansMode"></p>
-    <div class="mauto-btns"><button type="button" id="planFeature">Use planned windows</button>
-      <button type="button" id="planMerge">Queue merge window</button>
-      <button type="button" id="planAutomatic">Use automatic merging</button></div>
-    <div id="planRows" aria-live="polite"></div><p id="planMessage" role="status"></p>
+    <div class="plans-header">
+      <div>
+        <div class="plans-heading"><h3 id="plansHeading">Merge windows</h3><span class="plans-mode" id="plansModeBadge"></span></div>
+        <p id="plansMode"></p>
+      </div>
+      <div class="plans-actions">
+        <button type="button" class="primary" id="planMerge">Queue merge window</button>
+        <button type="button" class="mode-action" id="planFeature">Use planned windows</button>
+        <button type="button" class="mode-action" id="planAutomatic">Use automatic merging</button>
+      </div>
+    </div>
+    <p id="planMessage" role="status"></p>
+    <div id="planRows"></div>
   </section>
 
   <section class="lane" id="lane" aria-labelledby="laneh" hidden>
@@ -2045,26 +2094,80 @@ const PLAN_LABEL = {claude: "Claude plan", codex: "ChatGPT", opencode: "OpenCode
 const PLAN_NAME = {claude: "Your Claude plan (shares its limits with your own chats)", codex: "Your ChatGPT sign-in (codex login)",
                    opencode: "OpenCode's own sign-in, e.g. OpenCode Go (opencode auth login)"};
 let planKind = "merge";
+const PLAN_STATES = {
+  queued: "Queued", draining: "Finishing worker sessions", blocked: "Blocked",
+  running: "Running", submitted: "Submitted", complete: "Complete", cancelled: "Cancelled",
+};
+const PLAN_TIME = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"});
+const renderedPlans = new Map();
+const cancellingPlans = new Set();
+function planTitle(r) {
+  if (r.kind !== "merge") return "Package " + r.version;
+  const prs = Object.keys(r.heads || {});
+  return "Merge window · " + (prs.length === 1 ? "#" + prs[0] : prs.length + " PRs");
+}
+function renderPlanRow(r, repoUrl) {
+  const title = planTitle(r);
+  const state = PLAN_STATES[r.state] || r.state;
+  const prs = Object.keys(r.heads || {});
+  const date = Date.parse(r.not_before);
+  const scheduled = Number.isFinite(date) ? PLAN_TIME.format(date) : "As soon as possible";
+  const when = Number.isFinite(date) ? `Earliest start <time datetime="${esc(r.not_before)}">${esc(scheduled)}</time>` : scheduled;
+  const canCancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started;
+  const run = r.receipt?.worker?.runId;
+  const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(repoUrl)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
+  const cancel = canCancel ? `<button type="button" data-plan-cancel="${esc(r.id)}" data-plan-title="${esc(title)}" data-plan-focus="${esc(r.id)}-cancel" aria-label="Cancel request for ${esc(title)}">Cancel request</button>` : "";
+  const reason = r.reason || (r.after && !r.target && r.state === "queued" ? "Waiting for its merge window to land." : "");
+  const details = prs.length ? `<details class="plan-details" data-plan-open="${esc(r.id)}">
+    <summary data-plan-focus="${esc(r.id)}-prs">View ${prs.length} ${prs.length === 1 ? "PR" : "PRs"}</summary>
+    <ul class="plan-prs">${prs.map(n => `<li><a href="${esc(repoUrl)}/pull/${esc(n)}" data-plan-focus="${esc(r.id)}-pr-${esc(n)}" target="_blank" rel="noopener">#${esc(n)}</a>${r.titles?.[n] ? " " + esc(r.titles[n]) : ""}</li>`).join("")}</ul></details>` : "";
+  return `<li class="plan-row ${esc(r.state)}"><div class="plan-main">
+    <div class="plan-top"><strong class="plan-title">${esc(title)}</strong><span class="plan-state ${esc(r.state)}">${esc(state)}</span></div>
+    <p class="plan-meta">${when}</p>${reason ? `<p class="plan-reason">${esc(reason)}</p>` : ""}
+    ${r.target ? `<p class="plan-meta">Source <code>${esc(r.target)}</code></p>` : ""}
+    ${r.output ? `<p class="plan-meta">Package output ${esc(r.output)}</p>` : ""}${details}
+  </div>${link || cancel ? `<div class="plan-actions">${link}${cancel}</div>` : ""}</li>`;
+}
 function renderPlans(d) {
   const queue = d.integration_queue;
   $("integrationPlans").hidden = !queue;
   $("packagePlans").hidden = !queue;
   if (!queue) return;
-  $("plansMode").textContent = queue.planned ? "Planned windows: feature work continues between integrations." : "Automatic merging is enabled. Queuing a window switches to planned mode.";
+  $("plansModeBadge").textContent = queue.planned ? "Planned mode" : "Automatic mode";
+  $("plansModeBadge").classList.toggle("planned", queue.planned);
+  $("plansMode").textContent = queue.planned ? "Feature work continues between scheduled integrations." : "Ready PRs merge automatically. Queuing a request switches to planned mode.";
   $("planFeature").hidden = queue.planned;
   $("planAutomatic").hidden = !queue.planned;
+
   const requests = queue.requests || [];
-  const requestRow = r => {
-    const label = r.kind === "merge" ? `Merge ${Object.keys(r.heads || {}).map(n => "#" + n).join(", ")}` : `Package ${r.version}`;
-    const when = Number.isFinite(Date.parse(r.not_before)) ? new Date(r.not_before).toLocaleString() : "Now";
-    const cancel = ["queued", "draining", "blocked"].includes(r.state) && !r.dispatch_started ? `<button type="button" data-plan-cancel="${esc(r.id)}">Cancel request</button>` : "";
-    const run = r.receipt && r.receipt.worker && r.receipt.worker.runId;
-    const link = /^\d+$/.test(String(run || "")) ? `<a href="${esc(d.repo_url)}/actions/runs/${esc(run)}" target="_blank" rel="noopener">Open build</a>` : "";
-    const reason = r.reason || (r.after && !r.target && r.state === "queued" ? "Waiting for its merge window to land." : "Queued");
-    return `<div class="mauto"><b>${esc(label)}</b> · ${esc(r.state)}<br><small>No earlier than ${esc(when)}</small><p>${esc(reason)}</p>${r.target ? `<small>Source: ${esc(r.target)}</small>` : ""}${r.output ? `<p>Package: ${esc(r.output)}</p>` : ""}${link}${cancel}</div>`;
-  };
-  $("planRows").innerHTML = requests.filter(r => r.kind === "merge").map(requestRow).join("") || "<p>No merge windows queued.</p>";
-  $("packageRows").innerHTML = requests.filter(r => r.kind === "package").map(requestRow).join("") || "<p>No packages queued.</p>";
+  renderPlanGroups($("planRows"), requests.filter(r => r.kind === "merge"), d.repo_url);
+  renderPlanGroups($("packageRows"), requests.filter(r => r.kind === "package"), d.repo_url);
+}
+
+function renderPlanGroups(rows, requests, repoUrl) {
+  const groups = {active: [], upcoming: [], attention: [], history: []};
+  for (const request of requests) {
+    if (["complete", "cancelled"].includes(request.state)) groups.history.push(request);
+    else if (request.state === "blocked") groups.attention.push(request);
+    else if (request.state === "queued") groups.upcoming.push(request);
+    else groups.active.push(request);
+  }
+  groups.upcoming.sort((a, b) => (Date.parse(a.not_before) || 0) - (Date.parse(b.not_before) || 0));
+  const list = rows => `<ul class="plans-list">${rows.map(r => renderPlanRow(r, repoUrl)).join("")}</ul>`;
+  const group = (title, rows) => rows.length ? `<section class="plans-group"><h4>${title} · ${rows.length}</h4>${list(rows)}</section>` : "";
+  const html = group("In progress", groups.active) + group("Needs attention", groups.attention) + group("Upcoming", groups.upcoming)
+    + (!groups.active.length && !groups.attention.length && !groups.upcoming.length ? '<p class="plans-empty">No active or upcoming requests.</p>' : "")
+    + (groups.history.length ? `<details class="plans-group plans-history" data-plan-open="history"><summary data-plan-focus="history">History · ${groups.history.length}</summary>${list(groups.history.reverse())}</details>` : "");
+
+  if (html === renderedPlans.get(rows)) return;
+  const open = new Set([...rows.querySelectorAll("details[open]")].map(detail => detail.dataset.planOpen));
+  const focus = rows.contains(document.activeElement) && document.activeElement.dataset.planFocus;
+  rows.innerHTML = html;
+  renderedPlans.set(rows, html);
+  rows.querySelectorAll("details").forEach(detail => { detail.open = open.has(detail.dataset.planOpen); });
+  if (focus) {
+    [...rows.querySelectorAll("[data-plan-focus]")].find(el => el.dataset.planFocus === focus)?.focus({preventScroll: true});
+  }
 }
 function openPlan(kind) {
   planKind = kind;
@@ -2085,9 +2188,27 @@ $("planClose").onclick = () => $("planDlg").close();
 $("planAfter").onchange = () => { $("planTarget").hidden = !!$("planAfter").value; $("planTargetLabel").hidden = !!$("planAfter").value; };
 $("planFeature").onclick = () => agentCall("/api/queue/mode", {planned: true});
 $("planAutomatic").onclick = () => agentCall("/api/queue/mode", {planned: false});
-for (const id of ["planRows", "packageRows"]) {
-  $(id).onclick = e => { const b = e.target.closest("[data-plan-cancel]"); if (b) agentCall("/api/queue/cancel", {id: b.dataset.planCancel}); };
+async function cancelPlan(e, message, action) {
+  const button = e.target.closest("[data-plan-cancel]");
+  if (!button || cancellingPlans.has(button.dataset.planCancel) || !confirm(`Cancel this request? ${button.dataset.planTitle}.`)) return;
+  const id = button.dataset.planCancel;
+  cancellingPlans.add(id);
+  button.disabled = true;
+  message.textContent = "";
+  try {
+    const result = await post("/api/queue/cancel", {id});
+    message.textContent = result.message || "Request cancelled.";
+    await refresh();
+    if (document.activeElement === document.body) action.focus({preventScroll: true});
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    cancellingPlans.delete(id);
+    button.disabled = false;
+  }
 }
+$("planRows").onclick = e => cancelPlan(e, $("planMessage"), $("planMerge"));
+$("packageRows").onclick = e => cancelPlan(e, $("packageMessage"), $("planPackage"));
 $("planForm").onsubmit = async e => {
   e.preventDefault(); $("planSubmit").disabled = true;
   try {
