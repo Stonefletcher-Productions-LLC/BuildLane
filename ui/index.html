@@ -1606,10 +1606,13 @@ function renderStatus(d) {
     const currentRound = active ? mv.round : running ? running.round : "";
     const inRound = new Set(included);
     $("n-pr").textContent = mergeRows.length || "";
-    const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr))];
+    const isParked = r => !inRound.has(r.pr) && !!r.parked;
+    const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r)),
+                     ...mergeRows.filter(isParked)];
     let lastGroup = null;
     $("c-pr").innerHTML = ordered.length ? ordered.map(r => {
-      const g = inRound.has(r.pr) ? `In round ${currentRound || "?"}` : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
+      const g = inRound.has(r.pr) ? `In round ${currentRound || "?"}` : isParked(r) ? "Parked: skipped until a new commit (not counted in the backlog)"
+        : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
       const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
       lastGroup = g;
       return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
@@ -1627,6 +1630,7 @@ function renderStatus(d) {
       if (r.conflict) bits.push("<b>conflicts</b>");
       if (!r.ready) bits.push("not labelled ready");
       if (r.repair_wait) bits.push(`<b>Waiting for repair:</b> ${esc(r.repair_wait)}`);
+      if (r.parked) bits.push(`<b>Parked:</b> ${esc(r.parked)}`);
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
       return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}${workerRankBadge(d.tasks.find(t => t.number === r.task)?.worker_rank)}</a>` +
         `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
