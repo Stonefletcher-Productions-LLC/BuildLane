@@ -161,7 +161,7 @@ def _adopt_open_pr(task: Task, ctx: Context, out: Outcome) -> Outcome | None:
         return None
     if number is None:
         return None
-    gh.add_labels(number, [graph.PREFIX, "ready"])
+    gh.add_labels(number, [graph.PREFIX] + ([] if cfg.pr_check_command else ["ready"]))
     gh.set_status(task.number, PR)
     gh.comment(task.number, f"Fletchery found PR #{number} from `{task.branch}` already open from an earlier run and "
                             "adopted it instead of running the task again.")
@@ -410,7 +410,9 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file, True)
         await asyncio.to_thread(repo.push, wt, task.branch)
         body = pr_body(task, worker_report, results, review, cfg, out if pool is not None and pool.multi else None)
-        pr = gh.create_pr(task.branch, cfg.base_branch, f"#{task.number} {task.title}", body, [graph.PREFIX, "ready"],
+        # With a PC check, the merge label waits until the PR has been built and quick-tested on the PC (prcheck.py).
+        labels = [graph.PREFIX] + ([] if cfg.pr_check_command else ["ready"])
+        pr = gh.create_pr(task.branch, cfg.base_branch, f"#{task.number} {task.title}", body, labels,
                           cfg.assignee or None)
     except Exception as e:
         return await asyncio.to_thread(_requeue_or_block, ctx, task, out, f"push or PR failed: {e}")

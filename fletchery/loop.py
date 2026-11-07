@@ -44,7 +44,8 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
-    playtest_issue: int = 0                                   # the playtest checklist issue (mergePlaytest)
+    pr_checks: dict = field(default_factory=dict)             # PR -> {head, passed, at, output}: PC checks (prcheck.py)
+    playtest_issue: int = 0                                  # the playtest checklist issue (mergePlaytest)
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
@@ -634,7 +635,8 @@ class Engine:
         import rounds
         cfg, st = self.cfg, self.state
         self.plans.active_merge = None
-        self.merge_priority = self.round_job is not None
+        # A PC check (prcheck.py) runs no agent: it holds the build checkout, not worker capacity.
+        self.merge_priority = self.round_job is not None and not self.round_info.get("check")
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
@@ -686,6 +688,8 @@ class Engine:
             return
         if st.spent.get(today(), 0.0) >= cfg.daily_budget_usd:
             self.merge_why = "daily budget spent"
+            return
+        if cfg.pr_check_command and not draining and not st.merge_resume and not self.dry_run and self._start_pr_check():
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
@@ -1019,6 +1023,64 @@ class Engine:
         self.wake()
         return {"round": last["round"], "resume_authorized": True, "message": "Saved round queued; heavy work waits for the PC reservation."}
 
+    def _start_pr_check(self) -> bool:
+        """Start one PC check (prcheck.py) in the merge slot. Checks and rounds take turns while both have work, so a
+        queue of unchecked PRs never starves merging. True when a check started."""
+        import graph
+        import prcheck
+        cfg, gh = self.cfg, self.ctx.gh
+        label = cfg.merge_label or "ready"
+        try:
+            waiting = prcheck.candidates(gh.open_prs(), cfg, self.state.pr_checks, label, graph.PREFIX)
+        except Exception as e:
+            self.ctx.log(f"PC check: couldn't list PRs: {type(e).__name__}: {e}")
+            return False
+        if not waiting:
+            return False
+        if getattr(self, "_last_pc_job", "") == "check":
+            try:
+                if gh.labelled_prs(label, cfg.base_branch):
+                    self._last_pc_job = "round-turn"  # let a round have the PC; the next free turn checks again
+                    return False
+            except Exception:
+                pass
+        pr = waiting[0]
+        self._last_pc_job = "check"
+        self.merge_why = f"PC check of PR #{pr.number} ({len(waiting)} waiting)"
+        self.round_info = {"check": pr.number, "round": f"PC check #{pr.number}", "agent": "", "prs": [pr.number],
+                           "head": pr.head_sha, "started": now(), "waiting": len(waiting)}
+        self.round_job = asyncio.ensure_future(self._run_pr_check(pr))
+        self.ctx.log(f"PC check: PR #{pr.number} at {pr.head_sha[:10]} ({len(waiting) - 1} more waiting)")
+        return True
+
+    async def _run_pr_check(self, pr) -> None:
+        import prcheck
+        cfg, gh = self.cfg, self.ctx.gh
+        try:
+            res = await asyncio.to_thread(prcheck.run, self.ctx.repo, pr, cfg)
+        except Exception as e:  # a crash in a check must never stop the loop
+            res = prcheck.CheckResult(prcheck.NO_RESULT, f"{type(e).__name__}: {e}")
+        if res.code == prcheck.NO_RESULT:
+            self.ctx.log(f"PC check: PR #{pr.number}: no result ({res.output.splitlines()[0] if res.output else ''}); "
+                         "it runs again later")
+            if getattr(self, "_last_pc_job", "") == "check":
+                self._last_pc_job = "round-turn"
+            return
+        passed = res.code == 0
+        self.state.pr_checks[str(pr.number)] = {"head": pr.head_sha, "passed": passed, "at": now(),
+                                                "output": res.output[-2000:]}
+        self.state.save(self.state_dir / "state.json")
+        try:
+            if passed:
+                gh.add_labels(pr.number, [cfg.merge_label or "ready"])
+                gh.comment(pr.number, f"Fletchery: PC check passed for head `{pr.head_sha[:10]}` (merged onto "
+                                      f"`{cfg.base_branch}`, built, quick-tested). Labelled for the next merge round.")
+            else:
+                gh.comment(pr.number, prcheck.failure_comment(pr, res, cfg.base_branch))
+        except Exception as e:
+            self.ctx.log(f"PC check: PR #{pr.number}: couldn't update the PR: {type(e).__name__}: {e}")
+        self.ctx.log(f"PC check: PR #{pr.number} {'passed' if passed else 'failed'}")
+
     PLAYTEST_MARKER = "<!-- fletchery-playtest-checklist -->"
 
     def _record_playtest(self, round_no, res: dict) -> None:
@@ -1115,6 +1177,8 @@ class Engine:
         """While a round runs with an agent pool, cap only the round agent's account; True when new work may start."""
         if pool is not None:
             pool.round_account = None
+        if self.round_job is not None and self.round_info.get("check"):
+            return True  # a PC check uses no agent account
         if self.round_job is None or pool is None or int(self.cfg.round_shared_sessions) < 0:
             return False
         spec = pool.specs.get(self.round_info.get("agent", ""))
