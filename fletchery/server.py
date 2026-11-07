@@ -36,6 +36,7 @@ web page from anywhere else cannot press the buttons. Requests whose Host is not
 rebinding)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -85,6 +86,8 @@ class Dashboard:
         self.port = port
         self.host = host
         self.token = secrets.token_urlsafe(24)
+        self._page_key = None
+        self._page_hash = ""
         self.server: ThreadingHTTPServer | None = None
 
     # ---- data ----
@@ -128,6 +131,7 @@ class Dashboard:
         snap["setup_needed"] = not fm.cfg.repo
         snap["restarting"] = fm.restart_status()
         snap["update_pending"] = getattr(fm, "update_pending", False)
+        snap["page_id"] = self.page_id()
         snap["sync_error"] = getattr(fm, "sync_error", "")
         cfg = fm.cfg
         lane_view = None
@@ -626,8 +630,22 @@ class Dashboard:
         return {"name": name, "set": False}
 
     # ---- server ----
+    def page_id(self) -> str:
+        """Changes when this backend restarts (new token) or ui/index.html changes, so an open
+        window can tell it is showing old screens and reload itself."""
+        try:
+            st = (UI / "index.html").stat()
+            key = (st.st_mtime_ns, st.st_size)
+            if key != self._page_key:
+                self._page_hash = hashlib.sha1((UI / "index.html").read_bytes()).hexdigest()
+                self._page_key = key
+        except OSError:
+            pass
+        return hashlib.sha1((self.token + self._page_hash).encode("utf-8")).hexdigest()[:16]
+
     def page(self) -> bytes:
         html = (UI / "index.html").read_text(encoding="utf-8")
+        html = html.replace("__FLETCHERY_PAGE__", self.page_id())
         return html.replace("__FLETCHERY_TOKEN__", self.token).encode("utf-8")
 
     def start(self) -> None:
@@ -693,7 +711,7 @@ class Dashboard:
                 if not self._host_ok():
                     return self._json(403, {"error": "wrong host"})
                 if not secrets.compare_digest(self.headers.get("X-Fletchery-Token", ""), dash.token):
-                    return self._json(403, {"error": "Reload the window (F5): Fletchery restarted since this page opened."})
+                    return self._json(403, {"error": "Press Refresh at the top of the window: Fletchery restarted since this page opened."})
                 length = int(self.headers.get("Content-Length") or 0)
                 if length > MAX_BODY:
                     return self._json(413, {"error": "request too large"})
