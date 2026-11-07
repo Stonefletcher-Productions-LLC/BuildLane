@@ -23,6 +23,10 @@ worker reads the code itself; you save it the wrong turns.
 - `files`: the paths from Changes.
 - `difficulty`: how hard the writing is once this plan exists (usually one step easier than the task).
 - `needs_human`: empty, unless the task cannot be done without a person's decision or access; then say exactly what.
+  It stays empty for approval of the result: a person accepting renders, art or a review sheet, reviewing the
+  PR, or merging all happen after the PR opens, so put them in the plan's Proof instead. It also stays empty for
+  access that may or may not be refused ("if call.py is denied"): tell the worker to report the exact denied
+  command and stop. Only a decision or access needed *before any work can start* goes here.
 
 {additions}
 

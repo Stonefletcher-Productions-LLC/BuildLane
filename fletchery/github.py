@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -50,11 +51,24 @@ def parse_pages(text: str):
     return docs[0] if len(docs) == 1 else docs
 
 
+# GETs of one issue, its comments, one PR or a branch's closed PRs are answered from memory for a short while.
+# Every pass re-read each blocked task's thread, each closed prerequisite and each PR-state task's branch, so with
+# ~100 open tasks Fletchery used ~90 calls a minute, ran through the 5,000/hour REST limit and every pass then
+# failed until the hour reset (LifeShare 2026-11-07 ~17:00-17:35Z: nothing started). Writes drop the entries of the
+# issue/PR they touch, so Fletchery always sees its own changes at once.
+_CACHEABLE = re.compile(r"^repos/[^/]+/[^/]+/(issues/\d+(/comments\?.*)?|pulls/\d+|pulls\?state=closed&head=.*)$")
+_NUMBER = re.compile(r"^repos/[^/]+/[^/]+/(?:issues|pulls)/(\d+)")
+
+
 class GitHub:
+    cache_seconds = 120            # how stale a cached GET may be (a person's new comment shows up within this)
+    closed_cache_seconds = 3600    # a closed issue or merged PR rarely reopens: keep that answer longer
+
     def __init__(self, repo: str, gh: str = "gh"):
         self.repo = repo
         self.gh = gh
         self.warnings: list[str] = []
+        self._cache: dict[tuple[str, bool], tuple[float, object]] = {}
 
     # ---- raw ----
     def _request(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False) -> str:
@@ -81,9 +95,35 @@ class GitHub:
                 raise RuntimeError(f"gh api {method} {path}: {detail}")
         return p.stdout
 
-    def api(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False):
+    def api(self, path: str, method: str = "GET", body: dict | None = None, paginate: bool = False, fresh: bool = False):
+        cacheable = method == "GET" and bool(_CACHEABLE.match(path))
+        key = (path, paginate)
+        if cacheable and not fresh:
+            hit = self._cache.get(key)
+            if hit and hit[0] > time.monotonic():
+                return hit[1]
         output = self._request(path, method, body, paginate)
-        return parse_pages(output) if paginate else (json.loads(output) if output.strip() else None)
+        value = parse_pages(output) if paginate else (json.loads(output) if output.strip() else None)
+        if cacheable:
+            done = isinstance(value, dict) and (value.get("state") == "closed" or bool(value.get("merged_at")))
+            self._cache[key] = (time.monotonic() + (self.closed_cache_seconds if done else self.cache_seconds), value)
+            if len(self._cache) > 4000:
+                now = time.monotonic()
+                self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
+        elif method != "GET":
+            self.forget(path)
+        return value
+
+    def forget(self, path: str) -> None:
+        """Drop cached answers about the issue or PR a write touched (and branch PR lists, which a merge changes)."""
+        m = _NUMBER.match(path)
+        if not m:
+            return
+        n = m.group(1)
+        marks = (f"/issues/{n}", f"/pulls/{n}")
+        self._cache = {k: v for k, v in self._cache.items()
+                       if not any(k[0].endswith(x) or (x + "/") in k[0] or (x + "?") in k[0] for x in marks)
+                       and "pulls?state=closed" not in k[0]}
 
     def api_text(self, path: str) -> str:
         """A bounded GET whose answer is plain text (a job's log)."""
@@ -113,7 +153,7 @@ class GitHub:
 
     def set_status(self, number: int, status: str) -> None:
         """`status` is a plain state (queued, running, pr, blocked); the issue gets "<label>:<state>"."""
-        it = self.api(f"repos/{self.repo}/issues/{number}")
+        it = self.api(f"repos/{self.repo}/issues/{number}", fresh=True)  # never drop a label someone just added
         keep = [l["name"] for l in it["labels"] if not graph.is_status_label(l["name"])]
         self.api(f"repos/{self.repo}/issues/{number}", "PATCH", {"labels": keep + [graph.label_for(status)]})
 
