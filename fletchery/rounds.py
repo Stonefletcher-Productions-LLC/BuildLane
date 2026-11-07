@@ -204,7 +204,11 @@ def worktree_busy(path) -> list[str]:
     # CIM command lines may spell paths with either slash. A directory boundary avoids
     # treating merge-round-<id> as an owner of its quarantined merge-round predecessor.
     normalized = str(Path(path).resolve()).replace("\\", "/")
-    pattern = (re.escape(normalized) + r"(?=$|[\\/\s\"'])").replace("'", "''")
+    spelled = re.escape(normalized)
+    drive = re.match(r"([A-Za-z]):/(.*)", normalized)
+    if drive:  # Git Bash / MSYS spell E:/x as /e/x (a `tail -f` on a round log was missed, 2026-11-07)
+        spelled = f"(?:{spelled}|/{drive[1].lower()}/{re.escape(drive[2])})"
+    pattern = ("(?i)" + spelled + r"(?=$|[\\/\s\"'])").replace("'", "''")
     ps = ("$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -ErrorAction Stop | "
           "Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and "
           "$_.CommandLine.Replace('\\','/') -match '" + pattern + "' } | "
