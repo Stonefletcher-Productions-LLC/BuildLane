@@ -403,12 +403,21 @@ def prepare_worktree(repo, branch: str, lease_file: str = "") -> Path:
     return path
 
 
+# The round agent's session never started (the CLI did not answer its first control request, or the connection
+# dropped): nothing ran, the next round simply tries again. Filing these made unfixable project tasks (LifeShare
+# #1201, round 39, 2026-11-07; round 40 landed normally).
+SESSION_START_FLAKE = re.compile(r"Control request timeout: initialize|ECONNRESET|socket hang up", re.IGNORECASE)
+
+
 def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
-    """One durable task per recurring validation or orchestration failure, with a deduplicated occurrence for each round."""
+    """One durable task per recurring validation or orchestration failure, with a deduplicated occurrence for each round.
+    A round whose agent session never started files nothing and returns 0."""
     import graph
     summary = str(result.get("summary", ""))
     reason = str(result.get("stop_reason") or result.get("error") or result.get("gave_up") or "")
     cause = reason or summary
+    if SESSION_START_FLAKE.search(cause.splitlines()[0] if cause else ""):
+        return 0
     signature = re.sub(r"fletchery/merge-round-[\w-]+", "<round-branch>", cause.splitlines()[0] if cause else "unknown")
     signature = re.sub(r"\b[0-9a-f]{40}\b", "<sha>", signature)
     signature = re.sub(r"merge-round(?:-[0-9a-f]{12})?", "<merge-checkout>", signature)

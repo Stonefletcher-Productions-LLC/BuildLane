@@ -44,5 +44,20 @@ class WorkerPermissionTests(unittest.TestCase):
         self.assertEqual(rt.add_dirs, [])
 
 
+class SessionStartFlakeTests(unittest.TestCase):
+    def test_round_whose_session_never_started_files_no_task(self):
+        from types import SimpleNamespace
+        import rounds
+
+        class NoGitHub:
+            def __getattr__(self, name):
+                raise AssertionError(f"GitHub must not be touched ({name})")
+
+        cfg = SimpleNamespace(base_branch="Test-Staging")
+        result = {"round": 39, "result": "crashed", "summary": "Exception: Control request timeout: initialize",
+                  "stop_reason": "Exception: Control request timeout: initialize"}
+        self.assertEqual(rounds.report_failure(NoGitHub(), cfg, result), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
