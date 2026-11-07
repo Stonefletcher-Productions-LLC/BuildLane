@@ -79,6 +79,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                                           "disposition": {"type": "string", "enum": ["failed", "deferred"]}}}},
                               "checkpoint": {"type": "object", "properties": {"worktree": {"type": "string"},
                                              "branch": {"type": "string"}, "head": {"type": "string"}}},
+                              "playtest": {"type": "array", "items": {"type": "object", "required": ["pr", "check"],
+                                           "properties": {"pr": {"type": "integer"}, "check": {"type": "string"}}}},
                               "summary": {"type": "string"}, "gave_up": {"type": "string"},
                               "stop_reason": {"type": "string"}}},
     "planner": {"type": "object", "required": ["issues"],

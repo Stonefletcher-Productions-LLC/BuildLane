@@ -435,6 +435,69 @@ def validation_plan(files: list[str], base: str = "Test-Staging") -> str:
             "Changed PR paths (recheck after integration fixes): " + ", ".join(shown) + suffix)
 
 
+# ---- playtest acceptance (workers.mergePlaytest) ----
+
+def playtest_text(cfg) -> str:
+    """The merger's instruction when the project validates people-only acceptance in playtests (Alex, 2026-11-07:
+    "For two player items, we will validate them later via play tests. Ensure changes merge for them")."""
+    if not getattr(cfg, "merge_playtest", False):
+        return ""
+    return ("\n\n# Acceptance that needs people: land it, list it for the playtest\n\n"
+            "This overrides the deferral rule above and any project note that says to defer such PRs. When a PR's only "
+            "unrun acceptance needs people or hardware this PC does not have (a second PC or player, a Steam invite/join, "
+            "listen-host and clients, a packaged or foreground-window check that needs desktop observation, a manual "
+            "visual or in-engine review with no harness), do not defer it. Land it once its build, content imports and "
+            "every automated check that can run here pass. For each such check add "
+            "`{\"pr\": N, \"check\": \"what a person must verify, in one line\"}` to the optional `playtest` array of your "
+            "answer, and list them under \"Playtest checks\" in the round PR body. Fletchery puts them on the project's "
+            "playtest checklist. This does not cover missing inputs (an absent delivery or input folder): those are still "
+            "deferred with the reason. A failing automated check is still a failure.\n")
+
+
+def playtest_lines(round_no, items: list, merged: list) -> list[str]:
+    """Checklist lines for the playtest issue: only for PRs that actually landed."""
+    landed = {int(x) for x in merged or []}
+    out = []
+    for item in items or []:
+        if isinstance(item, dict) and str(item.get("pr", "")).isdigit() and int(item["pr"]) in landed:
+            check = " ".join(str(item.get("check", "")).split())[:300]
+            if check:
+                out.append(f"- [ ] #{int(item['pr'])} {check} (round {round_no})")
+    return out
+
+
+_PEOPLE_ONLY = re.compile(r"two[- ]?(?:pc|player|machine)|second pc|steam|listen[- ]host|clients?\b|multiplayer|joined|"
+                          r"manual|desktop observation|foreground|no harness|harness|in-engine review|screenshot|capture",
+                          re.I)
+_MISSING_INPUT = re.compile(r"missing input|input folder|is (?:still )?absent|delivery is absent|not on this pc", re.I)
+
+
+def people_only(why: str) -> bool:
+    """A deferral that only needs people or a harness, not missing inputs or defects."""
+    return bool(_PEOPLE_ONLY.search(why or "")) and not _MISSING_INPUT.search(why or "")
+
+
+def unpark_people_only(parked: dict) -> list[int]:
+    """With playtest acceptance on, PRs parked only for people-only acceptance go back into rounds."""
+    gone = [int(n) for n, v in parked.items() if str(n).isdigit() and v.get("parked") and people_only(v.get("why", ""))]
+    for n in gone:
+        parked.pop(str(n), None)
+    return sorted(gone)
+
+
+def is_parked(parked: dict, number: int, head: str, now: datetime | None = None) -> bool:
+    """Parked at this head and still inside the park window."""
+    entry = parked.get(str(number)) or {}
+    if not entry.get("parked") or entry.get("head") != head:
+        return False
+    now = now or datetime.now(timezone.utc)
+    try:
+        since = datetime.fromisoformat(str(entry["parked"]).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return now - since < timedelta(hours=PARK_HOURS)
+
+
 # ---- balance: value order and parking (loop.py) ----
 
 PARK_AFTER = 2          # deferrals at one head before the PR stops taking a round slot

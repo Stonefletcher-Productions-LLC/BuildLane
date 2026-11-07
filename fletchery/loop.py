@@ -44,6 +44,7 @@ class State:
     merge_round_no: int = 0                                   # the last merge round Fletchery started (rounds.py)
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
+    playtest_issue: int = 0                                   # the playtest checklist issue (mergePlaytest)
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
@@ -737,6 +738,12 @@ class Engine:
         if not resume and not self.plans.active_merge:
             # A PR deferred twice at one head (acceptance this PC cannot run) stops taking a slot until it changes;
             # the rest go most-unblocking first, so each round sets the most queued work moving.
+            if cfg.merge_playtest:
+                back = rounds.unpark_people_only(st.merge_parked)
+                if back:
+                    self.ctx.log("merge rounds: playtest acceptance is on; unparked " + ", ".join(f"#{x}" for x in back)
+                                 + " (their remaining checks need people and go on the playtest checklist)")
+                    st.save(self.state_dir / "state.json")
             ready = rounds.by_value(rounds.not_parked(ready, st.merge_parked), self._tasks)
         if resume:
             resume = self._reconcile_resume(resume, ready)
@@ -849,6 +856,7 @@ class Engine:
                                  round_file=round_file, validation=validation, additions=rounds.notes_text(rules, cfg) or "(none: use the "
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
+            prompt += rounds.playtest_text(cfg)
             if resume:
                 prompt += ("\n\n## Explicitly authorized interrupted-round recovery\n"
                            "The user authorized continuing final acceptance after the PC reservation clears. "
@@ -880,6 +888,7 @@ class Engine:
             res["pr"] = int(out.get("landed_pr") or 0)
             res["summary"] = (out.get("summary") or out.get("gave_up") or r.error or "")[:600]
             res["merged"] = [int(x) for x in out.get("merged") or [] if str(x).isdigit()]
+            res["playtest"] = [item for item in out.get("playtest") or [] if isinstance(item, dict)]
             left_out = [item for item in out.get("left_out") or [] if isinstance(item, dict)]
             res["deferred"] = [item for item in left_out if rounds.deferred(item)] + list(out.get("deferred") or [])
             res["left_out"] = [item for item in left_out if not rounds.deferred(item)]
@@ -928,6 +937,11 @@ class Engine:
             p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
             if p is not None:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
+        if res["result"] == "landed" and res.get("playtest"):
+            try:
+                self._record_playtest(n, res)
+            except Exception as e:
+                self.ctx.log(f"merge round {n}: could not update the playtest checklist: {type(e).__name__}: {e}")
         parked = rounds.record_deferrals(self.state.merge_parked, batch, res.get("deferred", []), n, res["at"])
         if parked:
             self.ctx.log(f"merge round {n}: parked " + ", ".join(f"#{x}" for x in parked)
@@ -1004,6 +1018,32 @@ class Engine:
         self.state.save(self.state_dir / "state.json")
         self.wake()
         return {"round": last["round"], "resume_authorized": True, "message": "Saved round queued; heavy work waits for the PC reservation."}
+
+    PLAYTEST_MARKER = "<!-- fletchery-playtest-checklist -->"
+
+    def _record_playtest(self, round_no, res: dict) -> None:
+        """Append the people-only checks of PRs that landed to the playtest checklist issue (made on first use)."""
+        import rounds
+        lines = rounds.playtest_lines(round_no, res.get("playtest"), res.get("merged"))
+        if not lines:
+            return
+        gh = self.ctx.gh
+        number = int(self.state.playtest_issue or 0)
+        issue = gh.api(f"repos/{self.cfg.repo}/issues/{number}") if number else None
+        if issue and issue.get("state") == "open" and self.PLAYTEST_MARKER in (issue.get("body") or ""):
+            body = issue.get("body") or ""
+            new = [x for x in lines if x not in body]
+            if new:
+                head, _, tail = body.partition(self.PLAYTEST_MARKER)
+                gh.edit_body(number, head.rstrip() + "\n" + "\n".join(new) + "\n\n" + self.PLAYTEST_MARKER + tail)
+        else:
+            body = ("Checks that need people (two players, a second PC, a manual or visual review). Merge rounds landed "
+                    "these PRs after every automated check passed; tick each one off in a playtest, or open a bug.\n\n"
+                    + "\n".join(lines) + "\n\n" + self.PLAYTEST_MARKER + "\n")
+            number = gh.create_issue(self.cfg.playtest_issue_title or "Playtest checklist", body, ["playtest"])
+            self.state.playtest_issue = number
+            self.state.save(self.state_dir / "state.json")
+        self.ctx.log(f"merge round {round_no}: {len(lines)} playtest check(s) added to issue #{number}")
 
     def _reconcile_resume(self, resume: dict, ready: list) -> dict:
         """A saved round resumes on its own candidate PRs. Deferred PRs that have changed head since are left for the
@@ -1092,12 +1132,15 @@ class Engine:
     def _backlog_full(self, prs: dict) -> bool:
         """Backpressure with hysteresis: the workers' PRs labelled for merging pause new tasks at the high mark and
         let them start again at the low mark. Off when merge rounds are off: nothing would drain the backlog."""
+        import rounds
         label = (self.cfg.merge_label or "ready").lower()
         excluded = self.state.merge_excluded
         # A PR left out at its current head waits for its repair, not for a round: it does not count.
         self.merge_backlog = sum(1 for p in prs.values() if p.base == self.cfg.base_branch
                                  and label in [l.lower() for l in p.labels] and not getattr(p, "draft", False)
-                                 and (excluded.get(str(p.number)) or {}).get("head") != p.head_sha)
+                                 and (excluded.get(str(p.number)) or {}).get("head") != p.head_sha
+                                 # nor does a parked one: it waits for a new commit or a person, not for a round
+                                 and not rounds.is_parked(self.state.merge_parked, p.number, p.head_sha))
         if not self.cfg.merge_rounds:
             self.backlog_paused = False
             return False
@@ -1402,6 +1445,7 @@ class Engine:
         counts as done when its issue closes (its PR merges), so a long chain waits on its first PR."""
         cache: dict = self.__dict__.setdefault("_merge_files", {})
         import merge as merge_mod
+        import rounds
         round_file = self.cfg.merge_round_file or str(self.state_dir / "merge-round.json")
         mv = merge_mod.view(round_file, self.cfg.heavy_lease_file, {n: p.head_sha for n, p in prs.items()})
         self.merge_view = mv
@@ -1435,7 +1479,9 @@ class Engine:
                          "ready": bool(pr and "ready" in pr.labels), "conflict": bool(pr and pr.mergeable is False),
                          "imports": imports, "flags": flags,
                          "fix_attempts": self.state.fix_attempts.get(str(t.pr_number), 0),
-                         "repair_wait": self.state.merge_excluded.get(str(t.pr_number), {}).get("why", "")})
+                         "repair_wait": self.state.merge_excluded.get(str(t.pr_number), {}).get("why", ""),
+                         "parked": (self.state.merge_parked.get(str(t.pr_number), {}).get("why", "")
+                                    if pr and rounds.is_parked(self.state.merge_parked, pr.number, pr.head_sha) else "")})
         rows.sort(key=lambda r: (-len(r["unblocks"]), r["pr"]))
         return rows
 
@@ -1549,13 +1595,19 @@ class Engine:
             mark = {"done": "✓", "running": "▶", "waiting": "⏸", "failed": "✗", "todo": "○"}
             L += ["Steps: " + " → ".join(f"{mark[s['state']]} {s['name']}" for s in mv["steps"]), ""]
         in_round = [r for r in merge if r["pr"] in mv["prs"]]
-        rest = [r for r in merge if r["pr"] not in mv["prs"]]
+        import rounds
+        parked_rows = [r for r in merge if r["pr"] not in mv["prs"] and r.get("parked")]
+        rest = [r for r in merge if r["pr"] not in mv["prs"] and not r.get("parked")]
         if in_round:
             L += [f"**In round {mv['round'] or '?'}** ({len(in_round)}):", *[self.merge_line(r) for r in in_round], ""]
         L += [("**Waiting for a round**" if mv["prs"] else "**Waiting to merge**") + f" ({len(rest)}), most-unblocking "
               "first. A task that depends on one starts only once its PR merges:"]
         L += [self.merge_line(r) for r in rest] or ["- (nothing)"]
         L += [""]
+        if parked_rows:
+            L += [f"**Parked** ({len(parked_rows)}): deferred twice at the same head, so rounds skip them until a new "
+                  f"commit (or {rounds.PARK_HOURS} h). They don't count toward the backlog."]
+            L += [self.merge_line(r) + f" · {r['parked'][:240]}" for r in parked_rows] + [""]
         no_pr = [t for t in tasks.values() if t.status == PR and not t.pr_number]
         if no_pr:
             L += section("In the lane, PR not found", [f"- #{t.number} {t.title}" for t in no_pr], "")

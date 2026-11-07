@@ -304,6 +304,12 @@ as `workers.roundAgent` (`""` = Best active worker); the old `mergeAgent` key is
 on Best active worker. A round stopped by its agent's usage limit, or by an unreachable model, is not the PRs'
 fault: the same PRs run again at once on the next available agent, and a queued merge window goes back to queued
 instead of blocked.
+
+With **Land people-only checks for playtests** on (workers.mergePlaytest), a PR whose only unrun acceptance needs
+people (two players, a second PC, a manual or visual review) lands once its build, imports and automated checks pass;
+the round lists those checks and Fletchery adds them to a **Playtest checklist** issue. Missing inputs are still
+deferred. PRs parked at an unchanged head show under **Parked** and no longer count toward the backlog that pauses
+new feature tasks.
 Each round stops at confirmed validation failures and allows one small repair cycle per implicated PR
 (up to 15 minutes of diagnosis/editing). A failed repair leaves that head out; its dependencies wait,
 while independent PRs continue. Excluded heads stay out across restarts until changed, and worker PRs

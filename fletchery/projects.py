@@ -121,6 +121,9 @@ FIELDS = [
              "never waits for approval. Workers at 0 don't stop it."},
     {"group": "Merging", "key": "merge_label", "label": "Merge label", "type": "text",
      "help": "PRs into the base branch with this label go in the next round."},
+    {"group": "Merging", "key": "merge_playtest", "label": "Land people-only checks for playtests", "type": "bool",
+     "help": "A PR whose only unrun acceptance needs people (two players, a second PC, a manual or visual review) lands "
+             "once every automated check passes; its checks go on the Playtest checklist issue instead of parking it."},
     {"group": "Merging", "key": "merge_round_max", "label": "PRs per round (most)", "type": "int", "min": 1, "max": 60},
     {"group": "Merging", "key": "merge_agent", "label": "Agent for rounds", "type": "select", "options_from": "agents",
      "help": "Best active worker picks the strongest agent that is on, signed in and not at a usage limit, each round. "
