@@ -161,6 +161,13 @@ class GitHub:
                 return p["number"], p["base"]["ref"], p["merged_at"]
         return None
 
+    def merged_heads(self, branch: str) -> set[str]:
+        """Head commits of PRs from `branch` that merged. GitHub keeps refs/pull/<n>/head, so a checkout sitting on one
+        of these commits holds nothing unique even after its branch is deleted or the base history is rewritten."""
+        owner = self.repo.split("/")[0]
+        items = self.api(f"repos/{self.repo}/pulls?state=closed&head={owner}:{branch}&per_page=30") or []
+        return {p["head"]["sha"] for p in items if p.get("merged_at") and p.get("head", {}).get("sha")}
+
     def compare_commits(self, base: str, head: str) -> list[dict]:
         """Commits in `head` that `base` does not have, oldest first: sha, message, author."""
         d = self.api(f"repos/{self.repo}/compare/{base}...{head}") or {}
@@ -416,6 +423,9 @@ class FakeGitHub:
 
     def merged_pr(self, branch):
         return getattr(self, "merged", {}).get(branch)
+
+    def merged_heads(self, branch):
+        return set(getattr(self, "merged_shas", {}).get(branch, ()))
 
     def close_issue(self, number):  # also what the lane does when a PR with "Closes #n" lands
         self.writes.append(f"close #{number}")

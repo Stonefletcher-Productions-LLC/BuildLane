@@ -93,6 +93,24 @@ class StorageSchedulingTests(unittest.IsolatedAsyncioTestCase):
             cleanup.assert_not_called()
         future.set_result(Outcome(1,'blocked'))
 
+    async def test_landed_round_cleans_while_workers_run_but_not_during_a_round(self):
+        engine,_,_=self.engine()
+        engine.ctx.repo.git=lambda *args,**kwargs:''
+        future=asyncio.get_running_loop().create_future()
+        trim={'checked_at':'x','freed_bytes':0,'trimmed':[],'skipped':[],'error':''}
+        with patch('storage.maintain',return_value=self.result()) as cleanup, patch('storage.trim_merge_checkouts',return_value=trim) as trimmer:
+            engine.jobs[future]=(1,None,None)
+            engine._storage_after_round=True
+            engine.round_job=future;engine._maybe_storage({});self.assertIsNone(engine._storage_job)
+            engine.round_job=None;engine._maybe_storage({})
+            await engine._storage_job
+            cleanup.assert_called_once();trimmer.assert_called_once()
+            self.assertFalse(engine._storage_after_round)
+            engine._maybe_storage({})  # back to the idle-only hourly schedule
+            self.assertEqual(cleanup.call_count,1)
+        self.assertTrue((engine.state_dir/'merge-trim.json').exists())
+        future.set_result(Outcome(1,'blocked'))
+
     async def test_busy_pc_retry_is_bounded_and_manual_request_survives(self):
         engine,_,_=self.engine()
         engine.ctx.repo.git=lambda *args,**kwargs:''

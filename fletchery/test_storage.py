@@ -149,16 +149,52 @@ class StorageTests(unittest.TestCase):
         result=self.run_maintenance(dry_run=True,limit=10)
         self.assertEqual([Path(x["path"]).name for x in result["eligible"]],["1-finished"])
 
-    def test_explicit_active_and_preserved_registry_paths_are_preserved(self):
+    def test_explicit_preserved_and_open_active_registry_paths_are_preserved(self):
         self.assert_preserved(self.run_maintenance(protected_paths=[self.path]))
         task_registry=self.root/".task-checkouts.json"
-        for data in ({"active":{"branch":{"path":str(self.path),"local_branch":"branch"}},"preserved":[]},
-                     {"active":{},"preserved":[{"path":str(self.path)}]}):
-            task_registry.write_text(json.dumps(data))
-            self.assert_preserved(self.run_maintenance())
+        task_registry.write_text(json.dumps({"active":{},"preserved":[{"path":str(self.path)}]}))
+        self.assert_preserved(self.run_maintenance())
+        task_registry.write_text(json.dumps({"active":{self.repo.branch:{"path":str(self.path),"local_branch":self.repo.branch}},"preserved":[]}))
+        self.assert_preserved(self.run_maintenance(open_tasks={1}))
+        self.assert_preserved(self.run_maintenance(protected_paths=[self.path]))
         task_registry.unlink()
         (self.root/".merge-checkouts.json").write_text(json.dumps({"active":str(self.path),"quarantined":[]}))
         self.assert_preserved(self.run_maintenance())
+
+    def test_finished_task_active_record_is_retired_and_forgotten(self):
+        task_registry=self.root/".task-checkouts.json"
+        other={"path":str(self.root/"2-other"),"local_branch":"claude/foreman-2-other"}
+        task_registry.write_text(json.dumps({"active":{self.repo.branch:{"path":str(self.path),"local_branch":self.repo.branch},
+                                                       "claude/foreman-2-other":other},"preserved":[]}))
+        result=self.run_maintenance()
+        self.assertEqual(len(result["retired"]),1,result)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(json.loads(task_registry.read_text())["active"],{"claude/foreman-2-other":other})
+
+    def test_final_attempt_checkout_of_a_finished_task_is_retired(self):
+        attempt=self.make_candidate("1-finished-attempt-a123456789ab")
+        self.repo.branch="fletchery/task-1-attempt-a123456789ab"
+        (self.root/".task-checkouts.json").write_text(json.dumps({"active":{"claude/foreman-1-finished":{"path":str(attempt),
+            "local_branch":self.repo.branch}},"preserved":[{"path":str(self.path)}]}))
+        result=self.run_maintenance(limit=10)
+        self.assertEqual([Path(x["path"]).name for x in result["retired"]],["1-finished-attempt-a123456789ab"],result)
+        self.assertTrue(self.path.exists(),"the preserved first attempt stays")
+
+    def test_merged_pr_head_counts_as_published_after_history_rewrite(self):
+        self.repo.published=False  # not an ancestor of the rewritten base
+        self.gh.merged_heads.return_value={"c"*40}
+        self.assert_preserved(self.run_maintenance())
+        self.gh.merged_heads.return_value={self.repo.head}
+        result=self.run_maintenance()
+        self.assertEqual(len(result["retired"]),1,result)
+        self.gh.merged_heads.assert_called_with("claude/foreman-1-finished")
+
+    def test_unreal_build_outputs_are_regenerable_but_saved_is_not(self):
+        for name in ("Intermediate/Build/x.obj","Binaries/Win64/x.dll","DerivedDataCache/a.udd","Plugins/LSAnim/Intermediate/x.obj"):
+            self.assertTrue(storage._regenerable_ignored(name,self.path),name)
+        for name in ("Saved/Logs/x.log","Content/Intermediate/x.uasset","Plugins/Intermediate/x"):
+            self.assertFalse(storage._regenerable_ignored(name,self.path),name)
+
 
     def test_malformed_recovery_registry_fails_closed(self):
         for text in ("{partial", "[]", '{"active":{},"preserved":[{}]}'):
@@ -273,6 +309,45 @@ class StorageTests(unittest.TestCase):
             result=self.run_maintenance(limit=1)
         self.assertEqual(len(result["retired"]),1)
         self.assertEqual(len(self.repo.paths),1)
+
+
+class MergeTrimTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(prefix="fletchery-trim-test-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve()/"worktrees";self.root.mkdir()
+        self.repo=FixtureRepo(self.root)
+        self.guard=patch("rounds.checkout_guard");self.guard_mock=self.guard.start();self.addCleanup(self.guard.stop)
+        self.dirs={}
+        for name in ("merge-round","merge-round-0ce9e7824c26","merge-round-24-remainder","1-finished"):
+            path=self.root/name
+            for sub in ("Intermediate/Build","Binaries/Win64","DerivedDataCache","Saved/Logs","Source"):
+                (path/sub).mkdir(parents=True);(path/sub/"f.bin").write_bytes(b"x"*10)
+            self.dirs[name]=path
+        (self.root/"merge-round-0ce9e7824c26.recovery.json").write_text("{}")
+        (self.root/".merge-checkouts.json").write_text(json.dumps({"active":str(self.dirs["merge-round-0ce9e7824c26"]),"quarantined":[]}))
+
+    def test_idle_merge_checkouts_lose_only_build_outputs(self):
+        result=storage.trim_merge_checkouts(self.repo,protected_paths=[self.dirs["merge-round-24-remainder"]])
+        self.assertFalse(result["error"],result)
+        old=self.dirs["merge-round"]
+        for sub in ("Intermediate","Binaries","DerivedDataCache"):
+            self.assertFalse((old/sub).exists(),sub)
+        self.assertTrue((old/"Saved/Logs/f.bin").exists() and (old/"Source/f.bin").exists())
+        self.assertEqual(result["freed_bytes"],30)
+        for keep in ("merge-round-0ce9e7824c26","merge-round-24-remainder","1-finished"):
+            self.assertTrue((self.dirs[keep]/"Intermediate/Build/f.bin").exists(),keep)
+
+    def test_busy_checkout_or_lease_keeps_everything(self):
+        self.guard_mock.side_effect=RuntimeError("Merge checkout still owned by running processes")
+        result=storage.trim_merge_checkouts(self.repo)
+        self.assertEqual(result["freed_bytes"],0)
+        self.assertTrue((self.dirs["merge-round"]/"Intermediate/Build/f.bin").exists())
+
+    def test_dry_run_changes_nothing(self):
+        result=storage.trim_merge_checkouts(self.repo,dry_run=True)
+        self.assertTrue(result["trimmed"])
+        self.assertTrue((self.dirs["merge-round"]/"Binaries/Win64/f.bin").exists())
 
 
 if __name__ == '__main__':
