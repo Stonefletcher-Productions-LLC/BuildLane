@@ -166,6 +166,7 @@ class Engine:
         self._aloop: asyncio.AbstractEventLoop | None = None
         self.watcher = None
         self._storage_job = None
+        self._storage_after_round = False  # a round just landed: clean now, even while workers run
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
@@ -591,11 +592,16 @@ class Engine:
                 "requested": self.state.storage_requested, "last": dict(self.state.storage_last)}
 
     def _maybe_storage(self, tasks: dict, draining: bool = False) -> None:
-        if (self.dry_run or draining or self.state.held or not hasattr(self.ctx.repo, "git") or self.jobs or self.round_job is not None
+        # The PC is almost never fully idle, so waiting for zero workers meant cleanup last ran a day before E: filled
+        # (2026-11-07). After a landed round it runs alongside workers: every checkout it touches is proven idle,
+        # finished and published, and open tasks' checkouts are never candidates.
+        after_round = self._storage_after_round and self.cfg.auto_cleanup
+        if (self.dry_run or draining or self.state.held or not hasattr(self.ctx.repo, "git") or (self.jobs and not after_round)
+                or self.round_job is not None
                 or (self._storage_job and not self._storage_job.done()) or (not self.cfg.auto_cleanup and not self.state.storage_requested)):
             return
         last = self.state.storage_last
-        if last.get("checked_at") and (last.get("error") or not self.state.storage_requested):
+        if not after_round and last.get("checked_at") and (last.get("error") or not self.state.storage_requested):
             interval = 300 if last.get("error") else 3600
             try:
                 if (datetime.now(timezone.utc) - datetime.fromisoformat(last["checked_at"].replace("Z", "+00:00"))).total_seconds() < interval:
@@ -612,12 +618,22 @@ class Engine:
         if progress.get("worktree"):
             protected.append(progress["worktree"])
         immediate = self.state.storage_requested
+        self._storage_after_round = False
         async def clean():
             import storage
             try:
+                trimmed = await asyncio.to_thread(storage.trim_merge_checkouts, self.ctx.repo,
+                    protected_paths=protected, lease_file=self.cfg.heavy_lease_file)
+                __import__("rounds").write_file(str(self.state_dir / "merge-trim.json"), trimmed)
+                if trimmed.get("trimmed"):
+                    self.ctx.log(f"Storage: deleted build outputs in {len(trimmed['trimmed'])} folders of idle merge checkouts "
+                                 f"({trimmed['freed_bytes'] / 1024**3:.2f} GiB)")
+            except Exception as exc:
+                self.ctx.log(f"Storage: merge checkout trim failed: {type(exc).__name__}: {exc}")
+            try:
                 result = await asyncio.to_thread(storage.maintain, self.ctx.repo, self.ctx.gh, self.state_dir,
                     protected_paths=protected, open_tasks=list(tasks), lease_file=self.cfg.heavy_lease_file,
-                    retention_hours=0 if immediate else self.cfg.cleanup_retention_hours, limit=10)
+                    retention_hours=0 if immediate else self.cfg.cleanup_retention_hours, limit=25)
                 __import__("rounds").write_file(str(self.state_dir / "storage-cleanup.json"), result)
                 self.state.storage_last = {**result, "eligible": result.get("eligible", [])[:10], "skipped": result.get("skipped", [])[:20]}
                 if not result.get("error"):
@@ -941,6 +957,8 @@ class Engine:
             p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
             if p is not None:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
+        if res["result"] == "landed":
+            self._storage_after_round = True  # finished tasks and the old merge checkout are now cleanable
         if res["result"] == "landed" and res.get("playtest"):
             try:
                 self._record_playtest(n, res)
