@@ -27,6 +27,12 @@ worker reads the code itself; you save it the wrong turns.
   PR, or merging all happen after the PR opens, so put them in the plan's Proof instead. It also stays empty for
   access that may or may not be refused ("if call.py is denied"): tell the worker to report the exact denied
   command and stop. Only a decision or access needed *before any work can start* goes here.
+- Check readiness before you plan, because a worker that discovers these mid-session costs a full session and
+  lands the task in Needs you: (1) the change belongs in this repository, not in another one the worker cannot
+  open (if the issue's core change is in another repository, say which in `needs_human`); (2) every input it names
+  (a screenshot, a source file, an export) is in the repository or attached to the issue, not only on someone's
+  disk (if one is missing, name it in `needs_human`); (3) its proof can run unattended here, and anything that can't (native builds, captures, a person's look)
+  is listed under Proof as Build Lane or post-PR review, never as a reason to stop.
 
 {additions}
 

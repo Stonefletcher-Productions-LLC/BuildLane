@@ -364,12 +364,17 @@ class AgentPool:
             return {"levels": []}
         raw = raw if isinstance(raw, dict) else {}
         return {"levels": list(raw.get("levels", [HARD])), "lowerTo": raw.get("lowerTo", MEDIUM),
-                "architects": list(raw.get("architects", [])), "minScore": int(raw.get("minScore", 70))}
+                "architects": list(raw.get("architects", [])), "minScore": int(raw.get("minScore", 70)),
+                "skills": list(raw.get("skills", []))}
 
-    def wants_plan(self, level: str, body: str) -> bool:
+    def wants_plan(self, level: str, body: str, skill: str = "") -> bool:
+        """Hard tasks, and any task of a kind on `routing.plan.skills` (e.g. "art"): those fail on setup (Blender
+        access, another repo, a missing input) far more often than on code, and the architect's read-only look
+        catches that before a worker's session is spent (LifeShare 2026-11-06/07: art workers 1 of 9)."""
         if not self.multi or plan_of(body):
             return False
-        return level in self.plan_policy()["levels"]
+        pol = self.plan_policy()
+        return level in pol["levels"] or bool(skill and skill in pol["skills"])
 
     def architect(self, skill: str = "") -> str | None:
         """Who plans: the first free agent on `routing.plan.architects`, else the strongest free agent that may plan

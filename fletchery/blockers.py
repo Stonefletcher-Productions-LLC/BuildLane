@@ -44,7 +44,15 @@ def planner_root(task, ctx) -> Path:
     """Read an existing task worktree, including uncommitted drafts; never create or reset one to plan."""
     resolver = getattr(ctx.repo, "existing_task_worktree", None)
     if resolver is not None:
-        candidate = resolver(task.number, task.slug, task.branch)
+        try:
+            candidate = resolver(task.number, task.slug, task.branch)
+        except RuntimeError as e:
+            # An unusable evidence checkout (switched to another branch by hand, missing) must not stop the
+            # planning: it read-only plans from the project checkout instead. LifeShare #929 deferred its planner
+            # on every pass for 13 hours on 2026-11-07 ("Task evidence checkout belongs to another local branch").
+            if getattr(ctx, "log", None):
+                ctx.log(f"#{task.number}: planning from the project checkout ({e})")
+            return Path(ctx.cfg.project_root)
         return candidate if candidate is not None else Path(ctx.cfg.project_root)
     root = getattr(ctx.repo, "worktree_root", None)
     if root:

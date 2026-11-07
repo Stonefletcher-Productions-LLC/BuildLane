@@ -95,6 +95,21 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+BLOCKER_RECHECK_MINUTES = 30  # how soon the Needs you backlog planner may look at the same task again
+
+
+def _recent(stamp: str, minutes: float) -> bool:
+    if not stamp:
+        return False
+    try:
+        at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - at).total_seconds() < minutes * 60
+
+
 class _StatusTap:
     """Passes everything through to the GitHub client; a status label change also updates the dashboard's board."""
     def __init__(self, inner, fm: "Engine"):
@@ -481,6 +496,11 @@ class Engine:
             import rules as rules_mod
             for t in sorted(tasks.values(), key=lambda t: (st.blocker_checked.get(str(t.number), ""), t.created_at, t.number)):
                 if t.status != BLOCKED or t.number in self.active or self.resource_wait_reason(t.number):
+                    continue
+                if _recent(st.blocker_checked.get(str(t.number), ""), BLOCKER_RECHECK_MINUTES):
+                    # A planner that deferred (an exception, no agent free) is not retried every pass: #929 ran 788
+                    # times in 13 hours on 2026-11-07, two GitHub reads each, while the REST limit was the bottleneck.
+                    # New blocks are planned straight away by the pipeline; a person's answer re-queues at once.
                     continue
                 if t.repository_dependencies - repository_closed:
                     continue
