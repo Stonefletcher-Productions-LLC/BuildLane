@@ -212,13 +212,38 @@ def worktree_busy(path) -> list[str]:
     ps = ("$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -ErrorAction Stop | "
           "Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and "
           "$_.CommandLine.Replace('\\','/') -match '" + pattern + "' } | "
-          "ForEach-Object { \"$($_.ProcessId) $($_.Name)\" }")
+          "ForEach-Object { \"$($_.ProcessId)`t$($_.Name)`t$($_.CommandLine -replace '[\\r\\n\\t]', ' ')\" }")
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True,
                              text=True, timeout=60, encoding="utf-8", errors="replace", check=True).stdout
     except (OSError, subprocess.SubprocessError) as e:
         raise RuntimeError(f"Cannot verify merge checkout ownership: {e}") from e
-    return [l.strip() for l in out.splitlines() if l.strip()]
+    owners = []
+    for line in out.splitlines():
+        pid, _, rest = line.strip().partition("\t")
+        name, _, command = rest.partition("\t")
+        if not pid:
+            continue
+        if log_follower(name, command, normalized):
+            continue  # a `tail -f` left on a round's log reads one file; it owns nothing (2026-11-07, 3 h stall)
+        owners.append(f"{pid} {name}".strip())
+    return owners
+
+
+_FOLLOW = re.compile(r"(?:^|\s)(?:-[A-Za-z0-9+]*f[A-Za-z0-9]*|--follow(?:=\S+)?|-F)(?=\s|$)")
+
+
+def log_follower(name: str, command: str, checkout: str) -> bool:
+    """A `tail -f`/`tail -F` whose only paths in the checkout are under Saved/ (logs and reports): it holds no build,
+    editor or git state, and checkouts keep Saved/ when they are reused, so it must not block a round."""
+    if (name or "").lower() not in ("tail.exe", "tail") or not _FOLLOW.search(command or ""):
+        return False
+    norm = (command or "").replace("\\", "/")
+    root = checkout.replace("\\", "/").rstrip("/")
+    drive = re.match(r"([A-Za-z]):/(.*)", root)
+    roots = [re.escape(root)] + ([f"/{drive[1].lower()}/{re.escape(drive[2])}"] if drive else [])
+    found = list(re.finditer("(?i)(?:" + "|".join(roots) + r")(/[^\s\"']*)?", norm))
+    return bool(found) and all((m.group(1) or "").lower().startswith("/saved/") for m in found)
 
 
 class CheckoutBusy(RuntimeError):
