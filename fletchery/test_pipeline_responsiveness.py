@@ -237,8 +237,10 @@ class PersistentRetryTests(unittest.TestCase):
         first = _requeue_or_block(self.context(stored), task, Outcome(1, "requeue"), "push failed")
         self.assertEqual(first.result, "requeue")
         second = _requeue_or_block(self.context(stored), task, Outcome(1, "requeue"), "push failed again")
-        self.assertEqual(second.result, "blocked")
-        self.assertIn("second infrastructure failure", second.detail)
+        self.assertEqual(second.result, "requeue")
+        third = _requeue_or_block(self.context(stored), task, Outcome(1, "requeue"), "push failed a third time")
+        self.assertEqual(third.result, "blocked")
+        self.assertIn("3 infrastructure failures in a row", third.detail)
 
     def test_history_lookup_failure_does_not_allow_unbounded_retries(self):
         ctx = self.context([])

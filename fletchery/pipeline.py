@@ -170,6 +170,29 @@ def _adopt_open_pr(task: Task, ctx: Context, out: Outcome) -> Outcome | None:
     return out
 
 
+def _already_merged(task: Task, ctx: Context, out: Outcome) -> Outcome | None:
+    """A worker with nothing to commit, on a task whose branch already merged: the work is done, so it goes back to the
+    PR state, where the next pass closes it with a link to the merged PR. LifeShare #806, #813 and #905 (2026-11-06/07)
+    went to Needs you as "worker made no commits" although their PRs had merged into Test-Staging."""
+    gh = ctx.gh
+    if not task.branch or not hasattr(gh, "merged_pr"):
+        return None
+    try:
+        found = gh.merged_pr(task.branch)
+    except Exception as e:
+        ctx.log(f"#{task.number}: merged PR lookup failed ({e})")
+        return None
+    if not found:
+        return None
+    number = found[0]
+    gh.set_status(task.number, PR)
+    gh.comment(task.number, f"Fletchery: nothing left to write; PR #{number} from `{task.branch}` already merged "
+                            f"into `{found[1]}`. This task is done.")
+    out.result, out.pr_number, out.detail = "pr", number, f"PR #{number} (already merged)"
+    ctx.log(f"#{task.number}: PR #{number} already merged; nothing to write")
+    return out
+
+
 async def _plan_first(task: Task, ctx: Context, out: Outcome) -> "Outcome | None":
     """Hard tasks are planned before they are written: a strong model reads the code read-only and writes a short plan
     into the issue body, and the router then gives the writing to a cheaper agent (routing.plan). The plan stays on the
@@ -183,9 +206,13 @@ async def _plan_first(task: Task, ctx: Context, out: Outcome) -> "Outcome | None
     level, _ = agents_mod.classify(task.title, agents_mod.strip_plan(task.body), task.labels,
                                    pool.routing.get("hardPatterns"), pool.routing.get("easyPatterns"),
                                    len(task.depends_on), pool.routing.get("hardScore"))
-    if not pool.wants_plan(level, task.body):
-        return None
     skill, _ = scores.classify_skill(task.title, task.body, task.labels, pool.routing.get("defaultSkill", "cpp"))
+    try:
+        wanted = pool.wants_plan(level, task.body, skill)
+    except TypeError:  # a pool without the skill argument
+        wanted = pool.wants_plan(level, task.body)
+    if not wanted:
+        return None
     name = pool.architect(skill)
     if not name:
         ctx.log(f"#{task.number}: no architect free; written without a plan")
@@ -314,6 +341,9 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     await asyncio.to_thread(_load_notes, ctx, task)
     try:
         await asyncio.to_thread(repo.fetch_base)
+    except Exception as e:  # a network blip says nothing about the task (LifeShare #1071/#1101, 2026-11-07)
+        return await asyncio.to_thread(_requeue_or_block, ctx, task, out, f"could not fetch the base branch: {e}")
+    try:
         wt = await asyncio.to_thread(repo.worktree, task.number, task.slug, task.branch, cfg.heavy_lease_file)
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
     except Exception as e:
@@ -345,6 +375,9 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     if await asyncio.to_thread(repo.dirty, wt):
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
     if not await asyncio.to_thread(repo.has_commits, wt):
+        merged = await asyncio.to_thread(_already_merged, ctx, task, out)
+        if merged is not None:
+            return merged
         return await fail("worker made no commits")
     worker_report = r.output
 
@@ -779,19 +812,39 @@ def _block(ctx: Context, out: Outcome, why: str) -> Outcome:
     return out
 
 
+INFRA_RETRIES = 2  # infrastructure requeues in a row before a person is asked
+
+# Comments that end a run of infrastructure retries: the task got somewhere, or a person stepped in.
+_RETRY_RESET = ("Fletchery blocked this task", "Fletchery opened PR", "Fletchery found PR", "Fletchery: ")
+
+
+def recent_requeues(comments: list[dict], marker: str = "Fletchery requeued") -> int:
+    """Infrastructure requeues since the task last got somewhere (a PR, a block) or a person commented. Counting every
+    requeue in the issue's life blocked long-lived tasks on their first blip: LifeShare 2026-11-04..07, a task requeued
+    once on Monday went to Needs you on Friday's session timeout, fetch failure or `[WinError 2]`."""
+    n = 0
+    for c in reversed(comments):
+        body = str(c.get("body", ""))
+        if body.startswith(marker):
+            n += 1
+        elif not c.get("fletchery", True) or body.startswith(_RETRY_RESET):
+            break
+    return n
+
+
 def _requeue_or_block(ctx: Context, task: Task, out: Outcome, why: str) -> Outcome:
     """Infrastructure failures (a crashed session, a push that bounced) are not verdicts on the task: back to the
-    queue once, blocked the second time so a broken setup cannot burn budget in a loop."""
+    queue up to INFRA_RETRIES times in a row, then blocked so a broken setup cannot burn budget in a loop."""
     marker = "Fletchery requeued"
     try:
         # Use the same durable interface in production and tests. GitHub's real
         # client has no in-memory .comments dictionary, and retries survive restart.
         thread = ctx.gh.issue_thread(task.number)
-        prior = sum(1 for c in thread.get("comments", []) if str(c.get("body", "")).startswith(marker))
+        prior = recent_requeues(thread.get("comments", []), marker)
     except Exception as e:
         return _block(ctx, out, why + f"\n\n(could not verify infrastructure retry history: {e}; not retrying)")
-    if prior >= 1:
-        return _block(ctx, out, why + "\n\n(second infrastructure failure; not retrying)")
+    if prior >= INFRA_RETRIES:
+        return _block(ctx, out, why + f"\n\n({prior + 1} infrastructure failures in a row; not retrying)")
     ctx.gh.set_status(task.number, QUEUED)
     ctx.gh.comment(task.number, f"{marker} this task: {why}")
     out.result, out.detail = "requeue", why

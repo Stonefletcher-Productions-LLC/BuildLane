@@ -170,7 +170,9 @@ ctx, tmp = ctx_with({1: T(1, "a")}, script={("worker", 1): {"error": "CLI crashe
 fm, out = run_once(ctx, tmp)
 assert out[0].result == "requeue" and ctx.gh.tasks[1].status == QUEUED
 fm, out = run_once(ctx, tmp)
-assert out[0].result == "blocked" and "second infrastructure failure" in out[0].detail
+assert out[0].result == "requeue" and ctx.gh.tasks[1].status == QUEUED  # two blips in a row are still retried
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "blocked" and "3 infrastructure failures in a row" in out[0].detail
 
 # ---- gates selection from the diff, by the project's rules (.fletchery/gates.json) ----
 import rules as rules_mod
