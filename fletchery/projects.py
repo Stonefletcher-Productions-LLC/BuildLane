@@ -121,6 +121,10 @@ FIELDS = [
              "never waits for approval. Workers at 0 don't stop it."},
     {"group": "Merging", "key": "merge_label", "label": "Merge label", "type": "text",
      "help": "PRs into the base branch with this label go in the next round."},
+    {"group": "Merging", "key": "pr_check_command", "label": "PC check before ready", "type": "text",
+     "help": "A command run in the build checkout on a worker's PR merged onto the base branch, between rounds (e.g. build "
+             "and quick tests). Exit 0 labels the PR for merging; a failure goes back to its worker; exit 2 means busy, "
+             "try again later. Empty: worker PRs are labelled for merging as soon as they open."},
     {"group": "Merging", "key": "merge_playtest", "label": "Land people-only checks for playtests", "type": "bool",
      "help": "A PR whose only unrun acceptance needs people (two players, a second PC, a manual or visual review) lands "
              "once every automated check passes; its checks go on the Playtest checklist issue instead of parking it."},

@@ -48,7 +48,7 @@ WORKER_KEYS = {
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
     "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
     "mergeRoundMax": "merge_round_max", "roundAgent": "merge_agent", "mergeNotes": "merge_notes",
-    "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "mergePlaytest": "merge_playtest", "playtestIssueTitle": "playtest_issue_title", "roundSharedSessions": "round_shared_sessions",
+    "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "mergePlaytest": "merge_playtest", "prCheckCommand": "pr_check_command", "prCheckTimeoutMinutes": "pr_check_timeout_minutes", "playtestIssueTitle": "playtest_issue_title", "roundSharedSessions": "round_shared_sessions",
     "mergeBacklogHigh": "merge_backlog_high", "mergeBacklogLow": "merge_backlog_low", "agents": "agents", "routing": "routing", "escalate": "escalate",
 }
 # profile key (top level) -> Config field
@@ -114,6 +114,8 @@ class Config:
     merge_notes: str = ""                    # a file with the project's round instructions when the repo has no .fletchery/merger.md
     merge_budget_usd: float = 60.0
     merge_max_turns: int = 600
+    pr_check_command: str = ""               # prcheck.py: built and quick-tested on the PC before a worker PR gets the merge label
+    pr_check_timeout_minutes: float = 60
     merge_playtest: bool = False             # land PRs whose only unrun acceptance needs people (two players, manual review)
     playtest_issue_title: str = "Playtest checklist"  # those checks go on this issue instead of deferring the PR
     merge_retry_minutes: float = 45          # after a round that landed nothing, wait this long before trying the same PRs

@@ -310,6 +310,12 @@ people (two players, a second PC, a manual or visual review) lands once its buil
 the round lists those checks and Fletchery adds them to a **Playtest checklist** issue. Missing inputs are still
 deferred. PRs parked at an unchanged head show under **Parked** and no longer count toward the backlog that pauses
 new feature tasks.
+
+**PC check before ready** (`workers.prCheckCommand`): workers can't compile or run native tests, so without it the first
+build of their code is a merge round. With a command set, a worker's PR opens without the merge label. Between
+rounds, Fletchery merges it onto the base branch in the shared build checkout and runs the command (no agent, below
+normal priority). Exit 0 labels it for merging; a failure is posted on the PR as lane feedback, which sends it to the
+worker's fixer; exit 2 means the PC was busy and it runs again later. Checks and rounds take turns.
 Each round stops at confirmed validation failures and allows one small repair cycle per implicated PR
 (up to 15 minutes of diagnosis/editing). A failed repair leaves that head out; its dependencies wait,
 while independent PRs continue. Excluded heads stay out across restarts until changed, and worker PRs
