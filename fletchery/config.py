@@ -34,7 +34,7 @@ def default_state_dir(name: str) -> str:
 WORKER_KEYS = {
     "autoCleanup": "auto_cleanup", "cleanupRetentionHours": "cleanup_retention_hours", "thinTextWorkers": "thin_text_workers",
     "emergencyWorkers": "emergency_workers", "workerRankLimits": "worker_rank_limits",
-    "assetTasks": "asset_tasks",
+    "assetTasks": "asset_tasks", "workerAllowedTools": "worker_allowed_tools", "workerDirs": "worker_dirs",
     "autoPrerequisites": "auto_prerequisites",
     "enabled": "workers_enabled", "projectRoot": "project_root", "baseBranch": "base_branch", "assignee": "assignee",
     "worktreeRoot": "worktree_root", "stateDir": "state_dir", "maxParallel": "max_parallel", "pollMinutes": "poll_minutes",
@@ -74,6 +74,13 @@ class Config:
     cleanup_retention_hours: float = 24
     thin_text_workers: bool = True            # omit binary Art/Content only in newly created text task checkouts
     asset_tasks: dict = None                 # explicit per-task paths/mode; default remains text-only
+    # Claude sessions load no settings.json (runtime.py: setting_sources=[]), so an allow rule in
+    # ~/.claude/settings.json never reaches a worker (LifeShare #929/#991/#1045/#1046/#1066, 2026-11-07).
+    # These go into the sessions themselves: extra auto-approved tools for workers and fixers, e.g.
+    # "Bash(E:/BlenderTools/BlenderMCP/.venv/Scripts/python.exe E:/BlenderTools/BlenderMCP/call.py:*)",
+    # and folders outside the task worktree that every Claude session may read (writers may also edit them).
+    worker_allowed_tools: list = None
+    worker_dirs: list = None
     auto_prerequisites: bool = True          # turn actionable blocks into dependencies, not repeated human prompts
     poll_minutes: float = 10
     dashboard_port: int = 8770               # http://127.0.0.1:<port> while Fletchery runs

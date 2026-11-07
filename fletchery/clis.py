@@ -454,8 +454,11 @@ def make_runtime(spec, cfg, repo_root: Path, plugin_path: Path | None, fake: Run
         return rt
     if spec.kind == "claude":
         from runtime import AgentSdkRuntime
-        return AgentSdkRuntime(repo_root, spec.model or cfg.model or None, plugin_path=plugin_path,
-                               auth="api" if spec.auth == "key" else "subscription")
+        rt = AgentSdkRuntime(repo_root, spec.model or cfg.model or None, plugin_path=plugin_path,
+                             auth="api" if spec.auth == "key" else "subscription")
+        rt.extra_allowed = [str(t) for t in (cfg.worker_allowed_tools or []) if str(t).strip()]
+        rt.add_dirs = [str(d) for d in (cfg.worker_dirs or []) if str(d).strip()]
+        return rt
     raise ValueError(f'agent "{spec.name}": unknown kind "{spec.kind}" (claude, codex or opencode)')
 
 
