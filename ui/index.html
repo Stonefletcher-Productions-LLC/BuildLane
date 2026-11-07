@@ -843,6 +843,7 @@
     <div class="actions">
       <button id="hold" type="button">Pause</button>
       <button id="runnow" type="button">Check now</button>
+      <button id="reloadPage" type="button" title="Reload these screens, the same as F5. Running work is not affected.">Refresh</button>
       <button id="settingsBtn" type="button" title="This project's settings, and your other projects">Settings</button>
       <button id="add" type="button" class="primary">Add task</button>
     </div>
@@ -1172,6 +1173,14 @@
 
 <script>
 const TOKEN = "__FLETCHERY_TOKEN__";
+const PAGE_ID = "__FLETCHERY_PAGE__";
+// The backend restarted or the screens were updated: reload, unless Alex is typing or a dialog is open.
+function pageIsStale(d) { return !!(d && d.page_id && !PAGE_ID.startsWith("__") && d.page_id !== PAGE_ID); }
+function busyOnPage() {
+  const el = document.activeElement;
+  return !!document.querySelector("dialog[open]") || !!(el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)));
+}
+function reloadPage() { location.reload(); }
 const STAGES = ["Writing", "Checking", "Reviewing", "Opening PR"];
 const STAGE_LABEL = {"Writing": "1 Write", "Checking": "2 Check", "Reviewing": "3 Review", "Opening PR": "4 Open PR"};
 function explain(a) {
@@ -2462,10 +2471,17 @@ async function refresh() {
   try {
     const r = await fetch("/api/status", {cache: "no-store"});
     if (!r.ok) throw new Error("HTTP " + r.status);
-    render(await r.json());
+    const d = await r.json();
+    if (pageIsStale(d) && !busyOnPage()) return reloadPage();
+    render(d);
+    if (pageIsStale(d)) {
+      const b = $("downBanner");
+      b.innerHTML = "Fletchery was updated. <span>Press Refresh at the top to load the new screens.</span>";
+      b.classList.add("show");
+    }
   } catch (e) {
     const b = $("downBanner");
-    b.innerHTML = "Can't reach Fletchery's backend. <span>The app restarts it by itself; if this stays, close and open Fletchery.</span>";
+    b.innerHTML = "Can't reach Fletchery's backend. <span>The app restarts it by itself; press Refresh at the top, and if this stays, close and open Fletchery.</span>";
     b.classList.add("show");
     $("state").textContent = "Not connected";
   }
@@ -2507,6 +2523,7 @@ $("laneHold").onclick = async () => {
   try { await post(paused ? "/api/lane/resume" : "/api/lane/pause"); await refresh(); }
   catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
+$("reloadPage").onclick = () => reloadPage();
 $("runnow").onclick = async () => {
   const btn = $("runnow"); btn.disabled = true; btn.textContent = "Checking…";
   try { await post("/api/run-now"); } catch (e) { alert(e.message); }

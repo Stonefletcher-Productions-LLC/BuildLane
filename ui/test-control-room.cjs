@@ -36,7 +36,8 @@ const data = {
   log: [{at: now, line: 'Merge round 16 started'}], usage_week: [],
 };
 const requests = [];
-const pageSource = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8').replace('__FLETCHERY_TOKEN__', 'fixture-token');
+const pageSource = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8').replace('__FLETCHERY_TOKEN__', 'fixture-token').replace('__FLETCHERY_PAGE__', 'page-a');
+data.page_id = 'page-a';
 const server = http.createServer(async (req, res) => {
   if (req.url === '/favicon.ico') { res.writeHead(204); return res.end(); }
   if (req.method === 'POST') {
@@ -62,6 +63,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify(req.url === '/api/issue/get' ? {body: 'Missing access', comments: []} : {ok: true}));
   }
+  if (req.url !== '/api/status') data.page_id = 'page-a';  // a freshly served page is current
   res.setHeader('Content-Type', req.url === '/api/status' ? 'application/json' : 'text/html');
   res.end(req.url === '/api/status' ? JSON.stringify(data) : pageSource);
 });
@@ -594,6 +596,22 @@ const server = http.createServer(async (req, res) => {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2), 'queue/rank controls fit mobile width');
     await page.setViewportSize({width: 1440, height: 1000});
     await page.screenshot({path: path.join(out, 'queue-and-worker-ranks.png'), fullPage: true});
+    // Refresh reloads the screens; an out-of-date window reloads itself unless Alex is typing.
+    assert.equal(await visible('#reloadPage'), true);
+    await page.evaluate(() => { window.beforeRefresh = true; });
+    await Promise.all([page.waitForEvent('load'), page.locator('#reloadPage').click()]);
+    await page.waitForFunction(() => document.querySelector('#projName').textContent === 'Harbor');
+    assert.equal(await page.evaluate(() => window.beforeRefresh), undefined, 'Refresh reloads the page');
+    await page.evaluate(() => { window.beforeRefresh = true; });
+    data.page_id = 'page-b';
+    await page.locator('#textSize').focus();
+    await page.evaluate(() => refresh());
+    assert.equal(await page.evaluate(() => window.beforeRefresh), true, 'no reload while a control has focus');
+    assert.match(await page.locator('#downBanner').innerText(), /Press Refresh/);
+    await page.evaluate(() => document.activeElement.blur());
+    await Promise.all([page.waitForEvent('load'), page.evaluate(() => refresh())]);
+    await page.waitForFunction(() => document.querySelector('#projName').textContent === 'Harbor');
+    assert.equal(await page.evaluate(() => window.beforeRefresh), undefined, 'a stale page reloads by itself');
     delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();
     await storageOff.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }}));
