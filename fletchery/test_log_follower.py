@@ -54,7 +54,7 @@ class StallTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipUnless(os.name == "nt" and shutil.which("tail"), "needs Windows and a tail executable")
 class LiveQueryTests(unittest.TestCase):
     def test_live_tail_is_not_an_owner_but_a_real_process_is(self):
-        root = Path(tempfile.mkdtemp(prefix="merge-round-follow-"))
+        root = Path(tempfile.mkdtemp(prefix="merge-round-follow-")).resolve()  # CI temp paths are 8.3 short names
         (root / "Saved").mkdir()
         log = root / "Saved" / "auto.log"
         log.write_text("x\n")
