@@ -48,6 +48,9 @@ TOOLS: dict[str, dict[str, list[str]]] = {
 # The architect plans one task before a (usually cheaper) worker writes it: the same read-only reach as the planner.
 TOOLS["architect"] = TOOLS["planner"]
 
+# Roles that get the profile's `workers.workerAllowedTools` on top of their own list.
+EXTRA_TOOL_ROLES = ("worker", "fixer", "merger")
+
 # The fixed shapes each role answers in. The SDK asks the model for exactly this JSON (output_format).
 SCHEMAS: dict[str, dict[str, Any]] = {
     "worker": {"type": "object", "required": ["summary", "files", "build_steps", "checks", "unverified"],
@@ -258,6 +261,8 @@ class AgentSdkRuntime(Runtime):
         self.plugin_path = plugin_path
         self.auth = auth
         self.saved_key = os.environ.get("ANTHROPIC_API_KEY") or self.env.get("ANTHROPIC_API_KEY")
+        self.extra_allowed: list[str] = []   # profile workers.workerAllowedTools (clis.make_runtime)
+        self.add_dirs: list[str] = []        # profile workers.workerDirs
         self.set_auth(auth)
 
     def set_auth(self, auth: str) -> None:
@@ -274,6 +279,13 @@ class AgentSdkRuntime(Runtime):
                 self.saved_key = key
                 self.env["ANTHROPIC_API_KEY"] = key
 
+    def allowed_tools(self, role: str) -> list[str]:
+        """The role's own tools, plus the profile's extra ones for the roles that write."""
+        allowed = list(TOOLS[role]["allowed"])
+        if role in EXTRA_TOOL_ROLES:
+            allowed += [t for t in self.extra_allowed if t not in allowed]
+        return allowed
+
     async def run(self, role, prompt, cwd, budget_usd, max_turns, on_action=None):
         from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, ToolUseBlock, query
         from live import describe
@@ -283,8 +295,9 @@ class AgentSdkRuntime(Runtime):
             cwd=str(cwd),
             model=self.model,
             permission_mode="acceptEdits",
-            allowed_tools=tools["allowed"],
+            allowed_tools=self.allowed_tools(role),
             disallowed_tools=tools["disallowed"],
+            add_dirs=list(self.add_dirs),
             max_turns=max_turns,
             max_budget_usd=budget_usd,
             setting_sources=[],  # nothing from ~/.claude or the checkout: the prompt is the whole contract
