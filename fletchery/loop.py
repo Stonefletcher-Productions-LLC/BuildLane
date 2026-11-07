@@ -173,6 +173,7 @@ class Engine:
         self.merge_backlog = 0          # the workers' PRs labelled for merging, last pass
         self.backlog_paused = False     # backpressure: new feature tasks wait until the backlog falls to the low mark
         self.merge_why = ""             # why no round is starting, for the Merge section
+        self._checkout_stall = None     # {since, why, minutes, loud}: the merge checkout has been owned by a process
         from plans import Plans
         self.plans = Plans(self)
         from worker_handoff import WorkerHandoffs
@@ -810,7 +811,11 @@ class Engine:
                 rounds.checkout_guard(Path(resume["checkpoint"]["worktree"]) if resume else rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
             except RuntimeError as e:
                 self.merge_why = str(e)
+                self._note_checkout_stall(str(e))
+                if self._checkout_stall["loud"]:
+                    self.merge_priority = False  # a stuck checkout must not also stop every worker
                 return
+        self._checkout_stall = None
         round_file = cfg.merge_round_file or str(self.state_dir / "merge-round.json")
         try:
             last_no = int(str(rounds.read_file(round_file).get("round", "0")).strip() or 0)
@@ -943,6 +948,13 @@ class Engine:
         finally:
             if pool is not None and agent:
                 pool.release(agent)
+            if res.get("worktree"):
+                try:  # a session's `tail -f` on its own round log outlived round 38 by 3 h (2026-11-07)
+                    left = await asyncio.to_thread(rounds.stop_log_followers, res["worktree"])
+                    if left:
+                        self.ctx.log(f"merge round {n}: stopped leftover log followers: {', '.join(left)}")
+                except Exception as e:
+                    self.ctx.log(f"merge round {n}: leftover process check failed: {type(e).__name__}: {e}")
         # History and retry cooldowns use completion time, even for long rounds.
         res["at"] = res["ended"] = now()
         rounds.finish_file(round_file, res["result"],
@@ -1040,6 +1052,20 @@ class Engine:
         self.state.save(self.state_dir / "state.json")
         self.wake()
         return {"round": last["round"], "resume_authorized": True, "message": "Saved round queued; heavy work waits for the PC reservation."}
+
+    STALL_MINUTES = 30
+
+    def _note_checkout_stall(self, why: str) -> None:
+        """A due round blocked on its checkout also holds the workers' slot, so a stuck owner stops all work. After
+        STALL_MINUTES say so loudly: log it once and put it at the top of the status issue's Merge section."""
+        since = (getattr(self, "_checkout_stall", None) or {}).get("since") or now()
+        minutes = (datetime.now(timezone.utc) - datetime.fromisoformat(since.replace("Z", "+00:00"))).total_seconds() / 60
+        stall = {"since": since, "why": why[:400], "minutes": int(minutes),
+                 "loud": minutes >= self.STALL_MINUTES}
+        if stall["loud"] and not (getattr(self, "_checkout_stall", None) or {}).get("loud"):
+            self.ctx.log(f"merge rounds: STALLED {int(minutes)} min, and workers wait too: {why[:300]}. "
+                         "End the named process if it is a leftover, or pause merging to free the workers.")
+        self._checkout_stall = stall
 
     def _start_pr_check(self) -> bool:
         """Start one PC check (prcheck.py) in the merge slot. Checks and rounds take turns while both have work, so a
@@ -1673,6 +1699,10 @@ class Engine:
         merge = self.merge_rows(tasks, prs)
         mv = self.merge_view
         L += ["## Merge", f"**Now:** {mv['headline']}", ""]
+        stall = getattr(self, "_checkout_stall", None) or {}
+        if stall.get("loud"):
+            L += [f"**Merging stalled for {stall['minutes']} min:** {stall['why']}. Workers keep going; end the named "
+                  "process if it is a leftover.", ""]
         if mv["steps"]:
             mark = {"done": "✓", "running": "▶", "waiting": "⏸", "failed": "✗", "todo": "○"}
             L += ["Steps: " + " → ".join(f"{mark[s['state']]} {s['name']}" for s in mv["steps"]), ""]
