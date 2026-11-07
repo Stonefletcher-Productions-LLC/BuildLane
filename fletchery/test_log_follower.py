@@ -27,6 +27,30 @@ class LogFollowerTests(unittest.TestCase):
         self.assertFalse(rounds.log_follower("bash.exe", f"bash -c 'tail -f {ROOT}/Saved/a.log'", ROOT))
 
 
+class StallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_blocked_checkout_frees_workers_after_30_minutes(self):
+        import test_dispatch_resilience as fixtures
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+        from github import PullRequest
+        engine, gh, rt = fixtures.DispatchResilienceTests.engine(self, merge_rounds=True, max_parallel=0)
+        gh.prs = [PullRequest(12, "Ready", "b12", "Test-Staging", "a" * 40, ["ready"])]
+        busy = rounds.CheckoutBusy("Merge checkout still owned by running processes: 2164 tail.exe")
+        with patch("rounds.checkout_guard", side_effect=busy), patch.object(type(engine.ctx.repo), "worktree_root",
+                                                                             engine.ctx.repo.worktree_root, create=True):
+            engine._merge_round(False)
+            self.assertTrue(engine.merge_priority)  # a fresh block still reserves the slot for the round
+            self.assertFalse(engine._checkout_stall["loud"])
+            old = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+            engine._checkout_stall["since"] = old
+            engine._merge_round(False)
+        self.assertTrue(engine._checkout_stall["loud"])
+        self.assertFalse(engine.merge_priority)
+        text = engine.status_text({}, {}, {}) if engine.status_text.__code__.co_argcount == 4 else ""
+        if text:
+            self.assertIn("Merging stalled", text)
+
+
 @unittest.skipUnless(os.name == "nt" and shutil.which("tail"), "needs Windows and a tail executable")
 class LiveQueryTests(unittest.TestCase):
     def test_live_tail_is_not_an_owner_but_a_real_process_is(self):
@@ -44,6 +68,10 @@ class LiveQueryTests(unittest.TestCase):
             owners = rounds.worktree_busy(root)
             self.assertFalse(any(o.startswith(f"{follower.pid} ") for o in owners), owners)
             self.assertTrue(any(o.startswith(f"{holder.pid} ") for o in owners), owners)
+            stopped = rounds.stop_log_followers(root)
+            self.assertEqual([s.split()[0] for s in stopped], [str(follower.pid)])
+            follower.wait(15)
+            self.assertIsNone(holder.poll(), "only the log follower is stopped")
         finally:
             for proc in (follower, holder):
                 proc.kill()

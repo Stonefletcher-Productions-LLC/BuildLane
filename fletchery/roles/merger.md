@@ -52,6 +52,9 @@ PRs labelled `{label}` into `{base}`, oldest first:
    with `disposition: deferred`. A PR whose named acceptance cannot run on this PC (a second PC, a missing input
    folder, a manual or packaged check with no harness) is deferred at once with that reason, without spending
    build or diagnosis time on it; Fletchery parks a PR deferred twice at one head until it changes.
+   Leave no process running when you finish: no `tail -f`, `Get-Content -Wait`, watcher or editor of your own. Read
+   logs with bounded commands (`tail -n 40`, `Get-Content -Tail 40`) instead of following them; anything left naming
+   the checkout blocks the next round.
    Never skip, disable or weaken a test to get green. Fletchery holds excluded heads out of later rounds and
    sends worker PRs to the bounded fixer queue; a changed head becomes eligible again.
 
