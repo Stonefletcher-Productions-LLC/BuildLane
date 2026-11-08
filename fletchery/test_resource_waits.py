@@ -102,6 +102,17 @@ class ResourceWaitTests(unittest.IsolatedAsyncioTestCase):
         lease.unlink()
         self.assertEqual((await engine.once())[0].result, "fixed")
 
+    async def test_worker_without_commits_on_a_merged_branch_closes_out(self):
+        # LifeShare #1284, 2026-11-08: the call passed (ctx, task) the wrong way round and crashed every such task.
+        engine, gh, rt, lease = self.waiting_engine()
+        lease.unlink()
+        rt.script.clear()
+        engine.ctx.repo.changed[1] = []
+        gh.merged = {gh.tasks[1].branch: (77, "Test-Staging", "2026-11-08T00:00:00Z")}
+        outcomes = await engine.once()
+        self.assertEqual(outcomes[0].result, "pr", outcomes[0].detail)
+        self.assertEqual(outcomes[0].pr_number, 77)
+
     async def test_permission_denial_has_priority_over_wait(self):
         engine, gh, rt, lease = self.waiting_engine()
         rt.script[("worker", 1)]["gave_up"] = "MCP execution permission denied"

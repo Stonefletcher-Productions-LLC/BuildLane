@@ -378,7 +378,7 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     if await asyncio.to_thread(repo.dirty, wt):
         await asyncio.to_thread(repo.commit_all, wt, f"Fletchery: #{task.number} {task.title}\n\nCloses #{task.number}")
     if not await asyncio.to_thread(repo.has_commits, wt):
-        merged = await asyncio.to_thread(_already_merged, ctx, task, out)
+        merged = await asyncio.to_thread(_already_merged, task, ctx, out)
         if merged is not None:
             return merged
         return await fail("worker made no commits")
