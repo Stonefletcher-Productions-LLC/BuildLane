@@ -30,6 +30,7 @@ class AssetRepairDeliveryTests(unittest.TestCase):
         self.repo._repair_remote_head = Mock(return_value="a" * 40)
         self.repo.git = Mock(return_value="Art/Hair/Waves.png")
         self.repo.lfs_tracked = Mock(side_effect=lambda _, names: names)
+        self.repo._same_as_base = Mock(return_value=set())  # every path here is the repair's own
 
     def push(self):
         self.repo.push_repair(self.wt, "feature-hair", "a" * 40, "lease.json")

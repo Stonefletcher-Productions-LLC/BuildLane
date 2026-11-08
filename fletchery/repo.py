@@ -244,7 +244,13 @@ class Repo:
             raise RuntimeError("The remote PR head changed during repair; local fix is preserved and was not pushed")
         self.git("merge-base", "--is-ancestor", expected_head, "HEAD", cwd=wt)
         changed = [line for line in self.git("diff", "--no-renames", "--name-only", expected_head, "HEAD", cwd=wt).splitlines() if line]
+        # A repair that merges the base in brings the base's assets with it. Those are already published, so only
+        # the PR's own asset changes need a grant (LifeShare 2026-11-08: five repairs crashed on Test-Staging's
+        # cat animations and kit meshes, which stalled every task that depended on them).
         tracked = self.lfs_tracked(wt, changed)
+        if tracked:
+            from_base = self._same_as_base(wt, tracked)
+            tracked = [name for name in tracked if name not in from_base]
         grant = self._asset_grant(wt, tracked, f"{expected_head}..HEAD") if tracked else None
         # Recheck after remote inspection in case another process took ownership.
         self.ensure_repair_checkout(wt, branch, expected_head, lease_file, require_clean=True)
@@ -254,6 +260,18 @@ class Repo:
         # No force or force-with-lease: another writer advancing after the check is
         # still protected by Git's normal fast-forward receive rule.
         self.git("push", "--no-verify", "-u", self.remote, f"HEAD:refs/heads/{branch}", cwd=wt)
+
+    def _same_as_base(self, wt: Path, files: list[str]) -> set[str]:
+        """Of `files`, those whose content at HEAD is the base's at their merge base (brought in by merging the base).
+        Without a merge base nothing counts as the base's, so the grant check stays as strict as before."""
+        if not files:
+            return set()
+        base = self.git("merge-base", "HEAD", f"{self.remote}/{self.base}", cwd=wt, check=False)
+        if not base:
+            return set()
+        # Whole-tree plumbing diff: no path list on the command line (Windows length limit) and no LFS filters.
+        own_names = set(self.git("diff-tree", "-r", "--no-renames", "--name-only", "-z", base, "HEAD", cwd=wt).split(chr(0)))
+        return {name for name in files if name not in own_names}
 
     def changed_files(self, wt: Path) -> list[str]:
         out = self.git("diff", "--no-renames", "--name-only", f"{self.remote}/{self.base}...HEAD", cwd=wt, check=False)
