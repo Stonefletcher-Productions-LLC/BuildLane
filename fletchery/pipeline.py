@@ -17,6 +17,7 @@ from config import Config
 import graph
 from graph import BLOCKED, PR, QUEUED, RUNNING, Task
 from github import Feedback, PullRequest
+from repo import LeaseBusy
 from runtime import RunResult, Runtime, limit_pause_minutes, role_prompt
 
 
@@ -346,6 +347,8 @@ async def _attempt(task: Task, ctx: Context, out: Outcome, agent: str | None, hi
     try:
         wt = await asyncio.to_thread(repo.worktree, task.number, task.slug, task.branch, cfg.heavy_lease_file)
         await asyncio.to_thread(repo.ensure_task_checkout, task.number, task.slug, task.branch, wt, cfg.heavy_lease_file)
+    except LeaseBusy:
+        return _resource_wait(ctx, out, "heavy")
     except Exception as e:
         return _block(ctx, out, f"could not make the worktree: {e}")
     local_branch = await asyncio.to_thread(_branch_at, repo, wt, task.branch)
@@ -504,8 +507,11 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
     try:
         await asyncio.to_thread(_load_notes, ctx, task)
         await asyncio.to_thread(repo.fetch_base)
-        wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
-        await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
+        try:
+            wt = await asyncio.to_thread(repo.repair_worktree, task.number, task.slug, pr.head, pr.head_sha)
+            await asyncio.to_thread(repo.ensure_repair_checkout, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
+        except LeaseBusy:  # the attempt and the feedback are given back (loop: waiting_resource)
+            return _resource_wait(ctx, out, "heavy")
         task.rules = rules_mod.load(wt, cfg.project_root)
         fb = "\n\n".join(f"### {f.kind} ({f.at})\n{f.text}" for f in feedback)
         rt = _LimitGuard(pool.runtime(agent) if pool is not None else ctx.runtime, ctx, task.number, agent or "")

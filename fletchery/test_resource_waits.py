@@ -71,6 +71,37 @@ class ResourceWaitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcomes[0].result, "fixed", outcomes[0].detail)
         self.assertEqual(engine.state.fix_attempts["12"], 1)
 
+    async def test_busy_lease_at_checkout_waits_instead_of_blocking(self):
+        # LifeShare 2026-11-08: a round held the lease without naming workspaces; nine tasks went to Needs you.
+        from repo import LeaseBusy
+        engine, gh, rt, lease = self.waiting_engine()
+        rt.script.clear()
+        busy = LeaseBusy("PC lease ownership is unknown; task checkout is preserved")
+        with patch.object(engine.ctx.repo, "ensure_task_checkout", side_effect=busy):
+            outcomes = await engine.once()
+        self.assertEqual(outcomes[0].result, "waiting_resource", outcomes[0].detail)
+        self.assertNotEqual(gh.tasks[1].status, BLOCKED)
+        self.assertFalse(gh.comments)
+        self.assertEqual(len(rt.calls), 0)
+        self.assertIn("1", engine.state.resource_waits)
+        engine.state.resource_waits["1"] = "2000-01-01T00:00:00+00:00"
+        lease.unlink()
+        self.assertEqual((await engine.once())[0].result, "pr")
+
+    async def test_busy_lease_at_repair_checkout_gives_the_attempt_back(self):
+        from repo import LeaseBusy
+        engine, gh, rt, lease = self.waiting_engine(True)
+        rt.script.clear()
+        busy = LeaseBusy("PC lease ownership is unknown; task checkout is preserved")
+        with patch.object(engine.ctx.repo, "ensure_repair_checkout", side_effect=busy):
+            outcomes = await engine.once()
+        self.assertEqual(outcomes[0].result, "waiting_resource", outcomes[0].detail)
+        self.assertEqual(engine.state.fix_attempts.get("12"), 0)
+        self.assertNotIn("12", engine.state.seen)
+        engine.state.resource_waits["1"] = "2000-01-01T00:00:00+00:00"
+        lease.unlink()
+        self.assertEqual((await engine.once())[0].result, "fixed")
+
     async def test_permission_denial_has_priority_over_wait(self):
         engine, gh, rt, lease = self.waiting_engine()
         rt.script[("worker", 1)]["gave_up"] = "MCP execution permission denied"
