@@ -75,6 +75,8 @@ jobs:
           $env:PYTHONUTF8 = '1'
           python fletchery/test_fletchery.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_gate_lines.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Checkout recovery and reload lifecycle checks
         run: |
           $env:PYTHONUTF8 = '1'
