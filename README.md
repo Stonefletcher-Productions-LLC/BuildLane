@@ -376,6 +376,7 @@ output during data validation and native specs when available. The round checkpo
 | An agent says "Paused until…" | It hit a usage limit. Its tasks go to the other agents; it comes back by itself. Upgraded the plan? Press **Refresh agents** (or the chip) to lift the pause now |
 | Nothing new starts | Check *Workers* is not at 0, the daily cap is not reached, and **Pause** is not on |
 | "Can't reach Fletchery's backend" | The app restarts it by itself. If it stays, quit from the tray and reopen; the log is under **Open log folder** in the tray menu |
+| The backend stopped after an install and never came back | It exits (code 75) to reload new code, and only the app or `shell\Start-Fletchery.ps1` starts it again. A backend started bare with `python -m fletchery run` has neither: run it through `Start-Fletchery.ps1 -Profile <file>` instead |
 | A task keeps landing under **Needs you** | Read the last comment on its issue: it says what a person must decide |
 | The Build Lane panel is missing | Fill in the Build Lane's status file (and pause file, drive) in **Settings** |
 | Fletchery did not start: Python | Install Python 3.10+ from python.org with *Add to PATH*, then run the installer again |
