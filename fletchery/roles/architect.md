@@ -51,8 +51,8 @@ through MCP. Read-only roles may inspect through MCP but must not mutate scenes.
 
 Canonical installation: `E:/BlenderTools/BlenderMCP`. Stdio client:
 `E:/BlenderTools/BlenderMCP/.venv/Scripts/python.exe -m blmcp`.
-Default bridge: `127.0.0.1:9876`. If no bridge is listening, use
-`E:/BlenderTools/BlenderMCP/Start-BlenderMCP.ps1`. Inspect the connected file and scene
+Default bridge: `127.0.0.1:9876`. If no bridge is listening, start a private one the way
+"Starting a Blender bridge" below says (roles that may run commands). Inspect the connected file and scene
 through MCP before edits. Preserve other agents' scenes/assets and coordinate ownership
 before switching a shared scene. Concurrent projects need isolated bridge ports and an
 explicit `BLENDER_MCP_PORT`; never repoint another agent's active scene.

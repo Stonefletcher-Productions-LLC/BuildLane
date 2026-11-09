@@ -229,6 +229,12 @@ def role_prompt(role: str, rules=None, **fields: str) -> str:
                  "This is only for actual reservation contention: permission denials, missing tools "
                  "and build failures use the normal failure report. Never release another job's lease. "
                  "The controller waits for readiness before resuming.\n")
+    # Sessions that may run commands start their own Blender bridge through blender_bridge.py: plain `python`, which
+    # their role already allows. The PowerShell launcher the role files used to name is refused in every spelling a
+    # worker tries (see blender_bridge.py), and that sent art tasks to Needs you.
+    if role in EXTRA_TOOL_ROLES:
+        import blender_bridge
+        text += blender_bridge.worker_note()
     # Round 26 (2026-11-06) wrote "Still waiting on Auto." and ended its turn while a 25-minute test run went on in the
     # background; the SDK then forced the final answer and the round reported `interrupted` with every check green.
     text += ("\nNobody answers between your turns: ending a turn ends this session and forces your final answer. Never end "

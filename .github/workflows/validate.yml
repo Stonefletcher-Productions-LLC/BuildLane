@@ -143,6 +143,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_stall_watchdog.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_blender_bridge.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_worker_permissions.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Control room browser checks
         run: |
           npm ci --prefix ui

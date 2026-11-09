@@ -745,6 +745,12 @@ class Engine:
                     self.ctx.log(f"Storage: retired {len(result['retired'])} verified completed task copies ({result['freed_bytes'] / 1024**3:.2f} GiB logical)")
             except Exception as exc:
                 self.state.storage_last = {"checked_at": now(), "error": str(exc)[:500], "freed_bytes": 0}
+            try:   # a retired task checkout leaves its private Blender bridge behind: stop those, and only those
+                reaped = await asyncio.to_thread(__import__("blender_bridge").reap)
+                if reaped.get("stopped"):
+                    self.ctx.log(f"Storage: stopped {len(reaped['stopped'])} Blender bridges of retired task copies")
+            except Exception as exc:
+                self.ctx.log(f"Storage: Blender bridge cleanup failed: {type(exc).__name__}: {exc}")
             self.state.save(self.state_dir / "state.json")
             self.wake()
         self._storage_job = asyncio.ensure_future(clean())
