@@ -18,11 +18,13 @@ LISTENER = ("import socket,sys,time\n"
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.addCleanup(self._stop_all)
+        # cleanups run last-in first-out: stop the stand-ins (they hold their log files open on Windows), then remove
+        # the folder, then forget the registry location
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         os.environ["FLETCHERY_BRIDGE_DIR"] = str(Path(self.tmp.name) / "reg")
         self.addCleanup(os.environ.pop, "FLETCHERY_BRIDGE_DIR", None)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self._stop_all)
         self.script = Path(self.tmp.name) / "listener.py"
         self.script.write_text(LISTENER, encoding="utf-8")
         self.owner = Path(self.tmp.name) / "930-task"
@@ -31,6 +33,7 @@ class BridgeTests(unittest.TestCase):
     def _stop_all(self):
         for b in bb.bridges():
             bb.stop(b["port"])
+        time.sleep(0.2)
 
     def _start(self, owner=None, port=0, command=None):
         owner = str(owner or self.owner)
