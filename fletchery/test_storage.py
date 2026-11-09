@@ -350,5 +350,92 @@ class MergeTrimTests(unittest.TestCase):
         self.assertTrue((self.dirs["merge-round"]/"Binaries/Win64/f.bin").exists())
 
 
+class MergeRepo(FixtureRepo):
+    def __init__(self, root):
+        super().__init__(root)
+        self.branch = "fletchery/merge-round-20-x"
+        self.dirty = {}  # checkout name -> porcelain -z status
+
+    def git(self, *args, cwd=None, check=True):
+        if args[0] == "status":
+            self.calls.append((args, cwd))
+            return self.dirty.get(Path(cwd).name, "")
+        if args[0] == "diff":
+            self.calls.append((args, cwd))
+            return "diff --git a/x b/x" if self.dirty.get(Path(cwd).name) else ""
+        return super().git(*args, cwd=cwd, check=check)
+
+
+class MergeRetireTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(prefix="fletchery-retire-test-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve()/"worktrees";self.root.mkdir()
+        self.backup=Path(self.tmp.name).resolve()/"backup"
+        self.repo=MergeRepo(self.root)
+        self.guard=patch("rounds.checkout_guard");self.guard_mock=self.guard.start();self.addCleanup(self.guard.stop)
+        names=["merge-round","merge-round-111111111111","merge-round-222222222222","merge-round-333333333333","merge-round-444444444444"]
+        self.paths={}
+        quarantined=[]
+        for day,name in enumerate(names,start=1):
+            path=self.root/name;(path/"Content").mkdir(parents=True)
+            (path/".git").write_text("gitdir: fixture");(path/"Content/a.uasset").write_bytes(b"x"*100)
+            self.repo.paths.add(path.resolve());self.paths[name]=path
+            if name!="merge-round-444444444444":
+                quarantined.append({"path":str(path),"at":f"2026-11-0{day}T00:00:00+00:00","reason":"dirty"})
+        (self.root/".merge-checkouts.json").write_text(json.dumps({"active":str(self.paths["merge-round-444444444444"]),"quarantined":quarantined}))
+
+    def run_retire(self,**kw):
+        kw.setdefault("retention_hours",0)
+        return storage.retire_merge_checkouts(self.repo,**kw)
+
+    def names(self,result):
+        return sorted(Path(r["path"]).name for r in result["retired"])
+
+    def test_oldest_clean_checkouts_retire_and_newest_and_active_stay(self):
+        result=self.run_retire(keep=2)
+        self.assertFalse(result["error"],result)
+        self.assertEqual(self.names(result),["merge-round","merge-round-111111111111"])
+        for name in ("merge-round-222222222222","merge-round-333333333333","merge-round-444444444444"):
+            self.assertTrue(self.paths[name].exists(),name)
+        self.assertFalse(any(a[0]=="prune" or a[:2]==("branch","-D") for a,_ in self.repo.calls))
+
+    def test_dirty_checkout_needs_a_backup_folder_and_gets_its_files_copied(self):
+        changed=self.paths["merge-round"]/"Content/new.uasset";changed.write_bytes(b"generated")
+        self.repo.dirty["merge-round"]="?? Content/new.uasset\0 M Content/a.uasset\0"
+        result=self.run_retire(keep=3)
+        self.assertEqual(result["retired"],[])
+        self.assertTrue(self.paths["merge-round"].exists())
+        result=self.run_retire(keep=3,backup_dir=str(self.backup))
+        self.assertEqual(self.names(result),["merge-round"],result)
+        saved=Path(result["retired"][0]["backup"])
+        self.assertEqual((saved/"files/Content/new.uasset").read_bytes(),b"generated")
+        self.assertEqual((saved/"files/Content/a.uasset").read_bytes(),b"x"*100)
+        self.assertIn("fletchery/merge-round-20-x",(saved/"head.txt").read_text())
+        self.assertTrue((saved/"tracked-changes.patch").read_text().startswith("diff --git"))
+
+    def test_busy_leased_detached_or_recent_checkouts_are_kept(self):
+        self.guard_mock.side_effect=RuntimeError("Merge checkout still owned by running processes")
+        self.assertEqual(self.run_retire(keep=0)["retired"],[])
+        self.guard_mock.side_effect=None
+        self.repo.branch=""
+        self.assertEqual(self.run_retire(keep=0)["retired"],[])
+        self.repo.branch="fletchery/merge-round-20-x"
+        self.assertEqual(self.run_retire(keep=0,retention_hours=24*365*100)["retired"],[])
+        for path in self.paths.values():
+            self.assertTrue(path.exists())
+
+    def test_protected_and_unregistered_checkouts_are_kept(self):
+        self.repo.paths.discard(self.paths["merge-round"].resolve())
+        result=self.run_retire(keep=0,protected_paths=[self.paths["merge-round-111111111111"]])
+        self.assertEqual(self.names(result),["merge-round-222222222222","merge-round-333333333333"])
+
+    def test_dry_run_changes_nothing(self):
+        result=self.run_retire(keep=0,dry_run=True)
+        self.assertEqual(len(result["retired"]),4)
+        self.assertTrue(all(p.exists() for p in self.paths.values()))
+        self.assertFalse(any(a[:2]==("worktree","remove") for a,_ in self.repo.calls))
+
+
 if __name__ == '__main__':
     unittest.main()

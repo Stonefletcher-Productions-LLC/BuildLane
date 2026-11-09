@@ -260,6 +260,118 @@ def trim_merge_checkouts(repo, protected_paths=(), lease_file="", dry_run=False)
     return summary
 
 
+def _long(path: Path) -> str:
+    spelled = str(path)
+    return "\\\\?\\" + spelled if os.name == "nt" and not spelled.startswith("\\\\?\\") else spelled
+
+
+def _backup_changes(repo, path: Path, dest: Path) -> int:
+    """Copy every modified/untracked file, a binary patch, the status and the HEAD to `dest`. Returns files copied.
+    Each copy is size-checked; any failure raises, so the checkout is kept."""
+    import shutil
+    status = repo.git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=path)
+    dest.mkdir(parents=True, exist_ok=False)
+    (dest / "status.txt").write_text(status.replace("\0", "\n"), encoding="utf-8")
+    (dest / "head.txt").write_text(repo.git("branch", "--show-current", cwd=path) + "\n" + repo.git("rev-parse", "HEAD", cwd=path) + "\n",
+                                   encoding="utf-8")
+    # --binary encodes binary changes as base85 text, so the patch is complete as text.
+    with open(dest / "tracked-changes.patch", "w", encoding="utf-8", newline="") as out:
+        diff = repo.git("diff", "--binary", "HEAD", cwd=path)
+        out.write(diff + "\n" if diff else "")  # Repo.git strips the final newline git apply expects
+    entries, copied, i = status.split("\0"), 0, 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if not entry:
+            continue
+        if entry[0] in "RC":
+            i += 1  # the rename source follows
+        relative = Path(entry[3:])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise RuntimeError("Changed path escapes the checkout")
+        source, target = path / relative, dest / "files" / relative
+        if source.is_symlink() or (source.exists() and _reparse(source)):
+            raise RuntimeError("Linked changed file; checkout kept")
+        if source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_long(source), _long(target))
+            if target.stat().st_size != source.stat().st_size:
+                raise RuntimeError(f"Backup copy differs: {relative}")
+            copied += 1
+        elif source.is_dir():
+            raise RuntimeError("Untracked directory listed whole; checkout kept")
+    return copied
+
+
+def retire_merge_checkouts(repo, protected_paths=(), lease_file="", backup_dir="", keep=2, retention_hours=24,
+                           dry_run=False) -> dict:
+    """Remove old merge checkouts with `git worktree remove`, newest `keep` kept besides the active one.
+    A dirty checkout is removed only after its uncommitted files are copied to `backup_dir`; its branch stays, so
+    committed work stays in the repository. Never prunes. Busy, leased, unregistered or linked checkouts are kept."""
+    summary = {"checked_at": rounds.now_iso(), "freed_bytes": 0, "retired": [], "skipped": [], "error": ""}
+    try:
+        root = Path(repo.worktree_root).absolute()
+        if not root.is_dir() or any(_reparse(part) for part in (root, *root.parents)):
+            return summary
+        root = root.resolve()
+        registry = root / ".merge-checkouts.json"
+        state = json.loads(registry.read_text(encoding="utf-8-sig")) if registry.exists() else {}
+        quarantined_at = {Path(q["path"]).resolve(): q.get("at", "") for q in state.get("quarantined", [])
+                          if isinstance(q, dict) and isinstance(q.get("path"), str)}
+        keep_paths = {Path(p).resolve() for p in protected_paths} | {rounds.checkout_path(repo)}
+        registered = rounds._registered_checkouts(repo)
+        found = [p for p in root.iterdir() if re.fullmatch(r"merge-round(?:-[0-9A-Za-z-]+)?", p.name) and p.is_dir()]
+
+        def age_key(p: Path) -> float:
+            at = quarantined_at.get(p.resolve())
+            if at:
+                try:
+                    from datetime import datetime
+                    return datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    pass
+            return p.stat().st_mtime
+
+        candidates = sorted((p for p in found if p.resolve() not in keep_paths), key=age_key, reverse=True)
+        for index, path in enumerate(candidates):
+            try:
+                if index < max(0, int(keep)):
+                    raise RuntimeError("Kept: one of the newest old merge checkouts")
+                if retention_hours > 0 and time.time() - age_key(path) < retention_hours * 3600:
+                    raise RuntimeError("Within retention window")
+                if _reparse(path) or path.resolve() not in registered or not (path / ".git").is_file():
+                    raise RuntimeError("Not a registered, unlinked worktree")
+                rounds.checkout_guard(path, lease_file)
+                branch = repo.git("branch", "--show-current", cwd=path)
+                if not branch:
+                    raise RuntimeError("Detached HEAD; its commits would lose their branch")
+                dirty = bool(repo.git("status", "--porcelain", "--untracked-files=normal", cwd=path))
+                if dirty and not backup_dir:
+                    raise RuntimeError("Uncommitted work and no merge backup folder configured")
+                size, _ = _tree_info(path)
+                entry = {"path": str(path), "branch": branch, "logical_bytes": size, "backup": ""}
+                if dry_run:
+                    summary["retired"].append(entry)
+                    continue
+                if dirty:
+                    dest = Path(backup_dir) / f"{path.name}-{time.strftime('%Y%m%d-%H%M%S')}"
+                    if dest.resolve() == root or root in dest.resolve().parents:
+                        raise RuntimeError("Backup folder is inside the worktree root")
+                    entry["files"] = _backup_changes(repo, path, dest)
+                    entry["backup"] = str(dest)
+                rounds.checkout_guard(path, lease_file)  # a process or lease may have appeared meanwhile
+                repo.git("worktree", "remove", "--force", str(path))
+                if path.exists():
+                    raise RuntimeError("Git did not remove the checkout")
+                summary["retired"].append(entry)
+                summary["freed_bytes"] += size
+            except Exception as exc:
+                summary["skipped"].append({"path": str(path), "reason": str(exc)[:500]})
+    except Exception as exc:
+        summary["error"] = str(exc)[:1000]
+    return summary
+
+
 def _remove_tree(target: Path) -> None:
     """rmtree with Windows long-path support; Unreal's Intermediate paths routinely pass 260 characters."""
     import shutil

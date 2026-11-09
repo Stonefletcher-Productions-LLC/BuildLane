@@ -33,6 +33,7 @@ def default_state_dir(name: str) -> str:
 # profile key (in "workers") -> Config field
 WORKER_KEYS = {
     "autoCleanup": "auto_cleanup", "cleanupRetentionHours": "cleanup_retention_hours", "thinTextWorkers": "thin_text_workers",
+    "mergeBackupDir": "merge_backup_dir", "keepMergeCheckouts": "keep_merge_checkouts",
     "emergencyWorkers": "emergency_workers", "workerRankLimits": "worker_rank_limits",
     "assetTasks": "asset_tasks", "workerAllowedTools": "worker_allowed_tools", "workerDirs": "worker_dirs",
     "autoPrerequisites": "auto_prerequisites",
@@ -72,6 +73,12 @@ class Config:
     emergency_workers: int = 1              # dedicated build/merge repair slot, independently 0 or 1
     auto_cleanup: bool = True                # retire verified closed/published task copies when idle
     cleanup_retention_hours: float = 24
+    # Each round whose checkout ends dirty gets quarantined and replaced by a fresh 11-13 GB checkout; nothing removed
+    # the old ones and E: filled twice (2026-11-07, 2026-11-09). Quarantined merge checkouts beyond the newest
+    # `keep_merge_checkouts` are retired after their uncommitted files are copied to `merge_backup_dir` (ideally another
+    # drive). With no backup folder only clean ones are retired. Their branches, and so their commits, stay.
+    merge_backup_dir: str = ""
+    keep_merge_checkouts: int = 2
     thin_text_workers: bool = True            # omit binary Art/Content only in newly created text task checkouts
     asset_tasks: dict = None                 # explicit per-task paths/mode; default remains text-only
     # Claude sessions load no settings.json (runtime.py: setting_sources=[]), so an allow rule in
