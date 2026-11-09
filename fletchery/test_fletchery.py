@@ -210,6 +210,20 @@ ctx.gh.feedback[700].append(Feedback(700, "comment", "Build Lane: taken out agai
 fm3, out = run_once(ctx, tmp)
 assert out[0].result == "gave_up" and ctx.gh.tasks[20].status == BLOCKED and "came back 2 times" in ctx.gh.comments[20][-1]
 
+# ---- fixer: a repaired PR whose round stripped `ready` gets it back (no PC check); with a PC check, prcheck does it ----
+tasks = {21: T(21, "Stripped", status=PR)}
+ctx, tmp = ctx_with(tasks, cfg=Config(fixer_attempts=2))
+ctx.gh.prs.append(PullRequest(701, "#21 Stripped", tasks[21].branch, "Test-Staging", "abc", ["foreman"], "Closes #21"))
+ctx.gh.feedback[701] = [Feedback(701, "comment", "Round 34 leaves this head out", "2026-11-02T01:00:00Z")]
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "fixed" and "ready" in ctx.gh.prs[-1].labels, ctx.gh.prs[-1].labels
+tasks = {22: T(22, "Checked", status=PR)}
+ctx, tmp = ctx_with(tasks, cfg=Config(fixer_attempts=2, pr_check_command="python check.py"))
+ctx.gh.prs.append(PullRequest(702, "#22 Checked", tasks[22].branch, "Test-Staging", "abc", ["foreman"], "Closes #22"))
+ctx.gh.feedback[702] = [Feedback(702, "comment", "Round 34 leaves this head out", "2026-11-02T01:00:00Z")]
+fm, out = run_once(ctx, tmp)
+assert out[0].result == "fixed" and "ready" not in ctx.gh.prs[-1].labels, "prcheck labels it after the PC check passes"
+
 # ---- fixer that gives up does not push ----
 tasks = {21: T(21, "x", status=PR)}
 ctx, tmp = ctx_with(tasks, script={("fixer", 21): {"summary": "", "pushed": False, "gave_up": "binary conflict"}})

@@ -576,8 +576,20 @@ async def _fix_session(task, pr, attempt, ctx, out, rt, wt, fb, agent) -> Outcom
         gh.comment(task.number, f"Fletchery fixer (attempt {attempt}): {out.detail}")
         return out
     await asyncio.to_thread(repo.push_repair, wt, pr.head, pr.head_sha, cfg.heavy_lease_file)
+    label = cfg.merge_label or "ready"
+    relabel = not cfg.pr_check_command and label.lower() not in [x.lower() for x in pr.labels]
+    if relabel:
+        # A round that leaves a PR out may strip its merge label, and nothing else puts it back, so the repaired head
+        # was never tested (11-09: #1035, #1049, #1091 sat unlabelled after their fresh repairs). With a PC check
+        # configured, prcheck labels the new head once it passes instead.
+        try:
+            gh.add_labels(pr.number, [label])
+        except Exception as e:
+            relabel = False
+            ctx.log(f"PR #{pr.number}: could not relabel `{label}` after the fix: {e}")
     gh.comment(pr.number, f"Fletchery fixer (attempt {attempt}): {r.output.get('summary', '')}\n\n{gates_mod.summary(results)}\n\n"
-                          "Pushed; the lane will take it again when it is labelled `ready`.")
+                          + (f"Pushed and labelled `{label}`; the next merge round takes the new head." if relabel else
+                             f"Pushed; the lane will take it again when it is labelled `{label}`."))
     out.result, out.detail = "fixed", r.output.get("summary", "")
     out.attempts.append({"agent": agent or "", "difficulty": "", "role": "fixer", "ok": True})
     return out
