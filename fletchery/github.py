@@ -201,6 +201,24 @@ class GitHub:
                 return p["number"], p["base"]["ref"], p["merged_at"]
         return None
 
+    def closed_by_merged_pr(self, number: int, base: str) -> tuple[int, str, str] | None:
+        """(number, base, merged_at) of a merged PR into `base` whose body says "Closes #number", or None. GitHub closes
+        an issue from such a PR only when it merges into the default branch, so an issue whose work landed on
+        Test-Staging stays open, and every task that depends on it waited forever (#1243 via PR #1333, 2026-11-09)."""
+        events = self.api(f"repos/{self.repo}/issues/{number}/timeline?per_page=100", paginate=True) or []
+        closes = re.compile(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#" + str(number) + r"", re.I)
+        own = "/repos/" + self.repo.lower()
+        for ev in events:
+            src = (ev.get("source") or {}).get("issue") or {} if ev.get("event") == "cross-referenced" else {}
+            if not src.get("pull_request") or not str(src.get("repository_url", "")).lower().endswith(own):
+                continue
+            if not closes.search(src.get("body") or ""):
+                continue
+            pr = self.api(f"repos/{self.repo}/pulls/{src['number']}")
+            if pr and pr.get("merged_at") and pr.get("base", {}).get("ref") == base:
+                return pr["number"], base, pr["merged_at"]
+        return None
+
     def merged_heads(self, branch: str) -> set[str]:
         """Head commits of PRs from `branch` that merged. GitHub keeps refs/pull/<n>/head, so a checkout sitting on one
         of these commits holds nothing unique even after its branch is deleted or the base history is rewritten."""
@@ -466,6 +484,9 @@ class FakeGitHub:
 
     def merged_heads(self, branch):
         return set(getattr(self, "merged_shas", {}).get(branch, ()))
+
+    def closed_by_merged_pr(self, number, base):
+        return getattr(self, "closed_by_merge", {}).get(number)
 
     def close_issue(self, number):  # also what the lane does when a PR with "Closes #n" lands
         self.writes.append(f"close #{number}")
