@@ -870,8 +870,8 @@ mt = Path(tempfile.mkdtemp())
 at = _dt(2026, 11, 3, 15, 20, tzinfo=_tz.utc)
 v = merge_mod.view(mt / "round.json", mt / "heavy.json", {}, now=at)
 assert v["state"] == "waiting" and v["round"] == "7" and v["next"] == "NavCheck" and not v["stale"], v
-assert v["headline"].startswith("Merging round 7: 2 PRs, step 2 of 4, waiting to run BuildTown. Waiting because the PC is busy "
-                                "with RunFlowTest.ps1 in toilet-w1 (since 15:16Z); started 13:40Z; then NavCheck."), v["headline"]
+assert v["headline"].startswith("Merging round 7: 2 PRs, step 2 of 4, waiting to run BuildTown. Waiting because the PC is held "
+                                "by toilet-w1 (RunFlowTest, 3 min), since 15:16Z; started 13:40Z; then NavCheck."), v["headline"]
 v = merge_mod.view(mt / "round.json", mt / "missing.json", {}, now=_dt(2026, 11, 3, 18, 0, tzinfo=_tz.utc))
 assert v["stale"] and "may be stuck" in v["headline"], v["headline"]
 (mt / "round.json").write_text(_json_mod.dumps({"round": "7", "state": "done"}), encoding="utf-8")
