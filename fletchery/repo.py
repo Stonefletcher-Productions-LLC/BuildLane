@@ -15,6 +15,12 @@ from pathlib import Path
 _TASK_CHECKOUT_LOCK = threading.RLock()
 
 
+
+class LeaseBusy(RuntimeError):
+    """The PC's heavy-work lease is held by something that names no workspaces (a merge round or the Build Lane), so
+    a task checkout can't be proven free. That is a wait, not a verdict on the task: LifeShare 2026-11-08, nine tasks
+    went to Needs you after one round held the lease for twenty minutes."""
+
 class Repo:
     def __init__(self, root: Path, worktree_root: Path, base: str, remote: str = "origin", asset_tasks: dict | None = None, thin_text_workers: bool = False):
         self.root = Path(root)
@@ -60,7 +66,7 @@ class Repo:
                 spaces = lease.get("workspaces")
                 spaces = spaces.split(";") if isinstance(spaces, str) else spaces
                 if not isinstance(spaces, list) or not spaces or any(not isinstance(x, str) or not x for x in spaces):
-                    raise RuntimeError("PC lease ownership is unknown; task checkout is preserved")
+                    raise LeaseBusy("PC lease ownership is unknown; task checkout is preserved")
                 resolved = path.resolve()
                 for space in spaces:
                     if not Path(space).is_absolute():
