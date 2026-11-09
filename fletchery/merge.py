@@ -59,14 +59,96 @@ def _short(iso: str) -> str:
     return s[11:16] + "Z" if len(s) >= 16 else s
 
 
-def pc_holder(lease_path) -> dict:
-    """Who holds the PC's heavy lease: {} when free. `what` is a short plain name (the script and its workspace)."""
+NOTE_FRESH_MINUTES = 20
+
+
+def note_path(lease_path) -> Path:
+    """Where a job describes itself for the dashboard (pc_note.py): beside the lease, e.g. heavy.note.json."""
+    p = Path(str(lease_path))
+    return p.with_name(p.stem + ".note.json")
+
+
+def _same_folder(a: str, b: str) -> bool:
+    def norm(x):
+        return str(x or "").replace("\\", "/").rstrip("/").lower()
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def _minutes_since(iso: str, now: datetime) -> int | None:
+    age = _age_h(iso, now)
+    return None if age is None or age < 0 else int(age * 60)
+
+
+def pc_note(lease_path, now: datetime | None = None) -> dict:
+    """The self-description a long job keeps while it works: {} when absent, malformed or not refreshed for
+    NOTE_FRESH_MINUTES. A job holds the lease one script at a time, so only its note says "0.3.7 release build,
+    packaging" across the whole run."""
+    if not lease_path:
+        return {}
+    d = _read(note_path(lease_path))
+    if not d.get("label") and not d.get("step"):
+        return {}
+    now = now or datetime.now(timezone.utc)
+    age = _minutes_since(d.get("updated", ""), now)
+    if age is None or age > NOTE_FRESH_MINUTES:
+        return {}
+    return {"label": _text(d.get("label"), 120), "step": _text(d.get("step"), 160), "workspace": _text(d.get("workspace"), 400),
+            "updated": _text(d.get("updated"), 64), "started": _text(d.get("started"), 64)}
+
+
+def pc_holder(lease_path, now: datetime | None = None, round_worktree: str = "") -> dict:
+    """Who holds the PC's heavy lease: {} when free. `what` is a short plain name (the script and its workspace).
+    `kind` says whose job it is: "round" (the merge round), "task" (a worker's checkout, `issue` set), "lane" (a Build
+    Lane run) or "outside" (anything else: a release build, a thread's own job). `who` and `step` are for people;
+    a `label`/`step` in the lease itself, or in the job's note (pc_note), replace the guessed ones."""
     d = _read(lease_path)
     if not d.get("token"):
         return {}
+    now = now or datetime.now(timezone.utc)
     purpose = Path(str(d.get("purpose") or "?").replace("\\", "/")).name
-    ws = Path(str(d.get("workspaces") or "").split(";")[0].replace("\\", "/")).name
-    return {"what": f"{purpose} in {ws}" if ws else purpose, "since": d.get("acquiredUtc", ""), "pid": d.get("pid")}
+    spaces = d.get("workspaces")
+    first = str(spaces[0] if isinstance(spaces, list) and spaces else spaces or "").split(";")[0]
+    ws = Path(first.replace("\\", "/")).name
+    out = {"what": f"{purpose} in {ws}" if ws else purpose, "since": d.get("acquiredUtc", ""), "pid": d.get("pid"),
+           "script": purpose, "workspace": first, "kind": "outside", "who": ws or "a job outside Fletchery",
+           "step": re.sub(r"\.(ps1|py|cmd|bat)$", "", purpose, flags=re.IGNORECASE), "label": "",
+           "minutes": _minutes_since(d.get("acquiredUtc", ""), now)}
+    task = re.match(r"([1-9][0-9]*)-", ws)
+    if str(d.get("owner") or "local") != "local" or (d.get("runId") and str(d.get("runId")) != "local"):
+        out.update(kind="lane", who=f"Build Lane run {d.get('runId')}")
+    elif (round_worktree and _same_folder(first, round_worktree)) or ws.startswith("merge-round"):
+        out.update(kind="round", who="the merge round")
+    elif task:
+        out.update(kind="task", who=f"task #{task.group(1)}", issue=int(task.group(1)))
+    note = pc_note(lease_path, now)
+    if note and note.get("workspace") and not _same_folder(note["workspace"], first):
+        note = {}                                   # another job's note: it says nothing about this holder
+    label = _text(d.get("label"), 120) or note.get("label", "")
+    step = _text(d.get("step"), 160) or note.get("step", "")
+    if label:
+        out.update(label=label, who=label)
+    if step:
+        out["step"] = f"{step} ({purpose})" if purpose not in ("?", "a local run") and purpose.lower() not in step.lower() else step
+    return out
+
+
+def pc_line(pc: dict) -> str:
+    """One plain sentence part: 'the 0.3.7 release build (Package, 12 min)'."""
+    if not pc:
+        return ""
+    mins = pc.get("minutes")
+    held = "" if mins is None else f", {mins} min" if mins < 120 else f", {mins // 60} h {mins % 60} min"
+    return f"{pc.get('who') or pc.get('what')} ({pc.get('step') or pc.get('script')}{held})"
+
+
+def pc_status(lease_path, now: datetime | None = None, round_worktree: str = "") -> dict:
+    """What the dashboard shows about the PC: {"held", ...the holder, "note"}. A fresh note with a free lease is a job
+    between two of its scripts; it is still shown under Building."""
+    if not lease_path:
+        return {}
+    now = now or datetime.now(timezone.utc)
+    holder = pc_holder(lease_path, now, round_worktree)
+    return {"held": bool(holder), **holder, "text": pc_line(holder), "note": pc_note(lease_path, now)}
 
 
 def in_branch(worktree: str, branch: str, sha: str) -> bool | None:
@@ -429,8 +511,12 @@ def view(round_path, lease_path, head_of: dict[int, str] | None = None, now: dat
     """The Merge section's top: {"headline", "steps", "round", "prs", "in_branch": {pr: bool}, "pc", ...}."""
     now = now or datetime.now(timezone.utc)
     r = _read(round_path)
-    pc = pc_holder(lease_path)
-    pc_text = f"the PC is busy with {pc['what']} (since {_short(pc['since'])})" if pc else "the PC is free"
+    pc = pc_holder(lease_path, now, str(r.get("worktree") or ""))
+    pc_text = "the PC is free"
+    if pc and pc["kind"] == "round":
+        pc_text = f"this round holds the PC for {pc['step']} (since {_short(pc['since'])})"
+    elif pc:
+        pc_text = f"the PC is held by {pc_line(pc)}, since {_short(pc['since'])}"
     out = {"round": "", "prs": [], "in_branch": {}, "steps": [], "pc": pc, "pc_text": pc_text, "state": "idle",
            "headline": "", "next": "", "started": "", "updated": "", "owner": "", "note": "", "stale": False,
            "active": False, "previous": None}

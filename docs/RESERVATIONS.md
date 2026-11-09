@@ -31,3 +31,20 @@ Multiple names are attempted in sorted order. If one is busy, all partial reserv
 Before adoption, coordinate manually with already-running jobs. Installing the tool cannot retroactively reserve an editor. A live reservation does not prove that assets, imports, or captures pass their own acceptance checks.
 
 Validation: `powershell.exe -NoProfile -File app/TestLaneResources.ps1` exercises actual Windows processes, same-resource contention, independent-resource execution, exit codes, owner termination, child/grandchild cleanup and automatic reacquisition in an isolated directory.
+
+## Who has the PC (dashboard)
+
+The **Building** page shows a "PC in use" card whenever the heavy lease is held: who holds it, the step, for how long,
+the script and the folder. The holder is one of *Merge round*, *Worker task*, *Build Lane* or *Outside Fletchery*
+(a release build, or any job a person or another tool started). A merge round that waits for the PC names the holder
+next to its waiting step instead of only saying "waiting".
+
+The lease names one script at a time and is free between two scripts of the same job. A long job that runs outside
+Fletchery can describe itself with a note beside the lease, so the card reads "0.3.7 release build, Packaging":
+
+    python <install>/fletchery/pc_note.py --lease <heavyLeaseFile> --workspace <its folder> --label "0.3.7 release build" --step "Packaging"
+    python <install>/fletchery/pc_note.py --lease <heavyLeaseFile> --clear
+
+Call it again at each step and clear it at the end. A note that is not refreshed for 20 minutes is ignored. While the
+lease is free the card shows the job as "Between steps". The note never takes, changes or releases the lease. A
+`label` or `step` field written into the lease record itself is used the same way.

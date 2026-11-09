@@ -139,6 +139,10 @@ class Dashboard:
             prs = {t["pr"] for t in snap.get("tasks", []) if t.get("pr")}
             lane_view = lane.read(cfg.lane_status_file, cfg.lane_pause_file, cfg.lane_drive, cfg.lane_min_free_gb, prs)
         activity = [{**row, "emergency": row.get("task") in fm.emergency_active} for row in live["activity"]]
+        try:   # who holds the PC, also when that is a job Fletchery did not start (a release build, a thread's job)
+            snap["pc"] = __import__("merge").pc_status(cfg.heavy_lease_file)
+        except Exception:
+            snap["pc"] = {}
         snap["emergency_workers"] = {"max_parallel": cfg.emergency_workers,
                                      "live": [row for row in activity if row["emergency"]],
                                      "why": "Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else fm.emergency_why}

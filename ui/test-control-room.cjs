@@ -612,6 +612,39 @@ const server = http.createServer(async (req, res) => {
     await Promise.all([page.waitForEvent('load'), page.evaluate(() => refresh())]);
     await page.waitForFunction(() => document.querySelector('#projName').textContent === 'Harbor');
     assert.equal(await page.evaluate(() => window.beforeRefresh), undefined, 'a stale page reloads by itself');
+    // Who holds the PC: a job Fletchery did not start is named under Building and where a round waits for it.
+    await page.locator('[data-view="build"]').click();
+    assert.equal(await visible('#pcCard'), false, 'no PC card while the PC is free');
+    const savedView = data.merge_view, savedAuto = data.merge_auto;
+    data.pc = {held: true, kind: 'outside', who: '0.3.7 release <build>', step: 'Packaging (Build.ps1)', script: 'Build.ps1',
+      what: 'Build.ps1 in release-037', since: now, minutes: 72, pid: 14040, workspace: 'E:\\lifeshare-scratch\\release-037',
+      note: {label: '0.3.7 release <build>', step: 'Packaging', updated: now}};
+    data.merge_view = {...savedView, state: 'waiting', pc: data.pc, steps: [{name: 'Build (candidate C)', state: 'waiting'}, {name: 'Land', state: 'todo'}]};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => !document.querySelector('#pcCard').hidden);
+    assert.equal(await page.locator('#pcWho').innerText(), '0.3.7 release <build>');
+    assert.match(await page.locator('#pcChip').innerText(), /Outside Fletchery/);
+    assert.match(await page.locator('#pcStep').innerText(), /Packaging \(Build\.ps1\)[\s\S]*holding the PC for 1 h 12 min[\s\S]*process 14040[\s\S]*release-037/);
+    assert.equal(await visible('#buildEmpty'), false, 'an outside job counts as build activity');
+    await page.screenshot({path: path.join(out, 'pc-holder-building.png')});
+    await page.locator('[data-view="merge"]').click();
+    assert.match(await page.locator('#mergeNow .merge-pc-wait').innerText(), /0\.3\.7 release <build> is using the PC: Packaging \(Build\.ps1\), for 1 h 12 min/);
+    data.merge_view = {active: false, round: '', state: 'idle', prs: [], steps: [], pc: data.pc, headline: ''};
+    data.merge_auto = {on: true, held: false, running: {}, why: 'The PC heavy lease is held; merge checkout preparation waits', last: {}};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /Waiting for the PC\. 0\.3\.7 release <build> is using the PC/.test(document.querySelector('#mergeNow').textContent));
+    data.pc = {held: false, text: '', note: {label: '0.3.7 release build', step: 'Cooking', updated: now}};
+    data.merge_view = savedView; data.merge_auto = savedAuto;
+    await page.locator('[data-view="build"]').click();
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => document.querySelector('#pcChip').textContent.includes('Between steps'));
+    assert.match(await page.locator('#pcStep').innerText(), /Cooking[\s\S]*not holding the PC right now/);
+    data.pc = {held: true, kind: 'round', who: 'the merge round', step: 'Build', script: 'Build.ps1', since: now, minutes: 3, note: {}};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => document.querySelector('#pcChip').textContent.includes('Merge round'));
+    delete data.pc;
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => document.querySelector('#pcCard').hidden);
     delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();
     await storageOff.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }}));
