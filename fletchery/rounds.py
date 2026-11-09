@@ -518,7 +518,15 @@ def playtest_text(cfg) -> str:
             "`{\"pr\": N, \"check\": \"what a person must verify, in one line\"}` to the optional `playtest` array of your "
             "answer, and list them under \"Playtest checks\" in the round PR body. Fletchery puts them on the project's "
             "playtest checklist. This does not cover missing inputs (an absent delivery or input folder): those are still "
-            "deferred with the reason. A failing automated check is still a failure.\n")
+            "deferred with the reason. A failing automated check is still a failure.\n\n"
+            "# Acceptance this PC can't run yet: land it, list what is still owed\n\n"
+            "The same applies (Alex, 2026-11-09) when a PR's only unrun named acceptance has no spec, save fixture, "
+            "scene or harness in the repo yet, or needs a run that does not fit the round's validation window (for "
+            "example a before-and-after baseline of over 60 minutes). Do not write the missing fixture inside the round "
+            "and do not defer: land the PR once its build, content imports and every automated check that can run here "
+            "pass, and add a `playtest` item whose check starts with \"Follow-up:\" and names the spec, fixture or long "
+            "run still owed, so it can be built and run later. Still defer a PR that waits on another PR that has not "
+            "landed, or on a missing input.\n")
 
 
 def playtest_lines(round_no, items: list, merged: list) -> list[str]:
@@ -539,9 +547,18 @@ _PEOPLE_ONLY = re.compile(r"two[- ]?(?:pc|player|machine)|second pc|steam|listen
 _MISSING_INPUT = re.compile(r"missing input|input folder|is (?:still )?absent|delivery is absent|not on this pc", re.I)
 
 
+_NOT_RUNNABLE_YET = re.compile(r"\bno (?:spec|fixture|save fixture|reliable [\w-]+ setup|harness)\b|has no (?:[\w-]+ )?"
+                               r"(?:spec|fixture)|exceeds the round'?s? (?:\d+-minute )?validation window|"
+                               r"up to \d+ ?min(?:utes)? each|baseline run", re.I)
+_WAITS_ON_PR = re.compile(r"\b(?:depends on|waits? on|wait for|must not merge before)\b[^.]*#\d+", re.I)
+
+
 def people_only(why: str) -> bool:
-    """A deferral that only needs people or a harness, not missing inputs or defects."""
-    return bool(_PEOPLE_ONLY.search(why or "")) and not _MISSING_INPUT.search(why or "")
+    """A deferral that only needs people, a harness or fixture that doesn't exist yet, or a run too long for a round;
+    not missing inputs, a PR it waits on, or defects."""
+    why = why or ""
+    return (bool(_PEOPLE_ONLY.search(why) or _NOT_RUNNABLE_YET.search(why))
+            and not _MISSING_INPUT.search(why) and not _WAITS_ON_PR.search(why))
 
 
 def unpark_people_only(parked: dict) -> list[int]:
