@@ -30,6 +30,20 @@ class PeopleOnlyTests(unittest.TestCase):
                                             "on this PC. This is missing input, not a defect."))
         self.assertFalse(rounds.people_only("BikeLane offset -539.8 expected 540"))
 
+    def test_acceptance_not_runnable_yet_counts(self):
+        # Real reasons from rounds 53-74 (2026-11-08)
+        self.assertTrue(rounds.people_only("Named check 'a saved queue holding the old A_EatServing loads' has no spec "
+                                           "or save fixture on this PC; same head as round 53's deferral"))
+        self.assertTrue(rounds.people_only("Its named acceptance needs a baseline run and a candidate run of "
+                                           "Tools\RunHomeShots.ps1 -Interactions W1-W7 (up to 150 min each). That "
+                                           "exceeds the round's 90-minute validation window."))
+        self.assertTrue(rounds.people_only("Round 26 could not reproduce it, and the head has no reliable overflow "
+                                           "setup yet."))
+        self.assertFalse(rounds.people_only("Its strict NavCheck has no fixture, and its kit pieces wait on #1185 via "
+                                            "ImportHomeKit."))
+        self.assertFalse(rounds.people_only("It depends on #1031, which is still open, and must not merge before it."))
+        self.assertIn("Follow-up:", rounds.playtest_text(Config(merge_playtest=True)))
+
     def test_unpark_keeps_missing_input_parks(self):
         now = datetime.now(timezone.utc).isoformat()
         parked = {"1020": {"head": "a", "parked": now, "why": "two-PC Steam join"},
