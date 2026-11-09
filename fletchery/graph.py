@@ -27,6 +27,56 @@ _IMPORTS = re.compile(r"^\s*lane-imports\s*:\s*(.*)$", re.IGNORECASE | re.MULTIL
 _ISSUE_REF = re.compile(r"(?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<number>\d+)")
 
 
+# Words that end a command written in a sentence: "Gate: python Tools/x.py must pass again." runs `python Tools/x.py`.
+_PROSE_STOP = {"must", "should", "passes", "pass", "remains", "remain", "is", "are", "still", "again", "and", "or",
+               "required", "needs", "fails", "succeeds", "exits", "with", "using", "against", "through", "on", "in",
+               "when", "if", "unless", "once", "after", "before", "then", "by", "for", "so"}
+_COMMANDS = ("python", "python3", "py", "node", "git", "git.exe")
+_SCRIPT = re.compile(r"\.(py|c?js|mjs)$", re.IGNORECASE)
+
+
+def _command_part(text: str) -> str:
+    """The command at the start of `text`, or "" when it is prose. Only commands and script paths count."""
+    words = text.strip().strip("`").split()
+    if not words:
+        return ""
+    first = words[0].strip('"').lower()
+    if first not in _COMMANDS and not _SCRIPT.search(first):
+        return ""
+    kept = [words[0]]
+    for w in words[1:]:
+        if w.lower().strip(".;:,") in _PROSE_STOP:
+            break
+        ends = w.endswith((".", ";")) and w not in (".", "..")
+        kept.append(w.rstrip(".;") if ends else w)
+        if ends:
+            break
+    return " ".join(kept).strip()
+
+
+def gate_items(line: str) -> list[str]:
+    """The checks one `Gate:` line names. Backticked commands win when the line has any; otherwise each
+    comma- or sentence-separated part that starts like a command. Prose never becomes a command: a planner wrote
+    "Gate: python X must pass again. ... context, using the compatible owned-scene reset; ..." and Fletchery ran
+    `node using the compatible ...`, which failed every fix and sent the task to Needs you (LifeShare #991,
+    2026-11-07)."""
+    ticks = re.findall(r"`([^`]+)`", line)
+    if ticks:
+        parts = ticks
+    else:
+        parts = re.split(r",|;|\.\s+|\s+gate\s*:\s*", line, flags=re.IGNORECASE)
+    out: list[str] = []
+    for part in parts:
+        stripped = re.sub(r"^\s*gate\s*:\s*", "", part, flags=re.IGNORECASE).strip().strip("`").strip()
+        if stripped.lower().rstrip(".") in ("none", "n/a", "na", "-"):
+            out.append(stripped)  # rules.py drops these; keep the old meaning
+            continue
+        cmd = _command_part(stripped)
+        if cmd and cmd not in out:
+            out.append(cmd)
+    return out
+
+
 @dataclass
 class Task:
     number: int
@@ -55,7 +105,7 @@ class Task:
     def gates(self) -> list[str]:
         out: list[str] = []
         for m in _GATE.finditer(self.body or ""):
-            out += [g.strip() for g in m.group(1).split(",") if g.strip()]
+            out += [g for g in gate_items(m.group(1)) if g not in out]
         return out
 
     @property
