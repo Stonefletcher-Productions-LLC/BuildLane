@@ -652,6 +652,16 @@ class Engine:
             except Exception as exc:
                 self.ctx.log(f"Storage: merge checkout trim failed: {type(exc).__name__}: {exc}")
             try:
+                retired = await asyncio.to_thread(storage.retire_merge_checkouts, self.ctx.repo,
+                    protected_paths=protected, lease_file=self.cfg.heavy_lease_file, backup_dir=self.cfg.merge_backup_dir,
+                    keep=self.cfg.keep_merge_checkouts, retention_hours=self.cfg.cleanup_retention_hours)
+                __import__("rounds").write_file(str(self.state_dir / "merge-retire.json"), retired)
+                if retired.get("retired"):
+                    self.ctx.log(f"Storage: removed {len(retired['retired'])} old merge checkouts "
+                                 f"({retired['freed_bytes'] / 1024**3:.2f} GiB); uncommitted files backed up first")
+            except Exception as exc:
+                self.ctx.log(f"Storage: old merge checkout removal failed: {type(exc).__name__}: {exc}")
+            try:
                 result = await asyncio.to_thread(storage.maintain, self.ctx.repo, self.ctx.gh, self.state_dir,
                     protected_paths=protected, open_tasks=list(tasks), lease_file=self.cfg.heavy_lease_file,
                     retention_hours=0 if immediate else self.cfg.cleanup_retention_hours, limit=25)
