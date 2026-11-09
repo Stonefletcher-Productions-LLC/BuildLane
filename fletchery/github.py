@@ -57,6 +57,9 @@ def parse_pages(text: str):
 # failed until the hour reset (LifeShare 2026-11-07 ~17:00-17:35Z: nothing started). Writes drop the entries of the
 # issue/PR they touch, so Fletchery always sees its own changes at once.
 _CACHEABLE = re.compile(r"^repos/[^/]+/[^/]+/(issues/\d+(/comments\?.*)?|pulls/\d+|pulls\?state=closed&head=.*)$")
+# Failures before the request reached GitHub: safe to repeat even for a POST.
+_NEVER_CONNECTED = ("connectex", "connection refused", "no such host", "temporary failure in name resolution",
+                    "tls handshake timeout", "dial tcp")
 _NUMBER = re.compile(r"^repos/[^/]+/[^/]+/(?:issues|pulls)/(\d+)")
 
 
@@ -78,19 +81,27 @@ class GitHub:
         if body is not None:
             cmd += ["--input", "-"]
         # gh prints UTF-8; Windows' default (cp1252) can't decode some bytes and the whole pass failed (2026-11-03)
-        attempts = 2 if method == "GET" else 1
+        # Reads retry once. A write retries only when the connection never opened (nothing reached GitHub), so a retry
+        # can't post a comment twice; a dropped PATCH crashed task #1013's planner and two worker passes (2026-11-08/09).
+        attempts = 2 if method == "GET" else 3
         for attempt in range(attempts):
+            if attempt and method != "GET":
+                time.sleep(2 * attempt)
             try:
                 p = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True,
                                    encoding="utf-8", errors="replace", timeout=15 if method == "GET" else 90)
             except subprocess.TimeoutExpired as e:
-                if attempt + 1 < attempts:
+                if method == "GET" and attempt + 1 < attempts:  # a write that timed out may have landed
                     continue
                 raise RuntimeError(f"GitHub {method} {path} timed out; will retry on the next short dispatch pass") from e
             if p.returncode == 0:
                 break
             detail = p.stderr.strip() or p.stdout.strip()
-            transient = any(x in detail.lower() for x in ("timeout", "timed out", "connectex", "connection reset", "connection refused", "no such host", "temporary failure", "tls handshake"))
+            low = detail.lower()
+            if method == "GET":
+                transient = any(x in low for x in ("timeout", "timed out", "connectex", "connection reset", "connection refused", "no such host", "temporary failure", "tls handshake"))
+            else:
+                transient = any(x in low for x in _NEVER_CONNECTED)
             if not transient or attempt + 1 == attempts:
                 raise RuntimeError(f"gh api {method} {path}: {detail}")
         return p.stdout
