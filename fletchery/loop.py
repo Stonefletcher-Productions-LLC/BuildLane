@@ -96,6 +96,37 @@ def now() -> str:
 
 
 BLOCKER_RECHECK_MINUTES = 30  # how soon the Needs you backlog planner may look at the same task again
+# A PR a merge round left out, whose repair attempts are used up, gets one fresh attempt once the base has had this long
+# to move on (conflicts and flaky acceptance often clear). Before, it sat forever and its task showed as "ready"
+# while nothing could start it (LifeShare, 2026-11-09: 11 such tasks, a queue that looked stopped).
+EXHAUSTED_RETRY_HOURS = 12
+
+
+def repairs_spent(pr: PullRequest | None, excluded: dict, attempts: int, limit: int, seen: str | None) -> bool:
+    """A PR left out of a merge round at its current head that no fixer will pick up again: its attempts are used up,
+    or its one round report was already handed to a fixer (seen) and that fixer ended without a new head."""
+    if pr is None or not excluded or excluded.get("head") != pr.head_sha:
+        return False
+    return attempts >= limit or bool(seen and str(excluded.get("at", "")) <= seen)
+
+
+def exhausted_wait(task_no: int, pr: PullRequest | None, excluded: dict, attempts: int, limit: int,
+                   seen: str | None = None) -> str:
+    """Why a queued task whose PR was left out of a merge round is not moving, or "" when it can be repaired."""
+    if not repairs_spent(pr, excluded, attempts, limit, seen):
+        return ""
+    why = " ".join(str(excluded.get("why", "")).split())[:240]
+    rnd = f" of merge round {excluded['round']}" if excluded.get("round") else ""
+    if excluded.get("retried"):
+        return (f"needs a person: PR #{pr.number} was left out{rnd} at its current head and its repair attempts "
+                f"(including the fresh one) are used up. {why}").strip()
+    try:
+        at = datetime.fromisoformat(str(excluded.get("at", "")).replace("Z", "+00:00"))
+        when = (at + timedelta(hours=EXHAUSTED_RETRY_HOURS)).isoformat(timespec="minutes")[:16].replace("T", " ") + "Z"
+    except ValueError:
+        when = "soon"
+    return (f"PR #{pr.number} was left out{rnd} and its repairs ended without a fix; "
+            f"one fresh repair starts at {when}. {why}").strip()
 
 
 def _recent(stamp: str, minutes: float) -> bool:
@@ -455,6 +486,19 @@ class Engine:
             if excluded.get("head") == pr.head_sha and st.fix_attempts.get(str(pr_num), 0) < cfg.fixer_attempts:
                 if not st.seen.get(str(pr_num)) or excluded.get("at", "") > st.seen[str(pr_num)]:
                     fb.append(Feedback(pr_num, "merge", "Merge round left this PR out after its repair budget: " + excluded.get("why", ""), excluded["at"]))
+            elif (repairs_spent(pr, excluded, st.fix_attempts.get(str(pr_num), 0), cfg.fixer_attempts, st.seen.get(str(pr_num)))
+                  and not excluded.get("retried") and excluded.get("at")
+                  and not _recent(excluded["at"], EXHAUSTED_RETRY_HOURS * 60)):
+                # Repairs spent at this head: one fresh attempt, now that the base has moved on. It is the last one:
+                # if it ends without a new head, the task says it needs a person.
+                if not self.dry_run:
+                    excluded["retried"] = now()
+                    st.fix_attempts[str(pr_num)] = max(0, cfg.fixer_attempts - 1)
+                fb.append(Feedback(pr_num, "merge", f"Fresh repair: a merge round left this PR out and its repair attempts "
+                                   f"ran out more than {EXHAUSTED_RETRY_HOURS} hours ago. The base branch has moved since: "
+                                   f"merge the latest {cfg.base_branch} into this branch, resolve any conflicts, and fix "
+                                   "what the round reported, then re-run the issue's named checks. Round report: "
+                                   + excluded.get("why", ""), now()))
             plans = re.findall(r"<!-- fletchery-blocker-applied:([a-f0-9]+) -->", task.body or "")
             if task.status == QUEUED and plans and st.repair_continuations.get(str(pr_num)) != plans[-1]:
                 # The planner explicitly authorized a bounded continuation on an
@@ -526,6 +570,19 @@ class Engine:
             if unknown:
                 rd.waiting[number] = "prerequisite status unavailable; retrying GitHub for " + ", ".join(f"#{d}" for d in sorted(unknown))
         fixing = {t.number for t in by_pr.values()}
+        for pr_num, t in by_pr.items():
+            # A queued task with an open PR moves only through fixers; say why when none started (it showed "ready").
+            if t.status != QUEUED or t.number in self.active:
+                continue
+            parked = st.merge_parked.get(str(pr_num)) or {}
+            pr = prs.get(pr_num)
+            if parked and pr is not None and parked.get("head") == pr.head_sha:
+                rd.waiting[t.number] = ("needs a person: PR #%d is parked (deferred twice at this head): %s"
+                                        % (pr_num, " ".join(str(parked.get("why", "")).split())[:240])).strip()
+                continue
+            stuck = exhausted_wait(t.number, pr, st.merge_excluded.get(str(pr_num), {}),
+                                   st.fix_attempts.get(str(pr_num), 0), cfg.fixer_attempts, st.seen.get(str(pr_num)))
+            rd.waiting[t.number] = stuck or f"repairing PR #{pr_num}: waits for new feedback or a free repair slot"
         rd.ready = [t for t in rd.ready if t.number not in self.active and t.number not in fixing]
         free_resources = []
         for t in rd.ready:
@@ -730,6 +787,7 @@ class Engine:
             return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
+            labelled = list(ready)
             # External ready PRs need not carry the harness task label and thus
             # may be absent from open_prs(). Verify their own dependency refs too.
             known_closed = getattr(self, "_known_closed_dependencies", set())
@@ -798,6 +856,10 @@ class Engine:
                 self.merge_why = "Saved candidate PR heads changed; reconcile before resuming validation"
                 return
         ok, why = rounds.should_start(cfg, st.merge_last, st.merge_held, draining, False, ready)
+        if not ready and labelled and why.startswith("no PR labelled"):
+            # The label is there; every PR carrying it is left out at its head (repair pending or spent) or parked.
+            why = (f"{len(labelled)} PR(s) labelled `{cfg.merge_label or 'ready'}`, but none can join a round: each was left "
+                   "out at its current head (repair pending, or needs a person) or is parked until it changes")
         self.merge_why = why
         if not ok:
             return
