@@ -165,6 +165,24 @@ class DispatchResilienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(1, {n for role, n, _ in runtime.calls if role == "worker"})
         self.assertEqual(engine.dispatch_warning, "")
 
+    async def test_prerequisite_closed_by_pr_merged_into_base_branch_is_done(self):
+        # #1243's work landed on Test-Staging through "Closes #1243", but GitHub only closes issues for default-branch
+        # merges; six tasks then waited on a "missing issue" forever (2026-11-09).
+        tasks = {1: Task(1, "Dependent", "Depends on: #95")}
+        engine, gh, runtime = self.engine(tasks)
+        gh.closed_by_merge = {95: (91, "Test-Staging", "2026-11-09T00:00:00Z")}
+        await engine.once()
+        self.assertIn(1, {n for role, n, _ in runtime.calls if role == "worker"})
+        self.assertIn("close #95", gh.writes)
+        self.assertTrue(any("PR #91 merged into Test-Staging" in c for c in gh.comments.get(95, [])))
+
+    async def test_prerequisite_with_no_merged_closing_pr_still_waits(self):
+        tasks = {1: Task(1, "Dependent", "Depends on: #95")}
+        engine, gh, runtime = self.engine(tasks)
+        await engine.once()
+        self.assertNotIn(1, {n for role, n, _ in runtime.calls if role == "worker"})
+        self.assertIn("missing issue #95", engine._waiting[1])
+
     async def test_zero_budget_starts_neither_fixer_nor_merger(self):
         task = Task(1, "Fix the PR", labels=[label_for(PR)])
         engine, gh, runtime = self.engine({1: task}, daily_budget_usd=0, merge_rounds=True)

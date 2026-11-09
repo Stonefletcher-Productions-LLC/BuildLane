@@ -386,6 +386,21 @@ class Engine:
                 st.signed_out = ""  # Claude's sign-in is one agent's problem now: the others carry on (agents panel)
         paused = limit_paused or st.held or bool(st.signed_out) or draining
 
+        def close_landed(number: int) -> bool:
+            # An open prerequisite that is not a task here (a thread's own issue) whose "Closes #n" PR merged into the
+            # base branch is done: GitHub only closes it for default-branch merges. Close it, as for our own tasks.
+            m = gh.closed_by_merged_pr(number, cfg.base_branch)
+            if not m:
+                return False
+            self.last_plan.append(f"close #{number}: PR #{m[0]} merged into {m[1]}")
+            if not self.dry_run:
+                gh.comment(number, f"Fletchery: PR #{m[0]} merged into {m[1]} at {m[2]}. GitHub closes an issue from a "
+                                   f"PR's `Closes #{number}` only for merges into the default branch, so Fletchery closes "
+                                   "it, and the tasks that depend on it can start.")
+                gh.close_issue(number)
+            self.ctx.log(f"#{number} closed: PR #{m[0]} merged into {m[1]} (a prerequisite other tasks wait on)")
+            return True
+
         # A shared prerequisite is queried only once per pass. A lookup failure
         # keeps dependents waiting, without blocking unrelated work.
         dependency_closed: dict[int, bool] = {}
@@ -394,7 +409,7 @@ class Engine:
         def is_closed(number: int) -> bool:
             if number not in dependency_closed:
                 try:
-                    dependency_closed[number] = gh.issue_closed(number)
+                    dependency_closed[number] = gh.issue_closed(number) or close_landed(number)
                 except Exception as e:
                     dependency_closed[number] = False
                     dependency_errors.add(number)
