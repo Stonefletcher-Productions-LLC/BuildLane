@@ -188,6 +188,9 @@
 
 
   /* ---- build lane: quiet, light; the Now strip stays the loud one ---- */
+  .pc-card { margin-bottom: 22px; }
+  .pc-card .card-head { display: flex; align-items: center; gap: 12px; }
+  .merge-pc-wait { display: block; }
   section.lane { background: var(--panel); border-radius: var(--r-lg); padding: 16px 20px 18px; margin-bottom: 22px; }
   .lane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
   .lane-head h2 { margin: 0; font-size: 18px; }
@@ -865,6 +868,11 @@
   <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
   <section class="view" id="view-build" aria-labelledby="buildPageHeading" hidden>
     <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Build machine activity and package requests.</p></div>
+    <section class="card pc-card" id="pcCard" aria-labelledby="pcHeading" style="margin-bottom:16px" hidden>
+      <div class="card-head"><h3 id="pcHeading">PC in use</h3><span class="chip" id="pcChip"></span></div>
+      <div class="lane-what" id="pcWho"></div>
+      <div class="lane-step" id="pcStep" role="status"></div>
+    </section>
     <div id="buildPageMount"></div>
     <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
       <h3 id="packageHeading">Packages</h3>
@@ -1578,7 +1586,7 @@ function renderStatus(d) {
     const latestUpdate = headlineMatches ? mv.headline : mv.note || currentStep?.message;
     const nextStep = headlineMatches || failedSteps.length ? mv.next
       : requiredSteps.slice(requiredSteps.indexOf(currentStep) + 1).find(s => s.state === "todo")?.name;
-    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}</div><span class="merge-health ${esc(health)}">${currentStep.state === "running" ? MERGE_SPINNER + " " : ""}${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p>${roundProgressHtml(requiredSteps)}${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
+    box.innerHTML = currentStep ? `<div class="merge-live ${failedSteps.length ? "failed" : ""}"><div class="merge-live-heading"><div class="round-status"><b>${esc(currentStep.name)}</b> · ${esc(word[currentStep.state] || currentStep.state)}${activeCheck ? `<small>${esc(activeCheck.name)}</small>` : ""}${mv.started ? `<small>${ago(mv.started)} elapsed in this round</small>` : ""}${currentStep.state === "waiting" && d.pc && d.pc.held && d.pc.kind !== "round" ? `<small class="merge-pc-wait">${esc(pcSentence(d.pc))}</small>` : ""}</div><span class="merge-health ${esc(health)}">${currentStep.state === "running" ? MERGE_SPINNER + " " : ""}${esc(healthText)}</span></div><p class="merge-subline">${activityAt ? `${checkpointOnly ? "Status updated" : "Last activity"} ${esc(ago(activityAt))} ago` : mv.updated ? `Status updated ${esc(ago(mv.updated))} ago` : "Waiting for the first progress update"}${activity.source ? ` · ${esc(activity.source)}` : ""}</p>${roundProgressHtml(requiredSteps)}${nextStep ? `<p class="merge-next">Next: ${esc(nextStep)}</p>` : ""}</div>` : (ma ? "" : esc(mv.headline || "No merge round running."));
     if (failedSteps.length) {
       const reported = steps.filter(s => s.state === "running" && s.required !== false).map(s => s.name);
       box.insertAdjacentHTML("beforeend", `<p class="round-recovery" role="status"><b>Landing blocked.</b> Fletchery must repair or exclude the failing PRs, then rerun affected checks on the remaining candidate. Each PR gets one bounded repair attempt.${reported.length ? `<br>Reported activity: ${esc(reported.join(", "))}. This does not clear the failed check.` : ""}</p>`);
@@ -1592,8 +1600,10 @@ function renderStatus(d) {
       else if (!ma.on) line = `Merge rounds are off, so PRs wait for someone to merge them. <a href="#" data-merge-settings="1">Turn them on</a>.`;
       else if (ma.held) line = `<b>Merging is paused.</b> No round starts until you resume.`;
       else if (ma.why && /PC heavy lease is held/i.test(ma.why) && mv.pc) {
+        const pc = d.pc && d.pc.held ? d.pc : null;
         const issue = /#(\d+)/.exec(mv.pc.what || "");
-        line = issue ? `Waiting for #${esc(issue[1])} to release the PC.` : "Waiting for the PC reservation to finish.";
+        line = pc ? `Waiting for the PC. ${esc(pcSentence(pc))}. <a href="#build">Building →</a>`
+          : issue ? `Waiting for #${esc(issue[1])} to release the PC.` : "Waiting for the PC reservation to finish.";
       }
       else line = ma.why ? `Next round waits: ${esc(ma.why)}.` : `A round starts whenever PRs labelled <b>${esc(ma.label)}</b> are waiting.`;
       if (ma && (running || (ma.on && !ma.held)) && (ma.priority || ma.merge_priority || d.merge_priority)) line += `<small class="merge-priority">New workers wait while merging has priority.</small>`;
@@ -1899,9 +1909,44 @@ function renderWorkersOff(d) {
   ["hold", "runnow", "add"].forEach(id => $(id).hidden = off);
   document.querySelector(".usage").hidden = off;
 }
+// Who has the PC for heavy work right now. The lease names one script at a time; a job's own note (pc_note.py) names
+// the whole job. Jobs Fletchery did not start (a release build, a thread's own run) used to show only as "waiting".
+function pcKindText(pc) {
+  return {round: "Merge round", task: "Worker task", lane: "Build Lane", outside: "Outside Fletchery"}[pc.kind] || "Outside Fletchery";
+}
+function pcHeldFor(pc) {
+  if (typeof pc.minutes !== "number") return "";
+  return pc.minutes >= 60 ? `${Math.floor(pc.minutes / 60)} h ${pc.minutes % 60} min` : `${pc.minutes} min`;
+}
+function pcSentence(pc) {
+  if (!pc || !pc.held) return "";
+  const held = pcHeldFor(pc);
+  return `${pc.who || pc.what} is using the PC: ${pc.step || pc.script}${held ? `, for ${held}` : ""}`;
+}
+function renderPc(d) {
+  const pc = d.pc || {}, note = pc.note && (pc.note.label || pc.note.step) ? pc.note : null, card = $("pcCard");
+  if (!pc.held && !note) { card.hidden = true; return false; }
+  card.hidden = false;
+  const chip = $("pcChip");
+  if (pc.held) {
+    chip.className = "chip building"; chip.textContent = "▶ " + pcKindText(pc);
+    $("pcWho").textContent = pc.who || pc.what || "A job";
+    const held = pcHeldFor(pc);
+    $("pcStep").innerHTML = `<span><b>${esc(pc.step || pc.script || "Working")}</b></span>` +
+      `<span class="when">${held ? `holding the PC for ${esc(held)}, ` : ""}since ${esc(clockTime(pc.since))}${pc.script ? ` · ${esc(pc.script)}` : ""}${pc.pid ? ` · process ${esc(pc.pid)}` : ""}</span>` +
+      (pc.workspace ? `<span class="when">${esc(pc.workspace)}</span>` : "");
+  } else {
+    chip.className = "chip idle"; chip.textContent = "○ Between steps";
+    $("pcWho").textContent = note.label || "A job outside Fletchery";
+    $("pcStep").innerHTML = `<span><b>${esc(note.step || "Working")}</b></span>` +
+      `<span class="when">not holding the PC right now, last update ${esc(ago(note.updated))} ago</span>`;
+  }
+  return true;
+}
+
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
-  $("buildEmpty").hidden = !!L;
+  $("buildEmpty").hidden = !!L || renderPc(d);
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");
