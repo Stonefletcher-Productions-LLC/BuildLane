@@ -117,36 +117,27 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PC check failed", gh.comments[22][-1])
         self.assertEqual(run.call_count, 1)
 
-    async def test_busy_records_nothing_and_rounds_take_turns(self):
+    async def test_busy_records_nothing_and_runs_again(self):
         engine, gh, rt = self.factory(self, merge_rounds=True, max_parallel=0, pr_check_command="check")
-        gh.prs = [pr(23), pr(24, (graph.PREFIX, "ready"))]
-        with patch("prcheck.run", return_value=prcheck.CheckResult(prcheck.NO_RESULT, "busy")):
-            engine._merge_round(False)
-            await self.finish(engine)
-        self.assertNotIn("23", engine.state.pr_checks)
-        # after a check, a waiting ready PR gets the next turn
-        engine._last_pc_job = "check"
-        self.assertFalse(engine._start_pr_check())
-        self.assertTrue(engine._start_pr_check())
-        await asyncio.sleep(0)
-        engine.round_job.cancel()
-        engine.round_job, engine.round_info = None, {}
-
-    async def test_check_with_no_result_gives_a_waiting_round_the_next_turn(self):
-        engine, gh, rt = self.factory(self, merge_rounds=True, max_parallel=0, pr_check_command="check")
-        gh.prs = [pr(25), pr(26, (graph.PREFIX, "ready"))]
+        gh.prs = [pr(23)]
         with patch("prcheck.run", return_value=prcheck.CheckResult(prcheck.NO_RESULT, "busy")) as run:
             engine._merge_round(False)
             await self.finish(engine)
-            self.assertEqual(run.call_count, 1)
-            # the busy check does not start again straight away: the ready PR's round gets the turn
-            self.assertFalse(engine._start_pr_check())
-            self.assertEqual(run.call_count, 1)
-            # and the check comes back on the turn after that
-            self.assertTrue(engine._start_pr_check())
-            await asyncio.sleep(0)
-            engine.round_job.cancel()
-            engine.round_job, engine.round_info = None, {}
+            self.assertNotIn("23", engine.state.pr_checks)
+            engine._merge_round(False)  # nothing is waiting for a round, so the same check simply tries again
+            await self.finish(engine)
+        self.assertEqual(run.call_count, 2)
+
+    async def test_a_pr_ready_for_a_round_goes_before_any_check(self):
+        engine, gh, rt = self.factory(self, merge_rounds=True, max_parallel=0, pr_check_command="check")
+        gh.prs = [pr(25), pr(26, (graph.PREFIX, "ready"))]
+        with patch("prcheck.run", return_value=prcheck.CheckResult(0, "ALL PASSED")) as run:
+            engine._merge_round(False)
+            self.assertEqual(engine.round_info.get("prs"), [26])  # the round started, not a check of #25
+            self.assertEqual(run.call_count, 0)
+            if engine.round_job is not None:
+                engine.round_job.cancel()
+                engine.round_job, engine.round_info = None, {}
 
     async def test_new_prs_open_without_ready_when_checks_are_on(self):
         import pipeline
