@@ -1220,8 +1220,9 @@ class Engine:
         if res.code == prcheck.NO_RESULT:
             self.ctx.log(f"PC check: PR #{pr.number}: no result ({res.output.splitlines()[0] if res.output else ''}); "
                          "it runs again later")
-            if getattr(self, "_last_pc_job", "") == "check":
-                self._last_pc_job = "round-turn"
+            # The check had its turn even though it got no result (usually the PC was busy). Leaving this as "check"
+            # lets a waiting round start next; resetting it here made the same check retry every pass and starve rounds.
+            self._last_pc_job = "check"
             return
         passed = res.code == 0
         self.state.pr_checks[str(pr.number)] = {"head": pr.head_sha, "passed": passed, "at": now(),

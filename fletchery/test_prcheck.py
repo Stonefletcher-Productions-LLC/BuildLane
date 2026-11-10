@@ -132,6 +132,22 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         engine.round_job.cancel()
         engine.round_job, engine.round_info = None, {}
 
+    async def test_check_with_no_result_gives_a_waiting_round_the_next_turn(self):
+        engine, gh, rt = self.factory(self, merge_rounds=True, max_parallel=0, pr_check_command="check")
+        gh.prs = [pr(25), pr(26, (graph.PREFIX, "ready"))]
+        with patch("prcheck.run", return_value=prcheck.CheckResult(prcheck.NO_RESULT, "busy")) as run:
+            engine._merge_round(False)
+            await self.finish(engine)
+            self.assertEqual(run.call_count, 1)
+            # the busy check does not start again straight away: the ready PR's round gets the turn
+            self.assertFalse(engine._start_pr_check())
+            self.assertEqual(run.call_count, 1)
+            # and the check comes back on the turn after that
+            self.assertTrue(engine._start_pr_check())
+            await asyncio.sleep(0)
+            engine.round_job.cancel()
+            engine.round_job, engine.round_info = None, {}
+
     async def test_new_prs_open_without_ready_when_checks_are_on(self):
         import pipeline
         self.assertIn("pr_check_command", Path(pipeline.__file__).read_text(encoding="utf-8"))
