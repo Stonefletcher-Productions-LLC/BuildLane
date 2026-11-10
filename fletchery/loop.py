@@ -814,8 +814,6 @@ class Engine:
         if st.spent.get(today(), 0.0) >= cfg.daily_budget_usd:
             self.merge_why = "daily budget spent"
             return
-        if cfg.pr_check_command and not draining and not st.merge_resume and not self.dry_run and self._start_pr_check():
-            return
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
             labelled = list(ready)
@@ -893,6 +891,10 @@ class Engine:
                    "out at its current head (repair pending, or needs a person) or is parked until it changes")
         self.merge_why = why
         if not ok:
+            # Rounds come first on the one PC: a PC check of a single PR only starts when no PR can join a round now,
+            # so a check never takes a waiting round's turn (11-10: checks of #1506 kept round 98 waiting).
+            if not ready and cfg.pr_check_command and not draining and not st.merge_resume and not self.dry_run:
+                self._start_pr_check()
             return
         limit = len(ready) if resume else max(1, int(cfg.merge_round_max or 12))
         batch = []
@@ -1181,8 +1183,8 @@ class Engine:
         self._checkout_stall = stall
 
     def _start_pr_check(self) -> bool:
-        """Start one PC check (prcheck.py) in the merge slot. Checks and rounds take turns while both have work, so a
-        queue of unchecked PRs never starves merging. True when a check started."""
+        """Start one PC check (prcheck.py) in the merge slot. The caller only asks when no PR can join a round, so
+        checks use the PC's idle time and never delay merging. True when a check started."""
         import graph
         import prcheck
         cfg, gh = self.cfg, self.ctx.gh
@@ -1194,15 +1196,7 @@ class Engine:
             return False
         if not waiting:
             return False
-        if getattr(self, "_last_pc_job", "") == "check":
-            try:
-                if gh.labelled_prs(label, cfg.base_branch):
-                    self._last_pc_job = "round-turn"  # let a round have the PC; the next free turn checks again
-                    return False
-            except Exception:
-                pass
         pr = waiting[0]
-        self._last_pc_job = "check"
         self.merge_why = f"PC check of PR #{pr.number} ({len(waiting)} waiting)"
         self.round_info = {"check": pr.number, "round": f"PC check #{pr.number}", "agent": "", "prs": [pr.number],
                            "head": pr.head_sha, "started": now(), "waiting": len(waiting)}
@@ -1220,9 +1214,6 @@ class Engine:
         if res.code == prcheck.NO_RESULT:
             self.ctx.log(f"PC check: PR #{pr.number}: no result ({res.output.splitlines()[0] if res.output else ''}); "
                          "it runs again later")
-            # The check had its turn even though it got no result (usually the PC was busy). Leaving this as "check"
-            # lets a waiting round start next; resetting it here made the same check retry every pass and starve rounds.
-            self._last_pc_job = "check"
             return
         passed = res.code == 0
         self.state.pr_checks[str(pr.number)] = {"head": pr.head_sha, "passed": passed, "at": now(),
