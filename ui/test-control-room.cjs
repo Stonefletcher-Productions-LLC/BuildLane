@@ -694,6 +694,14 @@ const server = http.createServer(async (req, res) => {
     assert.match(machineText, /Last: job 6 ✗ Failed[\s\S]*RunM5aTest/);
     assert.match(machineText, /CPU 63% · RAM 9\.5 of 24 GB free · disk 412 GB free/);
     assert.match(machineText, /SF-NODE-02[\s\S]*Offline, never connected/);
+    // With the Machines card up, the PC holder shows in the This PC row and the separate PC card stays hidden.
+    data.pc = {held: true, kind: 'outside', who: 'Release build', step: 'Packaging', script: 'Build.ps1', since: now, minutes: 5, pid: 777, workspace: 'E:\\x'};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /process 777/.test(document.querySelector('#machineRows').textContent));
+    assert.equal(await visible('#pcCard'), false, 'no duplicate PC card next to Machines');
+    assert.match(await page.locator('#machineRows').innerText(), /This PC[\s\S]*Release build is using the PC: Packaging[\s\S]*Build\.ps1/);
+    delete data.pc;
+    await page.evaluate(() => refresh());
     assert.equal(await page.locator('#jobRows tr').count(), 4);
     assert.equal(await page.locator('#jobRows a[href="/api/jobs/log?id=7"]').count(), 1);
     await page.locator('#jobAdd summary').click();
