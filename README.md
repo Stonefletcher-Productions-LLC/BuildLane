@@ -13,7 +13,7 @@ and merges it. One window shows all of it, and nothing merges without passing yo
 
 Workers and fixers that report heavy-work reservation contention keep their existing branch and resume after the lease is released. Waiting survives an app restart and does not consume repair attempts; permission denials remain failures. The controller never releases another job's lease. Asset workers use task-owned Blender MCP profiles to isolate background jobs from shared startup scenes, and verify a bounded probe before claiming recovery.
 
-**All workers** now allocates writing capacity across baseline strength ranks: low (<60), medium (60–74) and high (75+) using eligible ready tasks. Each rank can instead be set manually from 0–10; changing All workers (0–30) restores automatic allocation. Rank sections show baseline scores, restrictions and ready task levels. Task badges record the bucket used when work was admitted. Dashboard refreshes preserve the reader’s scroll position. Existing task eligibility, reviews, escalation and emergency repair policy remain in force.
+**Workers** (one number, 0–30, with minus and plus) allocates writing capacity across baseline strength ranks, shown as strong (75+), mid (60–74) and light (<60) models, using eligible ready tasks. A bar under the number shows the split. Each rank can instead be set by hand from 0–10 under **Advanced**; changing the number of workers restores automatic allocation. The Advanced rows show baseline scores, restrictions and ready task levels. Task badges record the bucket used when work was admitted. Dashboard refreshes preserve the reader’s scroll position. Existing task eligibility, reviews, escalation and emergency repair policy remain in force.
 
 **Pause & hand off** stops new dispatch and saves active work at the next safe phase boundary. It stages the task changes, records the checkout and notes, and lets an eligible agent continue on Resume without skipping checks.
 
@@ -260,7 +260,7 @@ The Workers area shows cleanup status and **Clean eligible copies** queues a saf
 
 ## Emergency workers
 
-A separate **Emergency workers** control reserves **0 or 1** extra slot for build and merge repairs. It defaults to 1 and applies immediately without a restart. Normal Workers at 0 pauses feature work while this slot can fix failed build checks, merge conflicts, excluded PRs and recorded merge failures. Ordinary feature tasks cannot use it. Turning Emergency workers to 0 stops new emergency sessions; existing sessions finish.
+A separate **Repair worker** switch (Off / On; the setting is still `emergency_workers`) reserves **0 or 1** extra slot for build and merge repairs. It defaults to 1 and applies immediately without a restart. Normal Workers at 0 pauses feature work while this slot can fix failed build checks, merge conflicts, excluded PRs and recorded merge failures. Ordinary feature tasks cannot use it. Turning the repair worker off stops new emergency sessions; existing sessions finish.
 
 Emergency repairs use the existing branch, review and validation rules. Their required prerequisites and bounded blocker planning can use the same single slot. They still respect global Pause, draining/restarts, daily budgets, provider availability, repair limits and heavy-work reservations; they never release another job's reservation. Real decisions and exhausted repairs remain visible in Needs you. A merge failure creates a deduplicated diagnostic repair issue; filing it is not proof that the underlying cause was fixed.
 

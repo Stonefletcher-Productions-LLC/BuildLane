@@ -87,6 +87,12 @@ const server = http.createServer(async (req, res) => {
     await page.goto(url);
     await page.waitForFunction(() => document.querySelector('#projName').textContent === 'Harbor');
     assert.equal(await visible('#workers'), true);
+    // Overview lanes: coding, merging and building read at a glance.
+    assert.equal(await page.locator('#lanes .lane-card').count(), 3);
+    assert.match(await page.locator('#laneCoding').innerText(), /2 of 8 workers[\s\S]*#891[\s\S]*#899/);
+    assert.match(await page.locator('#laneMerging').innerText(), /round 16/i);
+    assert.match(await page.locator('#laneBuilding').innerText(), /Gaming PC/);
+    assert.equal(await visible('#needsStrip'), true, 'a blocked task shows the Needs you strip');
     assert.equal(await visible('#queue'), false);
     assert.equal(await visible('#agents'), false);
     assert.equal(await visible('#lowerBox'), false);
@@ -484,9 +490,9 @@ const server = http.createServer(async (req, res) => {
     data.merge = [{pr: 1041, title: 'Safe <preview>', ready: true, pr_url: '#1041', unblocks: [], flags: []}];
     await page.goto(url + '/?view=overview');
     await page.waitForFunction(() => document.querySelector('#integrationPlans').hidden === false);
-    assert.equal(await page.locator('#nowh').innerText(), 'All workers');
+    assert.equal(await page.locator('#nowh').innerText(), 'Workers');
     assert.equal(await page.locator('[data-rank]').count(), 3);
-    assert.equal(await page.locator('[data-worker="891"] .worker-rank-badge').textContent(), 'High');
+    assert.equal(await page.locator('[data-worker="891"] .worker-rank-badge').textContent(), 'Strong');
     const scroll = await page.evaluate(() => {
       document.body.style.minHeight = '4000px';
       window.scrollTo(0, 1200);
@@ -499,12 +505,19 @@ const server = http.createServer(async (req, res) => {
     });
     assert.equal(scroll.before, 1200);
     assert.equal(scroll.after, scroll.before, 'refresh preserves the page scroll position');
-    assert.match(await page.locator('#rankMode').innerText(), /0 easy/);
-    await page.selectOption('#allWorkerTotal', '12');
-    await page.waitForFunction(() => document.querySelector('#wVal').textContent === '12');
-    assert.deepEqual(requests.at(-1).body, {max_parallel: 12});
+    assert.match(await page.locator('#rankMode').textContent(), /0 easy/);
+    // One number: the stepper is the only total; the split shows as a bar and its manual form sits under Advanced.
+    assert.equal(await page.locator('#allWorkerTotal').count(), 0, 'one worker total control');
+    assert.equal(await visible('#workerSplit'), true);
+    assert.match(await page.locator('#workerSplit').innerText(), /1 strong[\s\S]*1 mid[\s\S]*1 light/);
+    assert.equal(await visible('[data-rank-cap="low"]'), false, 'manual split is folded away');
+    const before = Number(await page.locator('#wVal').textContent());
+    await page.locator('#wUp').click();
+    await page.waitForFunction(n => document.querySelector('#wVal').textContent === String(n), before + 1);
+    assert.deepEqual(requests.at(-1).body, {max_parallel: before + 1});
+    await page.locator('#workerAdvanced summary').click();
     await page.selectOption('[data-rank-cap="low"]', '7');
-    await page.waitForFunction(() => document.querySelector('#rankMode').textContent.includes('Manual'));
+    await page.waitForFunction(() => document.querySelector('#rankMode').textContent.includes('by hand'));
     assert.equal(requests.at(-1).url, '/api/workers/ranks');
     assert.equal(requests.at(-1).body.limits.low, 7);
     assert.equal(await visible('#integrationPlans'), false, 'planning stays on the Merging page');
