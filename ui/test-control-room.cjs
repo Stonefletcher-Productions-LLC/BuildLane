@@ -727,14 +727,32 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => !document.querySelector('#machineKey').hidden);
     assert.match(await page.locator('#machineKey').innerText(), /Key for SF-NODE-03 \(shown once\):\s*fnk_test-key/);
     await page.screenshot({path: path.join(out, 'machines-building.png'), fullPage: true});
+    // Each machine can be stopped from one kind of work.
+    assert.equal(await page.locator('#machineRows [data-pause-machine="PC"]').count(), 4);
+    assert.equal(await page.locator('#machineRows [data-pause-machine="SF-NODE-01"]').count(), 3);
+    await page.locator('#machineRows [data-pause-machine="SF-NODE-01"][data-pause-kind="checks"]').click();
+    for (let i = 0; i < 100 && requests.filter(r => r.url === '/api/machines/pause').length < 1; i++) await page.waitForTimeout(50);
+    assert.deepEqual(requests.filter(r => r.url === '/api/machines/pause').at(-1).body, {machine: 'SF-NODE-01', kind: 'checks', paused: true});
+    data.machines.machines[0].paused_work = ['checks'];
+    data.pc_paused = ['coding'];
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /PR checks \(paused\)/.test(document.querySelector('#machineRows').textContent));
+    assert.equal(await page.locator('#machineRows [data-pause-machine="PC"][data-pause-kind="coding"]').getAttribute('aria-pressed'), 'false');
+    assert.match(await page.locator('#machinesGlance').textContent(), /Coding paused[\s\S]*PR checks paused/);
+    await page.locator('#machineRows [data-pause-machine="PC"][data-pause-kind="coding"]').click();
+    for (let i = 0; i < 100 && requests.filter(r => r.url === '/api/machines/pause').length < 2; i++) await page.waitForTimeout(50);
+    assert.deepEqual(requests.filter(r => r.url === '/api/machines/pause').at(-1).body, {machine: 'PC', kind: 'coding', paused: false});
+    delete data.pc_paused; data.machines.machines[0].paused_work = [];
     // A node's PR check is merging work: it shows on the Merging card, not as a build.
     const node = data.machines.machines[0], keepJob = node.job;
     node.job = {id: 9, recipe: 'pr-check', sha: 'b'.repeat(40), ref: 'Test-Staging', params: {pr: 1568, head: 'c'.repeat(40)}, state: 'running', started: now, pr: 1568, requested_by: 'pr-check'};
     await page.evaluate(() => refresh());
-    await page.waitForFunction(() => /checking PR #1568/.test(document.querySelector('#laneMerging').textContent));
+    await page.waitForFunction(() => /SF-NODE-01 · PR check #1568/.test(document.querySelector('#laneMerging').textContent));
+    const mergeLane = await page.locator('#laneMerging').textContent();
+    assert.match(mergeLane, /Gaming PC · Merge round 16: Game tests/);   // the round's step is named on the PC's own line
     const buildLane = await page.locator('#laneBuilding').textContent();
-    assert.match(buildLane, /SF-NODE-01 · no build · checking PR #1568/);
-    assert.doesNotMatch(buildLane, /machines? working/);
+    assert.match(buildLane, /Nothing building/);
+    assert.match(buildLane, /On Merging instead: Gaming PC: Merge round 16: Game tests · SF-NODE-01: PR check #1568/);
     assert.match(await page.locator('#machinesGlance').textContent(), /PR check #1568/);
     node.job = keepJob;
     await page.evaluate(() => refresh());

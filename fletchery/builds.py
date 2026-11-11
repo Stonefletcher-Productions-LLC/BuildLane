@@ -105,7 +105,7 @@ class Builds:
         nodes = []
         if coord is not None:
             try:
-                nodes = coord.machines.eligible(self.node_labels(), self._node_ram())
+                nodes = coord.machines.eligible(self.node_labels(), self._node_ram(), "package")
             except Exception:
                 nodes = []
         return {"builds": rows, "base": self.engine.cfg.base_branch, "nodes": nodes,
@@ -229,7 +229,7 @@ class Builds:
         where = row.get("where") or "auto"
         nodes = []
         if coord is not None and where != "pc":
-            nodes = coord.machines.eligible(self.node_labels(), self._node_ram())
+            nodes = coord.machines.eligible(self.node_labels(), self._node_ram(), "package")
         if where == "node" or (where == "auto" and nodes):
             if coord is None:
                 self.update(row, state="failed", finished=iso(utc()), reason="No test nodes are set up.")

@@ -64,6 +64,9 @@ RECIPES = {
     # A packaged build Alex scheduled on Building -> Builds (builds.py). No commit status: a build is not a check.
     "package": {"context": "", "labels": ["os:windows", "role:cook"], "min_ram_gb": 16, "timeout_minutes": 300},
 }
+# Each recipe is one kind of work. Alex can pause a single machine from a single kind (Building -> Machines).
+KIND = {"pr-check": "checks", "node-checks": "tests", "nightly-full": "tests", "checkout-only": "tests", "package": "builds"}
+NODE_KINDS = ("checks", "tests", "builds")
 BUILD_VERSION = re.compile(r"^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$")
 
 SCHEMA = """
@@ -243,7 +246,10 @@ class Machines:
                     db.execute("COMMIT")
                     return None
                 have = set(json.loads(m["labels"] or "[]"))
+                off = set(self._paused(db, machine))
                 for row in db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY id").fetchall():
+                    if KIND.get(row["recipe"]) in off:
+                        continue
                     if set(json.loads(row["labels"])) <= have and float(row["min_ram_gb"] or 0) <= float(m["ram_gb"] or 0):
                         t = now()
                         db.execute("UPDATE jobs SET state='running', machine=?, started=?, heartbeat=?, attempts=attempts+1 "
@@ -324,13 +330,43 @@ class Machines:
         with self._lock, self._db() as db:
             db.execute("UPDATE jobs SET handled=1 WHERE id=?", (int(job_id),))
 
-    def eligible(self, labels: list, min_ram_gb: float = 0) -> list[str]:
-        """Online, unrevoked, unpaused nodes that carry every label and have the RAM."""
+    # ---- pausing one machine from one kind of work ----
+    @staticmethod
+    def _paused(db, name: str) -> list[str]:
+        row = db.execute("SELECT value FROM meta WHERE key=?", ("paused:" + name,)).fetchone()
+        try:
+            return [k for k in json.loads(row["value"]) if k in NODE_KINDS] if row else []
+        except ValueError:
+            return []
+
+    def paused_work(self, name: str) -> list[str]:
+        with self._db() as db:
+            return self._paused(db, name)
+
+    def set_paused(self, name: str, kind: str, on: bool) -> list[str]:
+        """Pause or resume one kind of work (checks, tests, builds) on one node. A running job finishes."""
+        if kind not in NODE_KINDS:
+            raise ValueError(f"Unknown kind of work {kind!r}; known: {', '.join(NODE_KINDS)}")
+        with self._lock, self._db() as db:
+            if not db.execute("SELECT 1 FROM machines WHERE name=?", (name,)).fetchone():
+                raise ValueError(f"No machine {name!r}")
+            kinds = set(self._paused(db, name))
+            kinds = kinds | {kind} if on else kinds - {kind}
+            out = [k for k in NODE_KINDS if k in kinds]
+            db.execute("INSERT INTO meta(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       ("paused:" + name, json.dumps(out)))
+            return out
+
+    def eligible(self, labels: list, min_ram_gb: float = 0, recipe: str = "") -> list[str]:
+        """Online, unrevoked, unpaused nodes that carry every label and have the RAM; with `recipe`, also not paused
+        from that kind of work."""
         at = datetime.now(timezone.utc)
         out = []
         with self._db() as db:
             for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL ORDER BY name").fetchall():
                 stats = json.loads(m["stats"] or "{}")
+                if recipe and KIND.get(recipe) in self._paused(db, m["name"]):
+                    continue
                 if (_age(m["last_seen"], at) <= ONLINE_SECONDS and not stats.get("paused")
                         and set(labels) <= set(json.loads(m["labels"] or "[]")) and float(m["ram_gb"] or 0) >= min_ram_gb):
                     out.append(m["name"])
@@ -422,6 +458,7 @@ class Machines:
                                 "ORDER BY id DESC LIMIT 200").fetchall():
                 last.setdefault(r["machine"], r)
             queued = db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0]
+            paused = {m["name"]: self._paused(db, m["name"]) for m in machines}
         out = []
         for m in machines:
             job = running.get(m["name"])
@@ -429,9 +466,11 @@ class Machines:
             out.append({"name": m["name"], "revoked": bool(m["revoked"]), "online": _age(m["last_seen"], at) <= ONLINE_SECONDS,
                         "last_seen": m["last_seen"] or "", "labels": json.loads(m["labels"] or "[]"), "ram_gb": m["ram_gb"],
                         "version": m["version"], "stats": json.loads(m["stats"] or "{}"),
-                        "job": _job(job) if job else None, "last": _job(prev) if prev else None})
+                        "job": _job(job) if job else None, "last": _job(prev) if prev else None,
+                        "paused_work": paused.get(m["name"], [])})
         return {"machines": out, "jobs": [_job(r) for r in recent], "queued": queued, "shadow": self.shadow,
-                "recipes": {k: {"context": v["context"]} for k, v in RECIPES.items()}}
+                "recipes": {k: {"context": v["context"], "kind": KIND.get(k, "")} for k, v in RECIPES.items()},
+                "kinds": list(NODE_KINDS)}
 
 
 class _Closing:

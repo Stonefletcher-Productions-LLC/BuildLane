@@ -99,6 +99,54 @@ class QueueTests(Harness):
             self.m.enqueue("pr-check", BASE, {"pr": 7, "head": "nope"})
 
 
+class PauseTests(Harness):
+    def test_paused_checks_take_the_node_out_and_give_back_the_queued_check(self):
+        self.online()
+        self.step()
+        self.assertEqual(len(self.m.active("pr-check")), 1)
+        self.assertEqual(self.m.set_paused("SF-NODE-01", "checks", True), ["checks"])
+        self.assertIsNone(self.m.claim("SF-NODE-01"))           # the node does not take it
+        self.assertFalse(nodecheck.node_takes_checks(self.coord))  # so the PC checks PRs again
+        self.step()
+        self.assertEqual(self.m.active("pr-check"), [])          # and the queued one is given back
+        self.m.unhandled("pr-check") and Engine._node_pr_check_result(self.eng, self.coord, self.m.unhandled("pr-check")[0])
+        self.assertEqual((self.gh.labels, self.gh.comments), ([], []))
+        self.m.set_paused("SF-NODE-01", "checks", False)
+        self.assertTrue(nodecheck.node_takes_checks(self.coord))
+
+    def test_one_kind_paused_leaves_the_others(self):
+        self.online()
+        self.m.set_paused("SF-NODE-01", "tests", True)
+        tests = self.m.enqueue("node-checks", BASE)
+        check = self.m.enqueue("pr-check", BASE, {"pr": 7, "head": HEAD})
+        self.assertEqual(self.m.claim("SF-NODE-01")["id"], check)  # skips the paused tests job
+        view = {x["name"]: x for x in self.m.view()["machines"]}
+        self.assertEqual(view["SF-NODE-01"]["paused_work"], ["tests"])
+        self.assertEqual([j["id"] for j in self.m.active("node-checks")], [tests])
+        with self.assertRaises(ValueError):
+            self.m.set_paused("SF-NODE-01", "coding", True)
+        with self.assertRaises(ValueError):
+            self.m.set_paused("NOPE", "tests", True)
+
+
+class PcPauseTests(unittest.TestCase):
+    def test_pc_kinds(self):
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        held = []
+        eng = SimpleNamespace(state=State(), state_dir=Path(tmp.name), ctx=SimpleNamespace(log=lambda *_: None),
+                              wake=lambda: None, PC_KINDS=Engine.PC_KINDS)
+        eng.hold_merging = lambda on: (held.append(on), setattr(eng.state, "merge_held", on))
+        eng.pc_paused_view = lambda: Engine.pc_paused_view(eng)
+        self.assertEqual(Engine.pause_pc(eng, "coding", True), ["coding"])
+        self.assertEqual(Engine.pause_pc(eng, "merging", True), ["coding", "merging"])
+        self.assertEqual(held, [True])
+        self.assertEqual(Engine.pause_pc(eng, "coding", False), ["merging"])
+        self.assertEqual(State.load(Path(tmp.name) / "state.json").pc_paused, [])
+        with self.assertRaises(ValueError):
+            Engine.pause_pc(eng, "tests", True)
+
+
 class ResultTests(Harness):
     def test_pass_labels_the_pr(self):
         self.online()

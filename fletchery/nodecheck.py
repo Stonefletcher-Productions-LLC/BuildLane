@@ -39,7 +39,7 @@ def need_labels(conf: dict) -> list[str]:
 
 def eligible(coord, conf: dict) -> list[str]:
     import machines
-    return coord.machines.eligible(need_labels(conf), machines.RECIPES[RECIPE]["min_ram_gb"])
+    return coord.machines.eligible(need_labels(conf), machines.RECIPES[RECIPE]["min_ram_gb"], RECIPE)
 
 
 def node_takes_checks(coord) -> bool:

@@ -33,6 +33,8 @@ POST /api/issue/reply     {number, body, requeue=true}: comment on it and put it
     GET  /api/jobs/log?id=N   a machine job's log (machines.py)
     POST /api/machines/add    {name}: register a node; the answer has its key, shown this once
     POST /api/machines/revoke {name}
+    POST /api/machines/pause  {machine, kind, paused}: stop one machine from one kind of work ("PC": coding, merging,
+                              checks, builds; a node: checks, tests, builds). Running work finishes.
     POST /api/jobs/add        {recipe, ref, only, strict_slots, pr}: queue a job for the machines
     POST /api/jobs/cancel     {id}
     POST /api/builds/add      {version, ref, at, repeat: ""|"daily", tests: ""|"full", where: auto|node|pc}: schedule a build
@@ -671,6 +673,17 @@ class Dashboard:
         self.fm.ctx.log(f"machines: {name} revoked from the dashboard")
         return {"revoked": name}
 
+    def machine_pause(self, data: dict) -> dict:
+        name, kind, on = str(data.get("machine") or ""), str(data.get("kind") or ""), bool(data.get("paused"))
+        if name == "PC":
+            return {"machine": name, "paused_work": self.fm.pause_pc(kind, on)}
+        kinds = self._machines().machines.set_paused(name, kind, on)
+        self.fm.ctx.log(f"machines: {kind} {'paused' if on else 'resumed'} on {name} from the dashboard")
+        wake = getattr(self.fm, "wake", None)
+        if wake:
+            wake()
+        return {"machine": name, "paused_work": kinds}
+
     def job_add(self, data: dict) -> dict:
         coord = self._machines()
         ref = str(data.get("ref") or "").strip()
@@ -820,7 +833,7 @@ class Dashboard:
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key, "/api/issue/get": dash.issue_get,
                               "/api/issue/reply": dash.issue_reply, "/api/machines/add": dash.machine_add,
-                              "/api/machines/revoke": dash.machine_revoke, "/api/jobs/add": dash.job_add,
+                              "/api/machines/revoke": dash.machine_revoke, "/api/machines/pause": dash.machine_pause, "/api/jobs/add": dash.job_add,
                               "/api/jobs/cancel": dash.job_cancel, "/api/builds/add": dash.build_add,
                               "/api/builds/cancel": dash.build_cancel}
                     if self.path in routes:

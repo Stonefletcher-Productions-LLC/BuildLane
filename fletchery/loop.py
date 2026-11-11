@@ -57,6 +57,7 @@ class State:
     builds: list = field(default_factory=list)                # scheduled versioned builds (builds.py)
     planned_integration: bool = False                        # opt-in: feature work until a queued window is due
     merge_held: bool = False                                  # Pause merging in the Merge section
+    pc_paused: list = field(default_factory=list)             # kinds of work paused on this PC: coding, checks, builds
     repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
     emergency_repairs: dict = field(default_factory=dict)      # task -> build/merge evidence; repair classification survives restart
     resource_waits: dict = field(default_factory=dict)        # task -> earliest readiness check (ISO); survives restart
@@ -470,7 +471,8 @@ class Engine:
         if self.plans.active_merge and self.plans.active_merge["state"] == "draining" and not self.merge_priority:
             self.plans.update(self.plans.active_merge, state="queued", reason=self.merge_why)
         plan_draining = bool(self.merge_priority and self.plans.active_merge and self.plans.active_merge["state"] == "draining")
-        paused = paused or plan_draining
+        coding_off = "coding" in st.pc_paused  # Building -> Machines: coding paused on this PC; running sessions finish
+        paused = paused or plan_draining or coding_off
         # A running round reserves its own account, not the whole PC: other accounts keep writing and fixing, and the
         # round's account starts at most `round_shared_sessions` new ones. Without an agent pool (one Claude for
         # everything) or with -1, the round still holds every new session, as before.
@@ -480,6 +482,7 @@ class Engine:
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         emergency_numbers = self.repair_numbers(tasks)
         self.emergency_why = ("Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else
+                              "Coding is paused on this PC." if coding_off else
                               "Fletchery is paused or restarting." if paused else
                               "Daily budget spent." if not budget_left else "No build or merge repairs waiting.")
         # 1. feedback on open PRs -> fixers (one per task at a time)
@@ -658,6 +661,8 @@ class Engine:
                 rd.waiting[t.number] = "on hold: Claude needs signing in again"
             elif st.held:
                 rd.waiting[t.number] = "on hold: Fletchery is paused"
+            elif coding_off:
+                rd.waiting[t.number] = "on hold: coding is paused on this PC (Building, Machines)"
             elif paused:
                 rd.waiting[t.number] = f"paused for the usage limit until {st.paused_until}"
             elif t.number in emergency_numbers and cfg.emergency_workers:
@@ -1205,6 +1210,8 @@ class Engine:
         st = self.state
         if self.dry_run or draining or st.held or st.merge_resume or (self._storage_job and not self._storage_job.done()):
             return False
+        if "builds" in st.pc_paused:
+            return False
         row = self.builds.next_pc()
         if row is None:
             return False
@@ -1222,6 +1229,8 @@ class Engine:
         import nodecheck
         import prcheck
         cfg, gh = self.cfg, self.ctx.gh
+        if "checks" in self.state.pc_paused:
+            return False
         try:
             if nodecheck.node_takes_checks(getattr(self, "machines", None)):
                 return False  # a test node checks PRs now (nodecheck.py); the PC keeps its idle time for rounds
@@ -1292,7 +1301,14 @@ class Engine:
             for job in m.unhandled(nodecheck.RECIPE):
                 self._node_pr_check_result(coord, job)
             conf = nodecheck.conf_of(coord)
-            if draining or m.active(nodecheck.RECIPE) or not nodecheck.eligible(coord, conf):
+            if not nodecheck.eligible(coord, conf):
+                # No node can take checks now (PR checks paused on it, or it is offline): give back the queued one so
+                # the PC can check PRs instead of waiting on a node that will not claim it.
+                for j in m.active(nodecheck.RECIPE):
+                    if j["state"] == "queued":
+                        m.cancel(j["id"])
+                return
+            if draining or m.active(nodecheck.RECIPE):
                 return
             # Shadow: check the same PRs the PC does, to compare. Live: skip heads the PC already checked.
             checked = {} if m.shadow else self.state.pr_checks
@@ -1419,6 +1435,27 @@ class Engine:
                 "Operator requested Merge now. External completion is unconfirmed; verify affected inputs and acceptance directly before landing.")
         self.state.save(self.state_dir / "state.json")
         self.wake()
+
+    PC_KINDS = ("coding", "merging", "checks", "builds")
+
+    def pause_pc(self, kind: str, on: bool) -> list:
+        """Pause or resume one kind of work on this PC. Merging is the Merge section's Pause; the others start nothing
+        new of that kind (running work finishes). Returns the kinds now paused."""
+        if kind not in self.PC_KINDS:
+            raise ValueError(f"Unknown kind of work {kind!r}; known: {', '.join(self.PC_KINDS)}")
+        if kind == "merging":
+            self.hold_merging(on)
+        else:
+            kinds = set(self.state.pc_paused)
+            kinds = kinds | {kind} if on else kinds - {kind}
+            self.state.pc_paused = [k for k in self.PC_KINDS if k in kinds]
+            self.state.save(self.state_dir / "state.json")
+            self.ctx.log(f"{kind} {'paused' if on else 'resumed'} on this PC from the app")
+            self.wake()
+        return self.pc_paused_view()
+
+    def pc_paused_view(self) -> list:
+        return [k for k in self.PC_KINDS if k in self.state.pc_paused or (k == "merging" and self.state.merge_held)]
 
     def hold_merging(self, on: bool) -> None:
         self.state.merge_held = bool(on)
@@ -1862,7 +1899,7 @@ class Engine:
                 "usage_week": self.usage_week(), "usage_agents": self.usage_agents(),
                 "restarting": self.restart_status(), "update_pending": self.update_pending,
                 "update_note": self.pending_update_status(),
-                "held": st.held, "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
+                "held": st.held, "pc_paused": self.pc_paused_view(), "signed_out": st.signed_out, "limit_until": st.paused_until if st.paused_until and now() < st.paused_until else "",
                 "limit_reason": st.paused_reason, "tasks": rows, "merge": self.merge_rows(tasks, prs),
                 "merge_view": self.merge_view,
                 "merge_auto": {"on": bool(cfg.merge_rounds), "held": st.merge_held, "priority": self.merge_priority,
