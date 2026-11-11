@@ -92,6 +92,10 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('#laneCoding').innerText(), /2 of 8 workers[\s\S]*#891[\s\S]*#899/);
     assert.match(await page.locator('#laneMerging').innerText(), /round 16/i);
     assert.match(await page.locator('#laneBuilding').innerText(), /Gaming PC/);
+    // Which machine does what: a Runs on line per lane and one row per machine.
+    assert.match(await page.locator('#laneCoding .lane-where').innerText(), /Gaming PC/);
+    assert.match(await page.locator('#laneMerging .lane-where').innerText(), /Gaming PC[\s\S]*codex-sol/);
+    assert.match(await page.locator('#machinesGlance').innerText(), /Gaming PC[\s\S]*Coding ×2[\s\S]*Merge round 16/);
     assert.equal(await visible('#needsStrip'), true, 'a blocked task shows the Needs you strip');
     assert.equal(await visible('#queue'), false);
     assert.equal(await visible('#agents'), false);
