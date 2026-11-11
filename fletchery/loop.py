@@ -219,6 +219,8 @@ class Engine:
         self._storage_after_round = False  # a round just landed: clean now, even while workers run
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.live_round = None          # that round's number while it runs; a round file naming another is left over
+        self.booted = now()             # a round file started before this is left over from an earlier Fletchery
+        self.ended_rounds: set = set()  # rounds this Fletchery ran that have ended (a cancel can leave their file running)
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
         self.merge_backlog = 0          # the workers' PRs labelled for merging, last pass
@@ -350,7 +352,7 @@ class Engine:
         try:
             left = __import__("rounds").stop_orphan(self.cfg.merge_round_file or str(self.state_dir / "merge-round.json"),
                                                     self.live_round, "Stopped: Fletchery restarted or the round was cancelled. "
-                                                    "Its PRs go into the next round.")
+                                                    "Its PRs go into the next round.", self.booted, self.ended_rounds)
             if left:
                 self.ctx.log(f"merge round {left} was left running by an earlier Fletchery or a cancel; marked stopped")
         except Exception as e:
@@ -975,7 +977,11 @@ class Engine:
         self.merge_why = "a round is running"
         self.live_round = n
         self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file, request_id))
-        self.round_job.add_done_callback(lambda _f, n=n: self.live_round == n and setattr(self, "live_round", None))
+        def _ended(_f, n=n):
+            self.ended_rounds.add(n)
+            if self.live_round == n:
+                self.live_round = None
+        self.round_job.add_done_callback(_ended)
         self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
 
     async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str, request_id: str = "") -> dict:

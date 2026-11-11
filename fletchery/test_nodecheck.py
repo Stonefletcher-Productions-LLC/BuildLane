@@ -280,16 +280,19 @@ class OrphanRoundTests(unittest.TestCase):
         import json, os, tempfile, rounds, merge
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "merge-round.json")
-            json.dump({"round": "132", "state": "running", "steps": [{"name": "Build", "state": "done"},
+            json.dump({"round": "132", "state": "running", "started": "2026-11-11T21:26:27+00:00", "steps": [{"name": "Build", "state": "done"},
                        {"name": "Game specs", "state": "running"}]}, open(p, "w"))
-            self.assertEqual(rounds.stop_orphan(p, 132, "x"), "")          # the live round is left alone
-            self.assertEqual(rounds.stop_orphan(p, None, "restarted"), "132")
+            self.assertEqual(rounds.stop_orphan(p, 132, "x", "2026-11-11T23:00:00+00:00"), "")   # the live round is left alone
+            self.assertEqual(rounds.stop_orphan(p, None, "x", "2026-11-11T21:00:00+00:00"), "")  # started after this Fletchery: not ours to stop
+            self.assertEqual(rounds.stop_orphan(p, None, "restarted", "2026-11-11T23:00:00+00:00"), "132")
             r = json.load(open(p))
             self.assertEqual(r["state"], "stopped")
             self.assertEqual([s["state"] for s in r["steps"]], ["done", "todo"])
-            self.assertEqual(rounds.stop_orphan(p, None, "again"), "")     # already history
+            self.assertEqual(rounds.stop_orphan(p, None, "again", ended={132}), "")     # already history
             v = merge.view(p, os.path.join(d, "none.json"))
             self.assertFalse(v["active"])
+            json.dump({"round": "133", "state": "running", "started": "2026-11-11T23:10:00+00:00"}, open(p, "w"))
+            self.assertEqual(rounds.stop_orphan(p, None, "cancelled", "2026-11-11T23:00:00+00:00", ended={133}), "133")
 
 
 class JobStepsTests(unittest.TestCase):
