@@ -791,7 +791,9 @@ class _StatusGH(_RealGH):
                 {"context": "preview-receipt", "state": "failure", "description": "Failed on the build PC (run 900000000110)",
                  "target_url": None, "updated_at": "2026-11-03T04:21:30Z"},
                 {"context": "preview-receipt", "state": "pending", "description": "Running", "updated_at": "2026-11-03T04:19:00Z"},
-                {"context": "regression", "state": "success", "description": "Passed", "updated_at": "2026-11-03T04:21:00Z"}]}
+                {"context": "regression", "state": "success", "description": "Passed", "updated_at": "2026-11-03T04:21:00Z"},
+                {"context": "shadow/Node checks", "state": "failure", "description": "1 of 3 failed on SF-NODE-01: X",
+                 "updated_at": "2026-11-03T04:22:00Z"}]}
         raise AssertionError(path)
 sgh = _StatusGH("o/r")
 fb = sgh.feedback_since(PullRequest(5, "t", "h", "b", "s" * 40, ["foreman"]), None)
