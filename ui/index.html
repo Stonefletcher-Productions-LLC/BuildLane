@@ -2785,7 +2785,9 @@ function renderPlanRow(r, repoUrl) {
 function renderPlans(d) {
   const queue = d.integration_queue;
   $("integrationPlans").hidden = !queue;
-  $("packagePlans").hidden = !queue;
+  // The release-controller dialog needs an exact SHA or a merge window. Where Builds is available it is the way to
+  // package "whatever is on the branch at that time"; the old card only shows to follow requests already made with it.
+  $("packagePlans").hidden = !queue || (!!d.builds && !(queue.requests || []).some(r => r.kind === "package"));
   if (!queue) return;
   $("plansModeBadge").textContent = queue.planned ? "Planned mode" : "Automatic mode";
   $("plansModeBadge").classList.toggle("planned", queue.planned);

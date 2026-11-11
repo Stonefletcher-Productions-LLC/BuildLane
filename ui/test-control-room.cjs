@@ -733,8 +733,13 @@ const server = http.createServer(async (req, res) => {
       {id: 'r1', version: '0.3.8', ref: 'Test-Staging', sha: 'c'.repeat(40), at: now, state: 'running', route: 'node', machine: 'SF-NODE-01', job: 9, tests: '', where: 'auto', repeat: '', reason: 'Building on SF-NODE-01.'},
       {id: 'd1', version: '0.3.7', ref: 'main', sha: 'd'.repeat(40), at: now, state: 'done', route: 'pc', machine: 'This PC', tests: 'full', where: 'pc', repeat: '', finished: now, output: 'E:\\builds\\LifeShare-0.3.7'},
     ]};
+    const savedQueue = data.integration_queue;
+    data.integration_queue = {...savedQueue, requests: savedQueue.requests.filter(r => r.kind !== 'package')};
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => !document.querySelector('#buildsCard').hidden);
+    assert.equal(await visible('#buildsCard'), true);
+    assert.equal(await visible('#packagePlans'), false, 'with Builds, the old SHA-only package card stays out of the way');
+    data.integration_queue = savedQueue;
     assert.match(await page.locator('#buildsNote').innerText(), /can build on SF-NODE-01 or this PC/);
     assert.match(await page.locator('#buildRows').innerText(), /0\.3\.8[\s\S]*Building[\s\S]*Test-Staging at cccccccccc · SF-NODE-01/);
     assert.equal(await page.locator('#buildRows a[href="/api/jobs/log?id=9"]').count(), 1);
