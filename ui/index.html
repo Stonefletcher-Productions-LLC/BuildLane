@@ -834,8 +834,8 @@
   .worker-rank-badge { display: inline-block; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 
   /* Overview lanes (2026-11-11): coding, merging and building as three cards of the same shape. */
-  :root { --lane-code: #0B65A0; --lane-merge: #007A59; --lane-build: #8F3F70; }
-  :root[data-theme="dark"] { --lane-code: #6CB8EE; --lane-merge: #4CCB9F; --lane-build: #E59BC8; }
+  :root { --lane-code: #0B65A0; --lane-merge: #007A59; --lane-build: #8F3F70; --lane-test: #8A5A00; }
+  :root[data-theme="dark"] { --lane-code: #6CB8EE; --lane-merge: #4CCB9F; --lane-build: #E59BC8; --lane-test: #E8B04B; }
   .needs-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 9px 14px; margin-bottom: 14px;
     background: var(--blocked-bg); border: 1px solid var(--blocked); border-radius: 8px; }
   .needs-strip h3 { margin: 0; font-size: 14px; color: var(--blocked); }
@@ -843,10 +843,10 @@
   .needs-list { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; min-width: 0; }
   .needs-list button { border: 0; background: transparent; padding: 0; min-height: 0; font-size: 13px; font-weight: 400; color: var(--ink); text-align: left; }
   .needs-list button:hover { text-decoration: underline; }
-  .lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .lanes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
   .lane-card { --c: var(--muted); background: var(--panel); border: 1px solid var(--rule); border-top: 5px solid var(--c); border-radius: 10px;
     padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .lane-coding { --c: var(--lane-code); } .lane-merging { --c: var(--lane-merge); } .lane-building { --c: var(--lane-build); }
+  .lane-coding { --c: var(--lane-code); } .lane-merging { --c: var(--lane-merge); } .lane-building { --c: var(--lane-build); } .lane-testing { --c: var(--lane-test); }
   .lane-card[data-state="idle"] { border-top-color: var(--rule); }
   .lane-card[data-state="failed"] { border-top-color: var(--failed); }
   .lane-top { display: flex; align-items: center; gap: 8px; }
@@ -862,7 +862,7 @@
   .lane-card[data-state="idle"] .lane-big { color: var(--muted); }
   .lane-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
   .lane-rows li { display: flex; align-items: baseline; gap: 7px; font-size: 13px; min-width: 0; }
-  .lane-rows .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane-rows .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .lane-rows .num { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .lane-rows .st { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .lane-rows .more { color: var(--muted); font-size: 12px; }
@@ -875,7 +875,8 @@
   .lane-next { margin-top: auto; padding-top: 4px; }
   .lane-link { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; align-self: flex-start; }
   .lane-link:hover { text-decoration: underline; }
-  @media (max-width: 900px) { .lanes { grid-template-columns: 1fr; } }
+  @media (max-width: 1300px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { .lanes { grid-template-columns: 1fr; } }
 
   /* Workers: one number; split, hand-off and rank capacities under Advanced. */
   .workers-head { gap: 6px 14px; }
@@ -916,6 +917,7 @@
   .mtask { font-size: 12px; font-weight: 700; border-radius: 99px; padding: 2px 9px; white-space: nowrap; }
   .mtask.t-code { background: color-mix(in srgb, var(--lane-code) 16%, var(--panel)); color: var(--lane-code); }
   .mtask.t-merge { background: color-mix(in srgb, var(--lane-merge) 16%, var(--panel)); color: var(--lane-merge); }
+  .mtask.t-test { background: color-mix(in srgb, var(--lane-test) 16%, var(--panel)); color: var(--lane-test); }
   .mtask.t-build { background: color-mix(in srgb, var(--lane-build) 16%, var(--panel)); color: var(--lane-build); }
   .mtask.idle { background: var(--soft); color: var(--muted); font-weight: 400; }
   /* Tidy pages (2026-11-11): folds for secondary actions and long, low-value lists. */
@@ -993,9 +995,10 @@
     <div class="page-heading"><h2 id="overviewHeading">Overview</h2><p>Work in progress, at a glance.</p></div>
     <section class="needs-strip" id="needsStrip" aria-labelledby="needsHeading" hidden><h3 id="needsHeading">Needs you <span id="attentionCount"></span></h3><ul class="needs-list" id="attentionPreview"></ul><a href="#tasks">View all →</a></section>
     <div class="machines-glance" id="machinesGlance" aria-label="What each machine is doing"></div>
-    <div class="lanes" id="lanes" aria-label="Coding, merging and building right now">
+    <div class="lanes" id="lanes" aria-label="Coding, merging, testing and building right now">
       <section class="lane-card lane-coding" id="laneCoding" aria-labelledby="laneCodingH"></section>
       <section class="lane-card lane-merging" id="laneMerging" aria-labelledby="laneMergingH"></section>
+      <section class="lane-card lane-testing" id="laneTesting" aria-labelledby="laneTestingH"></section>
       <section class="lane-card lane-building" id="laneBuilding" aria-labelledby="laneBuildingH"></section>
     </div>
     <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
@@ -1972,53 +1975,81 @@ function renderLanes(d) {
     `<a class="lane-link" href="#workers" data-scroll="workers">Workers: ${d.max_parallel} →</a>`,
     machineChip(PC_NAME, ordinary.length > 0) + (ordinary.length ? ` · ${esc([...new Set(ordinary.map(a => a.agent).filter(Boolean))].join(", ") || "choosing agents")}` : ""));
 
-  // Merging
-  const ma = d.merge_auto || {}, mv = d.merge_view || {}, running = ma.running;
+  // Merging. merge_auto.running is {} between rounds, and a PC check of one PR also sits there (it has "check"): neither is a round.
+  const ma = d.merge_auto || {}, mv = d.merge_view || {}, cur = ma.running && ma.running.round != null ? ma.running : null;
+  const running = cur && cur.check == null ? cur : null, pcCheck = cur && cur.check != null ? cur : null;
   const steps = (mv.steps || []).filter(st => st.required !== false);
   const sameRound = running && String(mv.round) === String(running.round);
+  const roundSteps = sameRound ? steps : [];
   const step = sameRound ? steps.find(st => st.state === "running") || steps.find(st => st.state === "failed") : null;
   const failed = sameRound && (mv.state === "failed" || steps.some(st => st.state === "failed"));
   const open = (Array.isArray(d.merge) ? d.merge : []).filter(r => !(running && (running.prs || []).includes(r.pr)));
-  const ready = open.filter(r => r.ready);  // labelled for merging; the rest wait on a PC check or a fix
-  let mergePill = running ? (failed ? ["failed", `Round ${running.round} failing`] : ["on", `Round ${running.round}`])
-    : !ma.on && d.merge_auto ? ["idle", "Off"] : ma.held ? ["paused", "Paused"] : ready.length ? ["paused", "Waiting"] : ["idle", "Idle"];
-  const done = steps.filter(st => st.state === "done").length;
+  const ready = open.filter(r => r.ready);  // labelled for merging; the rest wait on a PR check or a fix
+  const done = roundSteps.filter(st => st.state === "done").length;
   // What each machine is doing, written once and used on every card and the strip, so a job reads the same everywhere.
   const pc = d.pc || {}, L = d.lane, M = d.machines, nodes = (M && M.machines) || [];
-  const roundText = running ? `Merge round ${running.round}${step ? `: ${step.name}` : ""}` : "";
-  const pcBusy = !!pc.held, pcMerging = !!running || (pcBusy && pc.kind === "round"), pcBuilding = pcBusy && !pcMerging && pc.kind !== "task";
+  const stepOf = roundSteps.length ? ` (step ${Math.min(done + 1, roundSteps.length)} of ${roundSteps.length})` : "";
+  const roundText = running ? `Merge round ${running.round}${step ? `: ${step.name}` : ""}${stepOf}` : "";
+  const pcBusy = !!pc.held, pcMerging = !!running || (pcBusy && pc.kind === "round");
+  const pcBuilding = pcBusy && !pcMerging && !pcCheck && pc.kind !== "task";
   const pcBuildText = pcBuilding ? `${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}` : "";
+  const pcCheckText = pcCheck ? `PR check #${pcCheck.check}` : "";
   const doing = m => {   // a node's job: which card it belongs to, and its one wording
     const j = m.job;
     if (m.revoked || !m.online || !j) return {lane: "", text: m.revoked ? "Revoked" : !m.online ? "Offline" : "Idle"};
-    if (j.recipe === "pr-check") return {lane: "merging", text: `PR check #${j.pr || "?"}`};
-    if (/round/i.test(j.requested_by || "")) return {lane: "merging", text: `${j.requested_by}: ${j.recipe === "node-checks" ? "tests" : j.recipe}${j.params && j.params.only ? " " + j.params.only : ""}`};
+    if (j.recipe === "pr-check") return {lane: "testing", text: `PR check #${j.pr || (j.params && j.params.pr) || "?"}`};
     if (j.recipe === "package") return {lane: "building", text: `Build ${(j.params && j.params.version) || ""}`.trim()};
-    return {lane: "building", text: j.recipe === "nightly-full" ? "Nightly tests" : `Tests: ${jobWhat(j)}`};
+    const only = j.params && j.params.only ? ` ${j.params.only}` : "";
+    if (/round/i.test(j.requested_by || "")) return {lane: "testing", text: `Tests for merge ${j.requested_by.replace(/^merge\s+/i, "")}${only}`};
+    return {lane: "testing", text: j.recipe === "nightly-full" ? "Nightly tests" : `Tests: ${jobWhat(j)}`};
   };
   const row = (name, text, since, busy = true) => `<li class="${busy ? "busy" : ""}"><span class="mdot ${busy ? "busy" : "on"}" aria-hidden="true"></span><span class="t"><b>${esc(name)}</b> · ${esc(text)}</span>${since ? `<span class="st">${esc(ago(since))}</span>` : ""}</li>`;
   const lanesOf = nodes.map(m => ({m, ...doing(m)}));
+  const testNodes = lanesOf.filter(x => x.lane === "testing");
 
-  // Merging: the round on the PC and the PR checks on nodes
-  const mergeNodes = lanesOf.filter(x => x.lane === "merging");
-  const mergeRows = [];
-  if (running) mergeRows.push(row(PC_NAME, roundText, running.started));
-  for (const x of mergeNodes) mergeRows.push(row(x.m.name, x.text, x.m.job.started));
-  let mergeBig = running ? `Round ${esc(running.round)}` : mergeNodes.length ? "Checking PRs" : "No round running";
-  let mergeBody = laneRows(mergeRows);
+  // Merging: only the merge round on the PC. Off, paused, waiting for the PC, or idle when there is none.
+  const mergePaused = !!ma.held || (d.pc_paused || []).includes("merging");
+  const pcWaitText = pcBusy && pc.kind !== "round" ? `Waiting for the Unreal slot (${pc.who || pc.what || "another job"}${pc.step || pc.script ? `: ${pc.step || pc.script}` : ""})` : "";
+  let mergePill, mergeBig, mergeRows = [], mergeBody;
   if (running) {
-    if (steps.length) mergeBody += `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="${done}" aria-label="Merge steps done"><i style="width:${Math.round(done / steps.length * 100)}%"></i></div>`;
-    mergeBody += `<p class="lane-sub">Step ${Math.min(done + 1, steps.length || 1)} of ${steps.length || "?"}${running.prs && running.prs.length ? ` · PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}` : ""}</p>`;
+    mergePill = failed ? ["failed", `Round ${running.round} failing`] : ["on", `Round ${running.round}`];
+    mergeBig = `Merge round ${esc(running.round)}`;
+    mergeRows.push(row(PC_NAME, step ? `${step.name}${stepOf}` : `starting${stepOf}`, running.started));
+    mergeBody = laneRows(mergeRows);
+    if (roundSteps.length) mergeBody += `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${roundSteps.length}" aria-valuenow="${done}" aria-label="Merge round ${esc(running.round)} steps done"><i style="width:${Math.round(done / roundSteps.length * 100)}%"></i></div>`;
+    const roundTests = testNodes.filter(x => /round/i.test(x.m.job.requested_by || ""));
+    if (roundTests.length) mergeBody += `<p class="lane-sub">This round's tests run on ${esc(roundTests.map(x => x.m.name).join(", "))} (see Testing).</p>`;
+    if (running.prs && running.prs.length) mergeBody += `<p class="lane-sub">PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}</p>`;
   } else {
-    mergeBody += `<p class="lane-why">${esc(ma.held ? "Merging is paused. Resume it on the Merging page." : !ma.on && d.merge_auto ? "Automatic merge rounds are off." : ma.why || (ready.length ? "The next round starts when the PC is free." : "No PRs are ready to merge."))}</p>`;
+    const off = !ma.on && !!d.merge_auto;
+    const waiting = !mergePaused && !off && ready.length && (pcWaitText || ma.why);
+    mergePill = off ? ["idle", "Off"] : mergePaused ? ["paused", "Paused"] : waiting ? ["paused", "Waiting"] : ["idle", "Idle"];
+    mergeBig = off ? "Automatic rounds off" : mergePaused ? "Paused" : waiting && pcWaitText ? "Waiting for the PC" : "No round running";
+    mergeRows.push(row(PC_NAME, mergePaused ? "Merging paused" : waiting && pcWaitText ? pcWaitText : "Idle", "", false));
+    mergeBody = laneRows(mergeRows) + `<p class="lane-why">${esc(mergePaused ? "Merging is paused. Resume it with the Merge button or on Machines." : off ? "Automatic merge rounds are off." : waiting ? (pcWaitText ? "The next round starts when the PC is free." : ma.why) : ready.length ? "The next round starts at the next check." : "No PRs are ready to merge.")}</p>`;
   }
   const notYet = open.length - ready.length;
   mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PR check or a fix` : ""}</p>`;
-  if (!running && mergeNodes.length && mergePill[0] === "idle") mergePill = ["on", "Checking PRs"];
-  const mergeWhere = machineChip(PC_NAME, !!running) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, mergeNodes.some(x => x.m === m))).join(" + ") : "") + (running && running.agent ? ` · ${esc(running.agent)}` : "");
+  const mergeWhere = machineChip(PC_NAME, !!running) + (running && running.agent ? ` · ${esc(running.agent)}` : "");
   $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`, mergeWhere);
 
-  // Building: only build work (scheduled builds, the Build Lane, other tests). Machines busy elsewhere are named once below.
+  // Testing: PR checks (does one PR pass the game tests on its own?) and test runs, on the PC or a node.
+  const testRows = [];
+  if (pcCheck) testRows.push(row(PC_NAME, pcCheckText, pcCheck.started));
+  for (const x of testNodes) testRows.push(row(x.m.name, x.text, x.m.job.started));
+  const testers = nodes.filter(m => m.online && !m.revoked);
+  const checksOff = !testers.length ? (d.pc_paused || []).includes("checks")
+    : testers.every(m => (m.paused_work || []).includes("checks"));
+  const testCount = testRows.length;
+  const testPill = testCount ? ["on", `${testCount} running`] : checksOff ? ["paused", "Paused"] : ["idle", "Idle"];
+  const testBig = testCount ? `${testCount} ${testCount === 1 ? "test run" : "test runs"}` : checksOff ? "PR checks paused" : "Nothing testing";
+  const testWhy = testCount ? "" : `<p class="lane-why">${esc(checksOff ? "PR checks are paused on every machine (Machines)." : notYet ? "The next PR check starts at the next check." : "No PR is waiting for a check.")}</p>`;
+  const testNext = `<p class="lane-next">Next: ${notYet} ${notYet === 1 ? "PR" : "PRs"} waiting on a PR check or a fix</p>`;
+  const testWhere = machineChip(PC_NAME, !!pcCheck) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, testNodes.some(x => x.m === m))).join(" + ") : "");
+  $("laneTesting").innerHTML = laneHtml("Testing", "Testing", testPill, testBig, laneRows(testRows) + testWhy + testNext,
+    `<a class="lane-link" href="#build">Machines →</a>`, testWhere);
+
+  // Building: only packaged builds (scheduled builds, the Build Lane, other PC build jobs).
   const rows = [];
   if (pcBuilding) rows.push(row(PC_NAME, pcBuildText, pc.since));
   let laneBusy = false;
@@ -2029,32 +2060,28 @@ function renderLanes(d) {
   const buildNodes = lanesOf.filter(x => x.lane === "building");
   for (const x of buildNodes) rows.push(row(x.m.name, x.text, x.m.job.started));
   const busyCount = (pcBuilding ? 1 : 0) + (laneBusy ? 1 : 0) + buildNodes.length;
-  const elsewhere = [];
-  if (pcMerging) elsewhere.push(`${PC_NAME}: ${roundText || "merge round"}`);
-  else if (pcBusy && pc.kind === "task") elsewhere.push(`${PC_NAME}: ${pc.who || "a worker task"}`);
-  for (const x of mergeNodes) elsewhere.push(`${x.m.name}: ${x.text}`);
   const pkg = (d.integration_queue?.requests || []).find(r => r.kind === "package" && ["queued", "draining", "running", "blocked"].includes(r.state));
   const buildPill = L && L.paused && !busyCount ? ["paused", "Paused"] : busyCount ? ["on", `${busyCount} building`] : ["idle", "Idle"];
   const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "build" : "builds"} running` : "Nothing building";
   const queuedJobs = M && M.queued ? `${M.queued} machine ${M.queued === 1 ? "job" : "jobs"} queued` : "";
   const nb = nextBuild(d);
   const next = [nb ? esc(buildLine(nb)) : "", pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
-  const buildWhy = elsewhere.length ? `<p class="lane-why">On Merging instead: ${esc(elsewhere.join(" · "))}</p>` : "";
   const buildWhere = machineChip(PC_NAME, pcBuilding) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, buildNodes.some(x => x.m === m))).join(" + ") : "");
-  $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + buildWhy + `<p class="lane-next">Next: ${next}</p>`,
+  $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + `<p class="lane-next">Next: ${next}</p>`,
     `<a class="lane-link" href="#build">Building →</a>`, buildWhere);
-  ["Coding", "Merging", "Building"].forEach((k, i) => $("lane" + k).dataset.state = [codingPill, mergePill, buildPill][i][0]);
+  ["Coding", "Merging", "Testing", "Building"].forEach((k, i) => $("lane" + k).dataset.state = [codingPill, mergePill, testPill, buildPill][i][0]);
 
   // Machines at a glance: each machine and what it is doing right now, in the same words as the cards.
   const pcJobs = [];
   if (ordinary.length) pcJobs.push(`<span class="mtask t-code">Coding ×${ordinary.length}</span>`);
   if (emergency.live.length) pcJobs.push(`<span class="mtask t-code">Repair ×${emergency.live.length}</span>`);
   if (running) pcJobs.push(`<span class="mtask t-merge">${esc(roundText)}</span>`);
+  if (pcCheck) pcJobs.push(`<span class="mtask t-test">${esc(pcCheckText)}</span>`);
   if (pcBuilding) pcJobs.push(`<span class="mtask t-build">${esc(pcBuildText)}</span>`);
-  const offTag = kinds => kinds && kinds.length ? `<span class="mtask idle" title="Paused on Building, Machines">${esc(kinds.map(k => WORK_NAMES[k] || k).join(", "))} paused</span>` : "";
-  const mrows = [`<li><span class="mdot ${pcJobs.length ? "busy" : "on"}" aria-hidden="true"></span><b>${PC_NAME}</b>${pcJobs.join("") || '<span class="mtask idle">Free</span>'}${offTag(d.pc_paused)}</li>`];
+  const offTag = kinds => kinds && kinds.length ? `<span class="mtask idle" title="Paused on Machines">${esc(kinds.map(k => WORK_NAMES[k] || k).join(", "))} paused</span>` : "";
+  const mrows = [`<li><span class="mdot ${pcJobs.length ? "busy" : "on"}" aria-hidden="true"></span><b>${PC_NAME}</b>${pcJobs.join("") || '<span class="mtask idle">Idle</span>'}${offTag(d.pc_paused)}</li>`];
   for (const x of lanesOf) {
-    const m = x.m, cls = x.lane === "merging" ? "t-merge" : x.lane === "building" ? "t-build" : "idle";
+    const m = x.m, cls = x.lane === "testing" ? "t-test" : x.lane === "building" ? "t-build" : "idle";
     mrows.push(`<li><span class="mdot ${m.job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><b>${esc(m.name)}</b><span class="mtask ${cls}">${esc(x.text)}</span>${m.revoked ? "" : offTag(m.paused_work)}</li>`);
   }
   $("machinesGlance").innerHTML = `<span class="glance-label">Machines</span><ul>${mrows.join("")}</ul>`;
