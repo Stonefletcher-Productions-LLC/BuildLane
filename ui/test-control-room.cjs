@@ -199,9 +199,11 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(() => window.scrollTo(0, 200));
     assert.ok(await page.evaluate(() => scrollY > 0), 'the merge view is tall enough to scroll in a narrow window');
     // Click in place: Playwright's own click would scroll the sidebar link into view first.
-    await page.evaluate(() => document.querySelector('[data-view="tasks"]').click());
+    // The tasks view now shrinks to its content, so give it room to scroll before checking it opens at the top.
+    await page.evaluate(() => { document.body.style.minHeight = '3000px'; document.querySelector('[data-view="tasks"]').click(); });
     assert.ok(await page.evaluate(() => document.documentElement.scrollHeight - innerHeight >= 200), 'the tasks view can scroll as far');
     assert.equal(await page.evaluate(() => scrollY), 0, 'switching views starts at the top');
+    await page.evaluate(() => { document.body.style.minHeight = ''; });
     await page.locator('[data-view="merge"]').click();
     await page.setViewportSize({width:1400,height:1000});
     await page.locator('[data-view="overview"]').click();
@@ -694,6 +696,7 @@ const server = http.createServer(async (req, res) => {
     assert.match(machineText, /SF-NODE-02[\s\S]*Offline, never connected/);
     assert.equal(await page.locator('#jobRows tr').count(), 4);
     assert.equal(await page.locator('#jobRows a[href="/api/jobs/log?id=7"]').count(), 1);
+    await page.locator('#jobAdd summary').click();
     assert.equal(await page.locator('#jobRecipe option').count(), 3);
     assert.match(await page.locator('#machinesNote').innerText(), /100\.83\.43\.111:8771[\s\S]*shadow/);
     await page.locator('#jobOnly').fill('RunFlowTest');
