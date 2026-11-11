@@ -75,6 +75,20 @@ running when Fletchery stopped is marked failed.
 Profile (optional, `workers` block): `"builds": {"outDir": "E:\\lifeshare-scratch\\LifeShare-builds",
 "engine": "E:\\UE_5.8", "timeoutMinutes": 300, "nodeLabels": ["unreal:5.8.3"]}`.
 
+## Pausing one machine from one kind of work
+
+Building → Machines shows a "Takes:" row of switches under each machine. Click one to stop that machine from that kind
+of work; click again to resume. Running work always finishes.
+
+- **This PC:** Coding (no new worker sessions), Merging (the same as Pause on the Merge page), PR checks (no PC checks),
+  Builds (no scheduled builds start here).
+- **A node:** PR checks, Tests (node-checks, nightly, checkout-only) and Builds (`package`). A paused node claims no job
+  of that kind and is not counted as eligible, so PR checks go back to the PC and Automatic builds pick another machine
+  or the PC. A queued PR check that no node can take any more is cancelled so the PC can check that PR.
+
+Node pauses live in `machines.db` (meta `paused:<name>`); PC pauses in `state.json` (`pc_paused`). Both survive restarts.
+The Overview's machine strip lists what is paused.
+
 ## Setting it up
 
 1. **Profile** (live profile, `workers` block; needs Alex's OK):
