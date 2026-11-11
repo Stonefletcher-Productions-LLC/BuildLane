@@ -727,6 +727,17 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => !document.querySelector('#machineKey').hidden);
     assert.match(await page.locator('#machineKey').innerText(), /Key for SF-NODE-03 \(shown once\):\s*fnk_test-key/);
     await page.screenshot({path: path.join(out, 'machines-building.png'), fullPage: true});
+    // A node's PR check is merging work: it shows on the Merging card, not as a build.
+    const node = data.machines.machines[0], keepJob = node.job;
+    node.job = {id: 9, recipe: 'pr-check', sha: 'b'.repeat(40), ref: 'Test-Staging', params: {pr: 1568, head: 'c'.repeat(40)}, state: 'running', started: now, pr: 1568, requested_by: 'pr-check'};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /checking PR #1568/.test(document.querySelector('#laneMerging').textContent));
+    const buildLane = await page.locator('#laneBuilding').textContent();
+    assert.match(buildLane, /SF-NODE-01 · no build · checking PR #1568/);
+    assert.doesNotMatch(buildLane, /machines? working/);
+    assert.match(await page.locator('#machinesGlance').textContent(), /PR check #1568/);
+    node.job = keepJob;
+    await page.evaluate(() => refresh());
     assert.equal(requests.filter(r => r.url === '/api/jobs/cancel').at(-1).body.id, 7);
     // Builds: schedule a version at a time, see where it runs, stop a daily one.
     data.builds = {base: 'Test-Staging', nodes: ['SF-NODE-01'], machines: true, out_dir: 'E:\\builds', builds: [
