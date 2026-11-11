@@ -2346,7 +2346,7 @@ function renderLane(d) {
     shown.map(x => `<li><a class="num" href="${esc(d.repo_url)}/pull/${x.number}" target="_blank" rel="noopener">#${x.number}</a>
       <span class="ttl" title="${esc(x.title)}">${esc(x.title)}</span>${x.foreman ? '<span class="badge">Workers</span>' : ""}<span class="st">${esc(x.state)}</span></li>`).join("") +
     `</ul>${q.length > shown.length ? `<div style="color:var(--muted);font-size:14px;margin-top:4px">and ${q.length - shown.length} more on the status issue</div>` : ""}`
-    : `<span style="color:var(--muted);font-size:14px">Nothing waiting for the lane.</span>`;
+    : `<span style="color:var(--muted);font-size:14px">${L.old ? `The Build Lane last ran ${ago(L.updated)} ago. Merge rounds build and test PRs now, so nothing waits here.` : "Nothing waiting for the lane."}</span>`;
 }
 
 

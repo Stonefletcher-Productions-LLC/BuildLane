@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STALE_MINUTES = 10  # the Buildlane app warns when a running build has said nothing for 10 minutes
+OLD_HOURS = 24  # a finished status this old is a leftover: its queue is a snapshot, not PRs still waiting
 
 
 def _parse_time(s: str) -> datetime | None:
@@ -78,6 +79,12 @@ def read(status_file: str, pause_file: str, drive: str = "", min_free_gb: float 
                   for q in (st.get("queue") or []) if isinstance(q, dict)],
     })
     out["stale"] = bool(not done and updated and (now - updated).total_seconds() > STALE_MINUTES * 60)
+    # The lane rewrites its queue only when it runs. Once it has sat finished for a day (or was retired in favour of
+    # merge rounds) that list is days old and names PRs long merged, so don't show it as "waiting for a build".
+    out["old"] = bool(done and updated and (now - updated).total_seconds() > OLD_HOURS * 3600)
+    if out["old"]:
+        out["old_queue"] = len(out["queue"])
+        out["queue"] = []
     return out
 
 

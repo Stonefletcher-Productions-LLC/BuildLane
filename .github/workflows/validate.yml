@@ -90,6 +90,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_feedback_excerpt.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python fletchery/test_lane_old.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_dispatch_resilience.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python fletchery/test_storage.py
