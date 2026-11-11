@@ -1015,6 +1015,7 @@ class Engine:
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
             prompt += rounds.playtest_text(cfg)
+            prompt += rounds.node_tests_text(cfg, n, cfg.base_branch)
             if resume:
                 prompt += ("\n\n## Explicitly authorized interrupted-round recovery\n"
                            "The user authorized continuing final acceptance after the PC reservation clears. "
