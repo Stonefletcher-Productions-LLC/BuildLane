@@ -2,7 +2,16 @@
 
 ## Follow work in the dashboard
 
-**Overview** puts **All workers** beside the current merge summary. **Round
+**Overview** opens with three cards of the same shape: **Coding**, **Merging**
+and **Building**. Each has a status pill (for example Working, Round 123, Idle,
+Paused or Failing), one large line for what it is doing now, a few rows of
+detail, and a **Next** line. Coding lists the running tasks; Merging shows the
+current round step and a step bar; Building lists the gaming PC, the Build Lane
+when it has work, and one row per test node from **Machines**. When a card has
+nothing to do, its pill turns grey and it says why. **Needs you** is a strip
+above the cards that only appears when a task needs an answer.
+
+Below the cards, **Workers** sits beside the current merge summary. **Round
 details →** opens **Merging** for the full checklist, logs, and scheduled windows.
 On a narrow window, the cards stack.
 
@@ -34,23 +43,25 @@ grouping for packages.
 
 ## Worker capacity
 
-Use **All workers** at the top of Overview to choose 0–30 normal jobs. Changing
-that number returns to automatic allocation: Fletchery uses eligible ready tasks,
+Use the **Workers** minus and plus buttons on Overview to choose 0–30 normal
+jobs. Below the number, a bar shows how those slots are split between strong,
+mid and light models. Changing the number returns to automatic allocation: Fletchery uses eligible ready tasks,
 the existing router, model availability and baseline strength to allocate writing
 slots across ranks. Each rank is capped at ten. If no eligible model/task can
 use the remaining slots, the panel reports them as unassigned.
 
-The three rank sections show current models, scores, allowed task levels and
+Open **Advanced** under the worker list to set the split by hand, or to
+**Pause & hand off**. The three rows there show current models, scores, allowed task levels and
 active writing sessions. Rank uses the benchmark baseline or configured strength fallback. Learned scores still guide routing within available capacity.
 
 | Rank | Score | Manual capacity |
 | --- | --- | --- |
-| High | 75–100 | 0–10 |
-| Medium | 60–74 | 0–10 |
-| Low | Below 60 | 0–10 |
+| Strong (high) | 75–100 | 0–10 |
+| Mid (medium) | 60–74 | 0–10 |
+| Light (low) | Below 60 | 0–10 |
 
 Changing any rank capacity selects manual allocation and sets the total to the
-sum of the three capacities. Changing All workers restores automatic allocation.
+sum of the three capacities. Changing the number of workers restores automatic allocation.
 Lowering capacity never cancels an active session. The task badge records the bucket used at admission, even if an agent escalates or its baseline changes.
 
 Ranks control new writing admission. They do not replace existing task-level,

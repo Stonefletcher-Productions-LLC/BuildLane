@@ -763,7 +763,6 @@
 
 .ranked-workers #slotsBox {height:auto !important; max-height:none !important}
 .ranked-workers [data-key="workers"] {display:none}
-#allWorkerTotal {width:90px; display:inline-block; margin:0}
 .rank-section {border-top:1px solid var(--line); margin-top:12px; padding-top:8px}
 .rank-section .slot.free {min-height:0; padding:6px 10px}
 .rank-section .now-head {align-items:center; margin-bottom:4px}
@@ -816,6 +815,79 @@
 #planPRChoices label {display:block}
   html, .slots-scroll, .scroll, .hist { overflow-anchor: none; }
   .worker-rank-badge { display: inline-block; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+  /* Overview lanes (2026-11-11): coding, merging and building as three cards of the same shape. */
+  :root { --lane-code: #0B65A0; --lane-merge: #007A59; --lane-build: #8F3F70; }
+  :root[data-theme="dark"] { --lane-code: #6CB8EE; --lane-merge: #4CCB9F; --lane-build: #E59BC8; }
+  .needs-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 9px 14px; margin-bottom: 14px;
+    background: var(--blocked-bg); border: 1px solid var(--blocked); border-radius: 8px; }
+  .needs-strip h3 { margin: 0; font-size: 14px; color: var(--blocked); }
+  .needs-strip a { margin-left: auto; font-size: 12px; color: var(--blocked); font-weight: 700; }
+  .needs-list { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; min-width: 0; }
+  .needs-list button { border: 0; background: transparent; padding: 0; min-height: 0; font-size: 13px; font-weight: 400; color: var(--ink); text-align: left; }
+  .needs-list button:hover { text-decoration: underline; }
+  .lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+  .lane-card { --c: var(--muted); background: var(--panel); border: 1px solid var(--rule); border-top: 5px solid var(--c); border-radius: 10px;
+    padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .lane-coding { --c: var(--lane-code); } .lane-merging { --c: var(--lane-merge); } .lane-building { --c: var(--lane-build); }
+  .lane-card[data-state="idle"] { border-top-color: var(--rule); }
+  .lane-card[data-state="failed"] { border-top-color: var(--failed); }
+  .lane-top { display: flex; align-items: center; gap: 8px; }
+  .lane-top h3 { margin: 0; font-size: 16px; }
+  .lane-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--c); flex: none; }
+  .lane-card[data-state="idle"] .lane-dot { background: var(--rule); }
+  .lane-pill { margin-left: auto; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; border-radius: 99px; padding: 3px 9px; white-space: nowrap; }
+  .lane-pill.on { background: var(--c); color: var(--panel); }
+  .lane-pill.idle { background: var(--soft); color: var(--muted); border: 1px solid var(--rule); }
+  .lane-pill.paused { background: var(--hold-bg); color: var(--hold); }
+  .lane-pill.failed { background: var(--failed-bg); color: var(--failed); }
+  .lane-big { font-size: 21px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .lane-card[data-state="idle"] .lane-big { color: var(--muted); }
+  .lane-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  .lane-rows li { display: flex; align-items: baseline; gap: 7px; font-size: 13px; min-width: 0; }
+  .lane-rows .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane-rows .num { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .lane-rows .st { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .lane-rows .more { color: var(--muted); font-size: 12px; }
+  .mdot { width: 9px; height: 9px; border-radius: 50%; background: var(--rule); flex: none; align-self: center; }
+  .mdot.on { background: var(--running); } .mdot.busy { background: var(--lane-build); }
+  .lane-prog { height: 6px; background: var(--soft); border-radius: 3px; overflow: hidden; }
+  .lane-prog i { display: block; height: 100%; background: var(--c); }
+  .lane-sub, .lane-why, .lane-next { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .lane-sub a { color: var(--accent); }
+  .lane-next { margin-top: auto; padding-top: 4px; }
+  .lane-link { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; align-self: flex-start; }
+  .lane-link:hover { text-decoration: underline; }
+  @media (max-width: 900px) { .lanes { grid-template-columns: 1fr; } }
+
+  /* Workers: one number; split, hand-off and rank capacities under Advanced. */
+  .workers-head { gap: 6px 14px; }
+  .workers-head .worker-help { display: block; flex-basis: 100%; margin: 0; font-size: 12px; color: var(--muted); }
+  .wcount.big { gap: 0; border: 1px solid var(--rule); border-radius: 9px; overflow: hidden; }
+  .wcount.big .step { border: 0; border-radius: 0; min-width: 38px; min-height: 38px; font-size: 20px; }
+  .wcount.big b { min-width: 42px; font-size: 22px; color: var(--ink); text-align: center; }
+  .worker-busy { font-size: 13px; color: var(--muted); }
+  .worker-split { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; }
+  .split-label { font-size: 12px; font-weight: 700; color: var(--muted); min-width: 64px; }
+  .split-bar { flex: 1; display: flex; height: 24px; border-radius: 6px; overflow: hidden; min-width: 0; }
+  .split-seg { font-size: 11.5px; font-weight: 700; line-height: 24px; text-align: center; white-space: nowrap; overflow: hidden; color: var(--panel); min-width: 0; }
+  .split-high { background: var(--accent); } .split-medium { background: color-mix(in srgb, var(--accent) 62%, var(--panel)); }
+  .split-low { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); color: var(--ink); }
+  .split-none { background: var(--soft); color: var(--muted); }
+  .repair-seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
+  .repair-seg button { border: 0; border-radius: 0; min-height: 28px; padding: 2px 12px; font-size: 13px; background: transparent; color: var(--muted); }
+  .repair-seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+  .emergency-workers .now-head { flex-wrap: wrap; gap: 6px 12px; }
+  .emergency-workers .now-head .emergency-help { margin: 0; flex-basis: 100%; }
+  .worker-advanced { border-top: 1px solid var(--rule); margin-top: 10px; padding-top: 8px; }
+  .worker-advanced summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  .rank-caps { display: grid; gap: 6px; margin: 8px 0; }
+  .rank-caps .rank-section { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+  .rank-caps label { display: inline-flex; align-items: center; gap: 8px; margin: 0; min-width: 170px; font-size: 13px; }
+  .rank-caps select { width: auto; min-width: 60px; padding-top: 3px; padding-bottom: 3px; }
+  .rank-caps .emergency-help { margin: 0; }
+  .handoff-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
+  .handoff-row .emergency-help { margin: 0; }
 </style>
 </head>
 <body>
@@ -874,12 +946,17 @@
 
   <section class="view" id="view-overview" aria-labelledby="overviewHeading">
     <div class="page-heading"><h2 id="overviewHeading">Overview</h2><p>Work in progress, at a glance.</p></div>
+    <section class="needs-strip" id="needsStrip" aria-labelledby="needsHeading" hidden><h3 id="needsHeading">Needs you <span id="attentionCount"></span></h3><ul class="needs-list" id="attentionPreview"></ul><a href="#tasks">View all →</a></section>
+    <div class="lanes" id="lanes" aria-label="Coding, merging and building right now">
+      <section class="lane-card lane-coding" id="laneCoding" aria-labelledby="laneCodingH"></section>
+      <section class="lane-card lane-merging" id="laneMerging" aria-labelledby="laneMergingH"></section>
+      <section class="lane-card lane-building" id="laneBuilding" aria-labelledby="laneBuildingH"></section>
+    </div>
     <div class="summary-strip" id="overviewStats" aria-label="Project summary">Connecting to your project…</div>
     <div class="overview-grid" id="overviewGrid">
       <div id="workersMount"></div>
       <section class="card" id="mergeCard" aria-labelledby="mergeHeading"><div class="card-head"><h3 id="mergeHeading">Merging</h3><a class="merge-round-details" href="#merge">Round details →</a><a class="merge-all-prs" href="#tasks">All PRs →</a></div><div id="mergeMount"></div></section>
       <section class="card"><div class="card-head"><h3>Recent activity</h3><a href="#activity">View all →</a></div><ul class="preview-list" id="recentPreview"></ul></section>
-      <section class="card"><div class="card-head"><h3>Needs you <span id="attentionCount"></span></h3><a href="#tasks">View all →</a></div><ul class="preview-list" id="attentionPreview"></ul></section>
     </div>
   </section>
   <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
@@ -937,33 +1014,39 @@
   </section>
 
   <section class="now" id="workers" aria-labelledby="nowh">
-    <div class="now-head">
-      <h2 id="nowh">All workers</h2>
-      <select id="allWorkerTotal" aria-label="All workers"></select>
-      <span class="wcount" role="group" aria-label="Number of workers">
+    <div class="now-head workers-head">
+      <h2 id="nowh">Workers</h2>
+      <span class="wcount big" role="group" aria-label="Number of workers">
         <button type="button" class="step dark" id="wDown" aria-label="One worker fewer">−</button>
-        <b id="wVal" hidden>2</b>
+        <b id="wVal" aria-live="polite">2</b>
         <button type="button" class="step dark" id="wUp" aria-label="One worker more">+</button>
       </span>
-      <button type="button" id="handoffWorkers" hidden>Pause &amp; hand off</button>
-      <p id="nowSub">Claude sessions <b>writing the code</b> for a task. Each task goes <b>write → check → second-Claude review → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.</p>
+      <span class="worker-busy" id="workerBusy"></span>
+      <p class="worker-help">How many coding sessions can run at once. 0 stops new coding; merging and building carry on.</p>
     </div>
-    <div id="handoffStatus" class="emergency-help" aria-live="polite" hidden></div>
-    <p id="rankMode" class="emergency-help" hidden></p>
+    <div class="worker-split" id="workerSplit" hidden></div>
     <div class="slots-scroll" id="slotsBox" tabindex="-1"><div class="slots" id="slots"></div></div>
     <div id="storageStatus" class="emergency-help" hidden></div>
     <section class="emergency-workers" id="emergencyWorkers" aria-labelledby="emergencyHeading" hidden>
       <div class="now-head">
-        <h3 id="emergencyHeading">Emergency workers</h3>
-        <span class="wcount" role="group" aria-label="Number of emergency workers">
-          <button type="button" class="step dark" id="eDown" aria-label="One emergency worker fewer">−</button>
-          <b id="eVal">1</b>
-          <button type="button" class="step dark" id="eUp" aria-label="One emergency worker more">+</button>
+        <h3 id="emergencyHeading">Repair worker</h3>
+        <span class="seg repair-seg" role="group" aria-labelledby="emergencyHeading">
+          <button type="button" id="eDown" aria-pressed="false">Off</button>
+          <button type="button" id="eUp" aria-pressed="true">On</button>
         </span>
+        <b id="eVal" hidden>1</b>
+        <span class="emergency-help">Fixes failed builds and merges, even at 0 workers. Never starts new features.</span>
       </div>
-      <p class="emergency-help">Repairs build and merge failures, even when Workers is 0. Does not start new feature work.</p>
       <div id="emergencySlots" class="slots" aria-live="polite"></div>
     </section>
+    <details class="worker-advanced" id="workerAdvanced">
+      <summary>Advanced: split by model strength, pause and hand off</summary>
+      <p id="rankMode" class="emergency-help" hidden></p>
+      <div class="rank-caps" id="rankCaps"></div>
+      <div class="handoff-row"><button type="button" id="handoffWorkers" hidden>Pause &amp; hand off</button>
+      <span class="emergency-help">Saves each running session at its next checkpoint so another agent can pick it up.</span></div>
+      <div id="handoffStatus" class="emergency-help" aria-live="polite" hidden></div>
+    </details>
     <div class="grip" data-resize="slotsBox" data-key="workers" role="separator" aria-orientation="horizontal" tabindex="0"
          aria-label="Resize Workers: drag, or use the up and down arrow keys" title="Drag to resize"></div>
   </section>
@@ -1276,6 +1359,7 @@ addEventListener("hashchange", routeView);
 document.addEventListener("click", e => {
   const link = e.target.closest('a[href^="#"]');
   if (link) showView(link.getAttribute("href").slice(1));
+  if (link && link.dataset.scroll) { e.preventDefault(); $(link.dataset.scroll).scrollIntoView({block: "start"}); }
 });
 let savedView = "overview";
 try { savedView = localStorage.getItem("fletchery.view") || savedView; } catch (_) {}
@@ -1430,9 +1514,10 @@ function normalWorkerSessions(d) {
   const emergencyTasks = new Set(emergency.live.map(a => a.task));
   return (d.live || []).filter(a => !a.emergency && !emergencyTasks.has(a.task));
 }
+// Worker ranks are model strength (coding score), not task difficulty: strong models also take easy tasks.
+const RANK_NAMES = {high: "Strong", medium: "Mid", low: "Light"};
 function workerRankBadge(rank) {
-  const labels = {low: "Low", medium: "Medium", high: "High"};
-  return Object.hasOwn(labels, rank) ? ` <span class="worker-rank-badge" title="Worker capacity bucket">${labels[rank]}</span>` : "";
+  return Object.hasOwn(RANK_NAMES, rank) ? ` <span class="worker-rank-badge" title="Model strength used for this task">${RANK_NAMES[rank]}</span>` : "";
 }
 
 function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
@@ -1457,12 +1542,12 @@ function renderEmergencyWorkers(d) {
   const e = emergencyWorkerState(d);
   $("emergencyWorkers").hidden = !e.available;
   $("eVal").textContent = e.max;
-  $("eDown").disabled = !e.available || e.max === 0;
-  $("eUp").disabled = !e.available || e.max === 1;
-  $("eDown").title = "0 emergency workers: finish current repairs, then start no new repairs";
+  $("eDown").setAttribute("aria-pressed", String(e.max === 0));
+  $("eUp").setAttribute("aria-pressed", String(e.max === 1));
+  $("eDown").title = "Off: finish current repairs, then start no new repairs";
   const open = new Set([...$("emergencySlots").querySelectorAll("details[open]")].map(el => el.dataset.emergencyWorker));
   const rows = e.live.map(a => workerSessionHtml(a, d, open, "data-emergency-worker"));
-  if (!e.max) rows.push(`<div class="slot free">${e.live.length ? "Emergency repairs pause after the current session finishes." : "Emergency repairs are paused (0 emergency workers)."}</div>`);
+  if (!e.max) rows.push(`<div class="slot free">${e.live.length ? "Emergency repairs pause after the current session finishes." : "Emergency repairs are paused (repair worker off)."}</div>`);
   else if (!rows.length) rows.push(`<div class="slot free">${esc(e.why || "Standing by for a build or merge failure.")}</div>`);
   $("emergencySlots").innerHTML = rows.join("");
 }
@@ -1760,11 +1845,87 @@ function renderOverview(d) {
   $("navTasks").classList.toggle("attention", !!blocked.length);
   $("navTasks").setAttribute("aria-label", blocked.length ? `${blocked.length} need attention` : `${queued.length} queued, ${prs} PRs waiting`);
   $("attentionCount").textContent = blocked.length ? `(${blocked.length})` : "";
+  $("needsStrip").hidden = !blocked.length;
   $("attentionPreview").innerHTML = blocked.length ? blocked.slice(0, 3).map(t => `<li><button type="button" data-ny="${t.number}">#${t.number} ${esc(t.title)}</button></li>`).join("") : '<li><small>Nothing needs your input.</small></li>';
   const names = {...RESULT_NAMES, fixed: "Fix pushed", blocked: "Needs you"};
   $("recentPreview").innerHTML = d.history.length ? d.history.slice(0, 3).map(h => `<li><a href="${esc(d.repo_url)}/issues/${h.task}" target="_blank" rel="noopener">#${h.task}</a>${workerRankBadge(h.worker_rank)} ${esc(resultName(names, h.result))}<small>${esc(stamp(h.at))}${h.agent ? " · " + esc(h.agent) : ""}</small></li>`).join("") : '<li><small>Completed sessions will appear here.</small></li>';
   const active = d.merge_auto && d.merge_auto.running;
   $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merging";
+  renderLanes(d);
+}
+
+// Overview lanes: one card each for coding, merging and building, the same shape so all three read at a glance.
+function laneHtml(key, title, pill, big, body, link) {
+  return `<div class="lane-top"><span class="lane-dot" aria-hidden="true"></span><h3 id="lane${key}H">${title}</h3>` +
+    `<span class="lane-pill ${pill[0]}">${esc(pill[1])}</span></div><div class="lane-big">${big}</div>${body}${link}`;
+}
+function laneRows(items) {
+  return items.length ? `<ul class="lane-rows">${items.join("")}</ul>` : "";
+}
+function renderLanes(d) {
+  // Coding
+  const ordinary = normalWorkerSessions(d), emergency = emergencyWorkerState(d), mergeWait = workerMergeWait(d);
+  const queued = d.tasks.filter(t => t.status === "queued"), waiting = queued.filter(t => WAITING.test(t.why || ""));
+  const codingPill = d.workers_enabled === false ? ["idle", "Off"] : d.held ? ["paused", "Paused"]
+    : ordinary.length ? ["on", "Working"] : d.max_parallel === 0 ? ["idle", "Stopped"] : mergeWait ? ["paused", "Waiting"]
+    : d.limit_until ? ["paused", "At a limit"] : ["idle", "Idle"];
+  const codingBig = d.max_parallel === 0 ? (ordinary.length ? `${ordinary.length} finishing` : "0 workers")
+    : `${ordinary.length} of ${d.max_parallel} workers`;
+  const sessions = ordinary.slice(0, 3).map(a => `<li><span class="num">#${a.task}</span><span class="t">${esc(a.title)}</span><span class="st">${esc((a.stage || "starting").replace(/ \(.*\)$/, "").toLowerCase())}</span></li>`);
+  if (ordinary.length > 3) sessions.push(`<li class="more">+${ordinary.length - 3} more below</li>`);
+  if (emergency.live.length) sessions.push(`<li><span class="num">#${emergency.live[0].task}</span><span class="t">Repair: ${esc(emergency.live[0].title)}</span><span class="st">repair</span></li>`);
+  const codingWhy = !ordinary.length ? `<p class="lane-why">${esc(d.held ? "Paused: press Resume to start new work." : d.max_parallel === 0 ? "Workers is 0, so no new coding starts." : mergeWait ? mergeWait.title + "." : queued.length - waiting.length ? "Starting the next ready task at the next check." : "No ready tasks.")}</p>` : "";
+  $("laneCoding").innerHTML = laneHtml("Coding", "Coding", codingPill, esc(codingBig), laneRows(sessions) + codingWhy +
+    `<p class="lane-next">Next: ${queued.length - waiting.length} ready · ${waiting.length} waiting on other tasks</p>`,
+    `<a class="lane-link" href="#workers" data-scroll="workers">Workers: ${d.max_parallel} →</a>`);
+
+  // Merging
+  const ma = d.merge_auto || {}, mv = d.merge_view || {}, running = ma.running;
+  const steps = (mv.steps || []).filter(st => st.required !== false);
+  const sameRound = running && String(mv.round) === String(running.round);
+  const step = sameRound ? steps.find(st => st.state === "running") || steps.find(st => st.state === "failed") : null;
+  const failed = sameRound && (mv.state === "failed" || steps.some(st => st.state === "failed"));
+  const ready = (Array.isArray(d.merge) ? d.merge : []).filter(r => !(running && (running.prs || []).includes(r.pr)));
+  const mergePill = running ? (failed ? ["failed", `Round ${running.round} failing`] : ["on", `Round ${running.round}`])
+    : !ma.on && d.merge_auto ? ["idle", "Off"] : ma.held ? ["paused", "Paused"] : ready.length ? ["paused", "Waiting"] : ["idle", "Idle"];
+  const done = steps.filter(st => st.state === "done").length;
+  let mergeBig = "No round running", mergeBody = "";
+  if (running) {
+    mergeBig = esc(step ? step.name : mv.headline || "Starting");
+    if (steps.length) mergeBody += `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="${done}" aria-label="Merge steps done"><i style="width:${Math.round(done / steps.length * 100)}%"></i></div>`;
+    mergeBody += `<p class="lane-sub">Step ${Math.min(done + 1, steps.length || 1)} of ${steps.length || "?"} · ${esc(ago(running.started))} so far${running.prs && running.prs.length ? ` · PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}` : ""}</p>`;
+  } else {
+    mergeBody += `<p class="lane-why">${esc(ma.held ? "Merging is paused. Resume it on the Merging page." : !ma.on && d.merge_auto ? "Automatic merge rounds are off." : ma.why || (ready.length ? "The next round starts when the PC is free." : "No PRs are ready to merge."))}</p>`;
+  }
+  mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round</p>`;
+  $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`);
+
+  // Building: the PC, the Build Lane, then each test node
+  const pc = d.pc || {}, L = d.lane, M = d.machines;
+  const rows = [], busyFlags = [];
+  const pcBusy = !!pc.held;
+  busyFlags.push(pcBusy);
+  rows.push(`<li class="${pcBusy ? "busy" : ""}"><span class="mdot ${pcBusy ? "busy" : "on"}" aria-hidden="true"></span><span class="t"><b>Gaming PC</b> · ${pcBusy ? esc(`${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}`) : "free"}</span>${pcBusy && pc.since ? `<span class="st">${esc(ago(pc.since))}</span>` : ""}</li>`);
+  if (L && L.available !== false && (L.step || (L.queue || []).length)) {
+    const laneBusy = !!L.step && !L.done;
+    busyFlags.push(laneBusy);
+    rows.push(`<li class="${laneBusy ? "busy" : ""}"><span class="mdot ${laneBusy ? "busy" : L.paused ? "" : "on"}" aria-hidden="true"></span><span class="t"><b>Build Lane</b> · ${L.paused ? "paused" : laneBusy ? esc(L.step) : "idle"}${(L.queue || []).length ? ` · ${L.queue.length} waiting` : ""}</span></li>`);
+  }
+  for (const m of (M && M.machines) || []) {
+    const job = m.job, last = m.last;
+    busyFlags.push(!!job);
+    const state = m.revoked ? "revoked" : !m.online ? `offline${m.last_seen ? ", seen " + ago(m.last_seen) + " ago" : ""}` : job ? jobWhat(job) : "idle" + (last ? `, last ${last.recipe || "job"}${last.pr ? " #" + last.pr : ""} ${last.state === "passed" ? "✓" : last.state === "failed" || last.state === "lost" ? "✗" : last.state}` : "");
+    rows.push(`<li class="${job ? "busy" : ""}"><span class="mdot ${job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><span class="t"><b>${esc(m.name)}</b> · ${esc(state)}</span>${job && job.started ? `<span class="st">${esc(ago(job.started))}</span>` : ""}</li>`);
+  }
+  const busyCount = busyFlags.filter(Boolean).length;
+  const pkg = (d.integration_queue?.requests || []).find(r => r.kind === "package" && ["queued", "draining", "running", "blocked"].includes(r.state));
+  const buildPill = L && L.paused && !busyCount ? ["paused", "Paused"] : busyCount ? ["on", `${busyCount} of ${busyFlags.length} busy`] : ["idle", "Idle"];
+  const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "machine" : "machines"} working` : "Nothing building";
+  const queuedJobs = M && M.queued ? `${M.queued} test ${M.queued === 1 ? "job" : "jobs"} queued` : "";
+  const next = [pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
+  $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + `<p class="lane-next">Next: ${next}</p>`,
+    `<a class="lane-link" href="#build">Building →</a>`);
+  ["Coding", "Merging", "Building"].forEach((k, i) => $("lane" + k).dataset.state = [codingPill, mergePill, buildPill][i][0]);
 }
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
@@ -1773,26 +1934,33 @@ function renderWorkers(d) {
   $("wDown").disabled = d.max_parallel <= 0;
   $("wDown").title = d.max_parallel === 1 ? "0 workers: pause normal writing; merging, builds and enabled emergency repairs continue" : "";
   $("wUp").disabled = d.max_parallel >= 30;
-  if (!$("allWorkerTotal").options.length) $("allWorkerTotal").innerHTML = Array.from({length: 31}, (_, n) => `<option value="${n}">${n}</option>`).join("");
-  if (document.activeElement !== $("allWorkerTotal")) $("allWorkerTotal").value = d.max_parallel;
   $("handoffWorkers").hidden = !d.worker_handoffs;
   $("handoffWorkers").disabled = !(d.live || []).length;
   const handoffs = Object.values(d.worker_handoffs || {}).filter(r => ["requested", "checkpointed", "interrupted"].includes(r.state));
   $("handoffStatus").hidden = !handoffs.length;
   $("handoffStatus").innerHTML = handoffs.map(r => `<p><b>#${esc(r.task)} ${esc(r.state === "requested" ? "will pause at the next checkpoint" : r.state === "interrupted" ? "handoff interrupted" : "checkpoint saved")}</b>${r.phase ? ` · ${esc(r.phase)} · ${r.staged.length} staged` : ""}${r.note ? `<br>${esc(r.note)}` : ""}${r.worktree ? `<br><small>${esc(r.worktree)}</small>` : ""}</p>`).join("");
+  const busy = normalWorkerSessions(d).length;
+  $("workerBusy").textContent = d.max_parallel === 0
+    ? (busy ? `${busy} finishing · new coding stopped` : "New coding stopped")
+    : `${busy} busy · ${Math.max(0, d.max_parallel - busy)} free`;
   const ranks = d.worker_ranks;
   $("rankMode").hidden = !ranks;
+  $("workerSplit").hidden = !ranks || d.max_parallel === 0;
   $("workers").classList.toggle("ranked-workers", !!ranks);
-  if (!ranks) return;
+  if (!ranks) { $("rankCaps").innerHTML = '<p class="emergency-help">The split by model strength appears once more than one coding agent is set up.</p>'; return; }
   const counts = ranks.ready_levels || {};
-  $("rankMode").textContent = `${ranks.mode === "automatic" ? "Automatic allocation from All workers" : "Manual rank capacities"}. Ready tasks: ${counts.easy || 0} easy, ${counts.medium || 0} medium, ${counts.hard || 0} hard. ${ranks.unassigned ? ranks.unassigned + " slots have no eligible model or task." : ""} Existing task restrictions and review rules still apply.`;
-  const active = normalWorkerSessions(d);
-  const expanded = new Set([...$("slots").querySelectorAll("details[open]")].map(e => e.dataset.worker));
-  $("slots").style.display = "block";
-  $("slots").innerHTML = ["high", "medium", "low"].map(rank => {
-    const sessions = active.filter(a => ((ranks.assignments || {})[String(a.task)] || (ranks.agent_ranks || {})[a.agent] || "low") === rank);
+  const manual = ranks.mode !== "automatic";
+  $("rankMode").textContent = `${manual ? "Split set by hand. Changing the number of workers above goes back to automatic." : "Split automatically from the number of workers."} Ready tasks: ${counts.easy || 0} easy, ${counts.medium || 0} medium, ${counts.hard || 0} hard.${ranks.unassigned ? ` ${ranks.unassigned} ${ranks.unassigned === 1 ? "slot has" : "slots have"} no model or task that fits.` : ""}`;
+  const order = ["high", "medium", "low"], total = order.reduce((n, r) => n + (ranks.limits[r] || 0), 0) + (ranks.unassigned || 0);
+  const segs = order.filter(r => ranks.limits[r]).map(r => `<span class="split-seg split-${r}" style="flex:${ranks.limits[r]}" title="${esc(RANK_NAMES[r])} models: ${(ranks.models[r] || []).map(esc).join(", ") || "none on"}">${ranks.limits[r]} ${esc(RANK_NAMES[r].toLowerCase())}</span>`);
+  if (ranks.unassigned) segs.push(`<span class="split-seg split-none" style="flex:${ranks.unassigned}" title="No model or task fits these slots right now">${ranks.unassigned} unused</span>`);
+  $("workerSplit").innerHTML = `<span class="split-label">${manual ? "Split by hand" : "Split"}</span><span class="split-bar" role="img" aria-label="${esc(order.map(r => `${ranks.limits[r] || 0} ${RANK_NAMES[r].toLowerCase()}`).join(", "))} model workers">${total ? segs.join("") : '<span class="split-seg split-none" style="flex:1">no slots</span>'}</span>`;
+  const focused = document.activeElement && document.activeElement.dataset.rankCap;
+  if (focused) return;  // don't rebuild a select while it is open
+  $("rankCaps").innerHTML = order.map(rank => {
     const models = (ranks.models[rank] || []).map(n => `${n} (${ranks.scores[n]}${ranks.restrictions[n] ? "; " + ranks.restrictions[n].join("/") + " tasks" : ""})`).join(", ");
-    return `<section class="rank-section" data-rank="${rank}"><div class="now-head"><h3>${rank[0].toUpperCase() + rank.slice(1)} rank · baseline ${esc(ranks.thresholds[rank])}</h3><label>Capacity <select data-rank-cap="${rank}" aria-label="${rank} worker capacity">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label></div><p class="emergency-help">${sessions.length} active · ${ranks.limits[rank]} slots. ${models ? `Coding benchmark: ${esc(models)}` : "No enabled writing models in this rank."}</p><div class="slots">${sessions.map(a => workerSessionHtml(a, d, expanded)).join("") || '<div class="slot free"><small>Waiting for an eligible task and model.</small></div>'}</div></section>`;
+    const active = (ranks.active || {})[rank] || 0;
+    return `<div class="rank-section" data-rank="${rank}"><label><b>${esc(RANK_NAMES[rank])} models</b> <select data-rank-cap="${rank}" aria-label="${esc(RANK_NAMES[rank])} model workers">${Array.from({length: 11}, (_, n) => `<option value="${n}"${n === ranks.limits[rank] ? " selected" : ""}>${n}</option>`).join("")}</select></label><span class="emergency-help">${active} busy · coding score ${esc(ranks.thresholds[rank])} · ${models ? esc(models) : "no coding agent on"}</span></div>`;
   }).join("");
 }
 async function setWorkers(v) {
@@ -2114,7 +2282,6 @@ function renderAgents(d) {
   const A = d.agents, sec = $("agents");
   if (!A) { sec.hidden = true; return; }
   sec.hidden = d.workers_enabled === false;
-  if (A.multi) $("nowSub").innerHTML = "Coding agents <b>writing the code</b> for a task, each labelled with who is on it. Each task goes <b>write → check → review by another company's agent → open a PR</b>. Once the PR opens, follow builds and Unreal tests in Building and integration in Merging.";
   $("escBtn").setAttribute("aria-pressed", A.escalate ? "true" : "false");
   const R = A.routing || {};
   const rl = k => (R[k] && R[k].length) ? R[k].map(n => {
@@ -2640,8 +2807,7 @@ $("hold").onclick = async () => {
   catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
 $("handoffWorkers").onclick = () => agentCall("/api/workers/handoff", {});
-$("allWorkerTotal").onchange = () => setWorkers(Number($("allWorkerTotal").value));
-$("slots").addEventListener("change", e => {
+$("rankCaps").addEventListener("change", e => {
   const rank = e.target.dataset.rankCap;
   if (!rank || !last.worker_ranks) return;
   const limits = {...last.worker_ranks.limits, [rank]: Number(e.target.value)};
@@ -2649,8 +2815,8 @@ $("slots").addEventListener("change", e => {
 });
 $("wDown").onclick = () => setWorkers(last.max_parallel - 1);
 $("wUp").onclick = () => setWorkers(last.max_parallel + 1);
-$("eDown").onclick = () => setEmergencyWorkers(0);
-$("eUp").onclick = () => setEmergencyWorkers(1);
+$("eDown").onclick = () => { if ($("eDown").getAttribute("aria-pressed") !== "true") setEmergencyWorkers(0); };
+$("eUp").onclick = () => { if ($("eUp").getAttribute("aria-pressed") !== "true") setEmergencyWorkers(1); };
 $("capDown").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.max(0, v - CAP_STEP(v - 1))); };
 $("capUp").onclick = () => { const v = Math.round(last.daily_budget); setCap(Math.min(1000, v + CAP_STEP(v))); };
 async function switchAuth(to) {
