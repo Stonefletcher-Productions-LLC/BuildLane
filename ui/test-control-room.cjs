@@ -758,13 +758,15 @@ const server = http.createServer(async (req, res) => {
     // Between rounds merge_auto.running is {} and merge_view still holds the last round: no "undefined", no stray steps.
     const keepRun = data.merge_auto.running, keepPc = data.pc;
     data.merge_auto.running = {};
-    data.pc = {held: true, kind: 'task', who: 'codex-walkslide-1642', step: 'RunAnimReview', since: now};
+    data.pc = {held: true, kind: 'outside', who: 'codex-walkslide-1642', step: 'RunAnimReview', since: now};
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => !/Merge round 16/.test(document.querySelector('#laneMerging').textContent));
     const idle = await page.locator('#laneMerging').innerText();
     assert.doesNotMatch(idle, /undefined|Step \d/i);
     assert.match(idle, /Waiting for the Unreal slot \(codex-walkslide-1642: RunAnimReview\)|Idle/);
     assert.doesNotMatch(await page.locator('#lanes').innerText(), /undefined/);
+    assert.doesNotMatch(await page.locator('#laneBuilding').innerText(), /walkslide/);   // an outside job is not a build
+    assert.match(await page.locator('#machinesGlance').innerText(), /codex-walkslide-1642: RunAnimReview/);
     data.merge_auto.held = true;
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => /Paused/.test(document.querySelector('#laneMerging').textContent));

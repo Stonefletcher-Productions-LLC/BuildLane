@@ -1991,7 +1991,8 @@ function renderLanes(d) {
   const stepOf = roundSteps.length ? ` (step ${Math.min(done + 1, roundSteps.length)} of ${roundSteps.length})` : "";
   const roundText = running ? `Merge round ${running.round}${step ? `: ${step.name}` : ""}${stepOf}` : "";
   const pcBusy = !!pc.held, pcMerging = !!running || (pcBusy && pc.kind === "round");
-  const pcBuilding = pcBusy && !pcMerging && !pcCheck && pc.kind !== "task";
+  const pcBuilding = pcBusy && !pcMerging && !pcCheck && pc.kind === "lane";   // a job from outside Fletchery (Codex, a script) is not a build
+  const pcOutside = pcBusy && !pcMerging && !pcCheck && !pcBuilding && pc.kind !== "task" ? `${pc.who || pc.what || "Outside job"}${pc.step || pc.script ? `: ${pc.step || pc.script}` : ""}` : "";
   const pcBuildText = pcBuilding ? `${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}` : "";
   const pcCheckText = pcCheck ? `PR check #${pcCheck.check}` : "";
   const doing = m => {   // a node's job: which card it belongs to, and its one wording
@@ -2078,6 +2079,7 @@ function renderLanes(d) {
   if (running) pcJobs.push(`<span class="mtask t-merge">${esc(roundText)}</span>`);
   if (pcCheck) pcJobs.push(`<span class="mtask t-test">${esc(pcCheckText)}</span>`);
   if (pcBuilding) pcJobs.push(`<span class="mtask t-build">${esc(pcBuildText)}</span>`);
+  if (pcOutside) pcJobs.push(`<span class="mtask idle" title="Holds the Unreal slot; not started by Fletchery">${esc(pcOutside)}</span>`);
   const offTag = kinds => kinds && kinds.length ? `<span class="mtask idle" title="Paused on Machines">${esc(kinds.map(k => WORK_NAMES[k] || k).join(", "))} paused</span>` : "";
   const mrows = [`<li><span class="mdot ${pcJobs.length ? "busy" : "on"}" aria-hidden="true"></span><b>${PC_NAME}</b>${pcJobs.join("") || '<span class="mtask idle">Idle</span>'}${offTag(d.pc_paused)}</li>`];
   for (const x of lanesOf) {
