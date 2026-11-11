@@ -1498,6 +1498,13 @@ function durationText(seconds) {
   const h = Math.floor(m / 60);
   return h + " h " + (m % 60) + " min";
 }
+// The Build Lane rewrites its queue only when it runs. A finished status over a day old is a leftover snapshot (lane.py
+// says so as `old` after a reload; this covers a page copied in before the backend reloads).
+function laneQueue(L) {
+  if (!L) return [];
+  const old = L.old || (L.done && L.updated && (Date.now() - Date.parse(L.updated)) > 24 * 3600 * 1000);
+  return old ? [] : (L.queue || []);
+}
 function ago(iso) {
   return iso ? durationText(Math.max(0, (Date.now() - Date.parse(iso)) / 1000)) : "";
 }
@@ -1956,10 +1963,10 @@ function renderLanes(d) {
   const pcBusy = !!pc.held;
   busyFlags.push(pcBusy);
   rows.push(`<li class="${pcBusy ? "busy" : ""}"><span class="mdot ${pcBusy ? "busy" : "on"}" aria-hidden="true"></span><span class="t"><b>Gaming PC</b> · ${pcBusy ? esc(`${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}`) : "free"}</span>${pcBusy && pc.since ? `<span class="st">${esc(ago(pc.since))}</span>` : ""}</li>`);
-  if (L && L.available !== false && (L.step || (L.queue || []).length)) {
+  if (L && L.available !== false && (L.step || laneQueue(L).length)) {
     const laneBusy = !!L.step && !L.done;
     busyFlags.push(laneBusy);
-    rows.push(`<li class="${laneBusy ? "busy" : ""}"><span class="mdot ${laneBusy ? "busy" : L.paused ? "" : "on"}" aria-hidden="true"></span><span class="t"><b>Build Lane</b> · ${L.paused ? "paused" : laneBusy ? esc(L.step) : "idle"}${(L.queue || []).length ? ` · ${L.queue.length} waiting` : ""}</span></li>`);
+    rows.push(`<li class="${laneBusy ? "busy" : ""}"><span class="mdot ${laneBusy ? "busy" : L.paused ? "" : "on"}" aria-hidden="true"></span><span class="t"><b>Build Lane</b> · ${L.paused ? "paused" : laneBusy ? esc(L.step) : "idle"}${laneQueue(L).length ? ` · ${laneQueue(L).length} waiting` : ""}</span></li>`);
   }
   for (const m of (M && M.machines) || []) {
     const job = m.job, last = m.last;
@@ -2340,13 +2347,13 @@ function renderLane(d) {
   (L.notes || []).forEach(n => warns.push(`<div class="lane-warn">Watchdog: ${esc(n)}</div>`));
   $("laneWarn").innerHTML = warns.join("");
 
-  const q = L.queue || [];
+  const q = laneQueue(L);
   const shown = q.slice(0, 12);
   $("laneQueue").innerHTML = q.length ? `<h3>PRs waiting for a build <span style="color:var(--muted);font-weight:400">${q.length}</span></h3><ul>` +
     shown.map(x => `<li><a class="num" href="${esc(d.repo_url)}/pull/${x.number}" target="_blank" rel="noopener">#${x.number}</a>
       <span class="ttl" title="${esc(x.title)}">${esc(x.title)}</span>${x.foreman ? '<span class="badge">Workers</span>' : ""}<span class="st">${esc(x.state)}</span></li>`).join("") +
     `</ul>${q.length > shown.length ? `<div style="color:var(--muted);font-size:14px;margin-top:4px">and ${q.length - shown.length} more on the status issue</div>` : ""}`
-    : `<span style="color:var(--muted);font-size:14px">${L.old ? `The Build Lane last ran ${ago(L.updated)} ago. Merge rounds build and test PRs now, so nothing waits here.` : "Nothing waiting for the lane."}</span>`;
+    : `<span style="color:var(--muted);font-size:14px">${L.old || (L.done && (L.queue || []).length) ? `The Build Lane last ran ${ago(L.updated)} ago. Merge rounds build and test PRs now, so nothing waits here.` : "Nothing waiting for the lane."}</span>`;
 }
 
 
