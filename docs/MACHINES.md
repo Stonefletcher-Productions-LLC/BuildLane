@@ -75,6 +75,18 @@ running when Fletchery stopped is marked failed.
 Profile (optional, `workers` block): `"builds": {"outDir": "E:\\lifeshare-scratch\\LifeShare-builds",
 "engine": "E:\\UE_5.8", "timeoutMinutes": 300, "nodeLabels": ["unreal:5.8.3"]}`.
 
+## A merge round's tests on a node
+
+With `"roundTests": {"labels": ["unreal:5.8.4"]}` inside `workers.machines`, each merge round still builds and imports
+content on this PC, but runs its long test suites on a test node: the merger pushes the candidate to a throwaway
+`fletchery/round-<n>` branch and runs
+
+    python machines.py --state-dir <state> run --recipe node-checks --sha <sha> --only <tests> --requested-by "round <n>"
+
+which queues a `node-checks` job, waits, prints the result and the failing output, and exits 0 passed, 1 failed, 2 no
+result. On 2 (no node free, node paused from Tests, lost, out of memory) the merger runs the tests on this PC as before.
+The labels pick a node whose engine matches this PC. The job shows on the Merging card as the round's.
+
 ## Pausing one machine from one kind of work
 
 Building → Machines shows a "Takes:" row of switches under each machine. Click one to stop that machine from that kind

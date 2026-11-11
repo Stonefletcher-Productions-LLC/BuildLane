@@ -705,6 +705,48 @@ class Coordinator:
                 self.log(f"machines: {type(e).__name__}: {e}")
 
 
+NO_NODE_MINUTES = 10   # `run`: give up (no result) when no node has taken the job by then
+
+
+def run_job(m: "Machines", recipe: str, sha: str, params: dict | None = None, requested_by: str = "", labels=None,
+            timeout_minutes: float = 0, poll: float = 15, out=print, clock=None, sleep=None) -> int:
+    """Queue one job, wait for it, print its result and the end of its log. 0 passed, 1 failed (the tests failed),
+    2 no result: no node can take it, nobody took it within NO_NODE_MINUTES, it was lost or cancelled, or the job
+    itself reported "no result" (exit 2). A merge round runs its long tests this way (rounds.node_tests_text)."""
+    import time
+    clock, sleep = clock or time.monotonic, sleep or time.sleep
+    need = list(RECIPES[recipe]["labels"]) + [x for x in (labels or []) if x not in RECIPES[recipe]["labels"]]
+    if not m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe):
+        out(f"No result: no online node takes {recipe} with labels {' '.join(need)} (offline, paused or busy elsewhere).")
+        return 2
+    job_id = m.enqueue(recipe, sha, params, requested_by=requested_by, labels=labels)
+    out(f"Job {job_id} queued: {recipe} at {sha[:10]}. Waiting for a node...")
+    start, limit = clock(), (timeout_minutes or RECIPES[recipe]["timeout_minutes"] + NO_NODE_MINUTES) * 60
+    seen_running = False
+    while True:
+        job = m.job(job_id)
+        if job["state"] == "running" and not seen_running:
+            seen_running = True
+            out(f"Job {job_id} running on {job['machine']}.")
+        if job["state"] in DONE:
+            break
+        waited = clock() - start
+        if (job["state"] == "queued" and waited > NO_NODE_MINUTES * 60) or waited > limit:
+            m.cancel(job_id)
+            out(f"No result: job {job_id} {'was not taken by any node' if job['state'] == 'queued' else 'ran too long'}; cancelled.")
+            return 2
+        sleep(poll)
+    tail = "\n".join(m.log_text(job_id, 256 * 1024).replace("\r\n", "\n").rstrip().split("\n")[-60:])
+    if tail:
+        out(tail)
+    out(f"Job {job_id} on {job['machine']}: {job['state']}: {job['summary']}")
+    if job["state"] == "passed":
+        return 0
+    if job["state"] == "failed" and job.get("exit_code") != 2:
+        return 1
+    return 2
+
+
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Fletchery machines: nodes and their jobs")
@@ -722,6 +764,14 @@ def main(argv=None) -> int:
     q.add_argument("--pr", type=int, default=0)
     c = sub.add_parser("cancel")
     c.add_argument("id", type=int)
+    r = sub.add_parser("run", help="queue a job, wait for it and exit 0 passed / 1 failed / 2 no result")
+    r.add_argument("--recipe", required=True, choices=["node-checks"])
+    r.add_argument("--sha", required=True)
+    r.add_argument("--only", default="")
+    r.add_argument("--strict-slots", action="store_true")
+    r.add_argument("--label", action="append", default=[])
+    r.add_argument("--requested-by", default="command line")
+    r.add_argument("--timeout-minutes", type=float, default=0)
     a = ap.parse_args(argv)
     m = Machines(a.state_dir, a.repo)
     if a.cmd == "add":
@@ -736,6 +786,9 @@ def main(argv=None) -> int:
                         pr=a.pr))
     elif a.cmd == "cancel":
         print(m.cancel(a.id))
+    elif a.cmd == "run":
+        return run_job(m, a.recipe, a.sha, {"only": a.only, "strict_slots": a.strict_slots}, a.requested_by[:100],
+                       a.label, a.timeout_minutes)
     return 0
 
 

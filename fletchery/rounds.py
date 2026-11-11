@@ -514,6 +514,39 @@ def validation_plan(files: list[str], base: str = "Test-Staging") -> str:
             "Changed PR paths (recheck after integration fixes): " + ", ".join(shown) + suffix)
 
 
+# ---- the round's long tests on a test node (workers.machines.roundTests) ----
+
+def node_tests_text(cfg, round_no, base: str) -> str:
+    """With workers.machines.roundTests set, the merger runs the round's long test suites on a test node, so the PC is
+    free while they run (Alex, 2026-11-11: "give me usage back to my PC"). The build, content imports and any check the
+    plan says to run here stay on this PC. Without a node (exit 2) the tests run here as before."""
+    import sys
+    from pathlib import Path
+    conf = (getattr(cfg, "machines", None) or {}).get("roundTests")
+    if not conf:
+        return ""
+    labels = [str(x) for x in (conf.get("labels") or [])] if isinstance(conf, dict) else []
+    branch = f"fletchery/round-{round_no}"
+    tool = Path(__file__).resolve().with_name("machines.py")
+    cmd = (f'& "{sys.executable}" "{tool}" --state-dir "{cfg.state_dir}" run --recipe node-checks --sha <full SHA> '
+           f'--only <Name1,Name2,...> --requested-by "round {round_no}"' + "".join(f" --label {x}" for x in labels))
+    return ("\n\n# Run the long tests on the test node\n\n"
+            "This overrides where the test suites run; what to test is unchanged. Build the editor and import content on "
+            "this PC as usual. Then, for the RunAllTests suites (specs, editor and game tests, Flow, smoke), do not run "
+            "them on this PC. Instead:\n"
+            f"1. Commit the candidate, then push it to the throwaway branch `{branch}` only: "
+            f"`git push --force origin HEAD:refs/heads/{branch}`. Never push the candidate anywhere else before it lands.\n"
+            f"2. Work out the test names the plan needs (for LifeShare: `Tools/RunAllTests.ps1 -Set Auto -BaseRef "
+            f"origin/{base} -PlanOnly` lists them).\n"
+            f"3. Run, from the worktree: `{cmd}`. It waits for the node and prints the result and the failing output.\n"
+            "   - Exit 0: those tests passed on the node; record them as passed for this candidate.\n"
+            "   - Exit 1: they failed on the node; treat it exactly as a failure here (fix within scope, or defer the PR "
+            "that causes it), then push again and rerun.\n"
+            "   - Exit 2: no result (no node free, node lost or out of memory): run the same tests on this PC as usual.\n"
+            "4. Strict NavCheck, packaged checks and anything the project rules say must run on this PC still run here.\n"
+            f"5. When the round ends, landed or not, delete the branch: `git push origin --delete {branch}`.\n")
+
+
 # ---- playtest acceptance (workers.mergePlaytest) ----
 
 def playtest_text(cfg) -> str:

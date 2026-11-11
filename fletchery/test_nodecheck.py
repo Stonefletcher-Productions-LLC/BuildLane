@@ -129,6 +129,63 @@ class PauseTests(Harness):
             self.m.set_paused("NOPE", "tests", True)
 
 
+class RunJobTests(Harness):
+    """machines.run_job: how a merge round runs its long tests on a node and reads the result."""
+    def run_with(self, finish=None, online=True):
+        import machines
+        if online:
+            self.online()
+        out, t = [], [0.0]
+
+        def sleep(_):
+            t[0] += 60
+            if not finish:
+                return
+            running = [j for j in self.m.active("node-checks") if j["state"] == "running"]
+            if not running:
+                self.m.claim("SF-NODE-01")
+            elif t[0] >= 180:
+                self.m.append_log("SF-NODE-01", running[0]["id"], "== RunFlowTest\nFAIL RunFlowTest\n")
+                self.m.finish("SF-NODE-01", running[0]["id"], *finish)
+        code = machines.run_job(self.m, "node-checks", BASE, {"only": "RunFlowTest"}, "round 9", ["unreal:5.8.3"],
+                                out=out.append, clock=lambda: t[0], sleep=sleep)
+        return code, "\n".join(out)
+
+    def test_pass_fail_and_no_result(self):
+        self.assertEqual(self.run_with((0, "Passed"))[0], 0)
+        code, text = self.run_with((1, "1 of 1 failed: RunFlowTest"))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL RunFlowTest", text)
+        self.assertEqual(self.run_with((2, "No result"))[0], 2)
+
+    def test_no_node_means_no_result(self):
+        code, text = self.run_with(online=False)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.m.active("node-checks"), [])
+        self.online()
+        self.m.set_paused("SF-NODE-01", "tests", True)
+        self.assertEqual(self.run_with(online=False)[0], 2)
+
+    def test_nobody_takes_it(self):
+        code, text = self.run_with(finish=None)
+        self.assertEqual(code, 2)
+        self.assertIn("not taken", text)
+        self.assertEqual(self.m.active("node-checks"), [])
+
+
+class RoundPromptTests(unittest.TestCase):
+    def test_round_tests_text_only_when_on(self):
+        import rounds
+        cfg = SimpleNamespace(machines={"listen": "x"}, state_dir="E:/s")
+        self.assertEqual(rounds.node_tests_text(cfg, 7, "Test-Staging"), "")
+        cfg.machines["roundTests"] = {"labels": ["unreal:5.8.4"]}
+        text = rounds.node_tests_text(cfg, 7, "Test-Staging")
+        self.assertIn("fletchery/round-7", text)
+        self.assertIn('run --recipe node-checks', text)
+        self.assertIn("--label unreal:5.8.4", text)
+        self.assertIn("Exit 2", text)
+
+
 class PcPauseTests(unittest.TestCase):
     def test_pc_kinds(self):
         tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
