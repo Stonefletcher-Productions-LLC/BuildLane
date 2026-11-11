@@ -873,8 +873,29 @@
   .lane-sub, .lane-why, .lane-next { margin: 0; font-size: 12.5px; color: var(--muted); }
   .lane-sub a { color: var(--accent); }
   .lane-next { margin-top: auto; padding-top: 4px; }
+  .lane-btns { margin: 2px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
   .lane-link { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; align-self: flex-start; }
   .lane-link:hover { text-decoration: underline; }
+  .test-stats { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-bottom: 16px; }
+  .tcard { --c: var(--lane-test); border: 1px solid var(--rule); border-left: 4px solid var(--lane-test); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; display: grid; gap: 6px; }
+  .tcard-head { display: flex; align-items: center; gap: 8px; } .tcard-head h4 { margin: 0; font-size: 15px; } .tcard-head .chip { margin-left: auto; }
+  .tcard p { margin: 0; } .tprog { font-size: 12.5px; }
+  .tsteps, .tsecs, .tchecks, .twait { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .tsteps > li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; column-gap: 6px; font-size: 13px; align-items: baseline; }
+  .tsteps > li > .tsecs, .tsteps > li > .tchecks { grid-column: 2 / 4; margin-top: 3px; }
+  .tsecs > li { font-size: 12.5px; } .tsecs > li > .tchecks { margin: 3px 0 2px 18px; }
+  .tchecks { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 12px; } .tchecks li { font-size: 12px; }
+  .ti { display: inline-block; width: 14px; text-align: center; font-weight: 700; color: var(--muted); }
+  .passed > .ti { color: var(--running); } .failed > .ti { color: var(--failed); } .running > .ti { color: var(--lane-test); }
+  .failed > .tn, .tsecs .failed > b { color: var(--failed); } .running > .tn { font-weight: 700; }
+  .todo, .cleanup { color: var(--muted); } .tt { color: var(--muted); font-size: 12px; margin-left: 6px; white-space: nowrap; }
+  .tsecs .tt { white-space: normal; }
+  .tlinks { display: flex; gap: 12px; align-items: center; font-size: 12.5px; } .tlinks a { color: var(--accent); }
+  .twait li { font-size: 13px; } .twait a { color: var(--accent); }
+  .thist { border-top: 1px solid var(--rule); padding: 8px 0; }
+  .thist summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+  .thist .tsum { flex-basis: 100%; color: var(--muted); font-size: 12px; padding-left: 4px; }
+  .thist-body { padding: 8px 0 4px 18px; display: grid; gap: 8px; }
   @media (max-width: 1300px) { .lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 700px) { .lanes { grid-template-columns: 1fr; } }
 
@@ -945,6 +966,7 @@
     <a href="#overview" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span>Overview</a>
     <a href="#tasks" data-view="tasks"><span class="nav-icon" aria-hidden="true">☷</span>Tasks<span class="nav-count" id="navTasks" hidden></span></a>
     <a href="#merge" data-view="merge"><span class="nav-icon" aria-hidden="true">◆</span>Merging</a>
+    <a href="#test" data-view="test"><span class="nav-icon" aria-hidden="true">◎</span>Testing<span class="nav-count" id="navTesting" hidden></span></a>
     <a href="#build" data-view="build"><span class="nav-icon" aria-hidden="true">▣</span>Building</a>
     <a href="#agents" data-view="agents"><span class="nav-icon" aria-hidden="true">◇</span>Agents</a>
     <a href="#activity" data-view="activity"><span class="nav-icon" aria-hidden="true">◷</span>Activity</a>
@@ -1009,6 +1031,13 @@
     </div>
   </section>
   <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
+  <section class="view" id="view-test" aria-labelledby="testPageHeading" hidden>
+    <div class="page-heading"><h2 id="testPageHeading">Testing</h2><p>PR checks and test runs on every machine: each step, its result and the log.</p></div>
+    <div class="summary-strip test-stats" id="testStats" aria-label="Testing summary"></div>
+    <section class="card" aria-labelledby="testRunningH" style="margin-bottom:16px"><div class="card-head"><h3 id="testRunningH">Running now</h3></div><div id="testRunningRows"></div></section>
+    <section class="card" aria-labelledby="testWaitingH" style="margin-bottom:16px"><div class="card-head"><h3 id="testWaitingH">Waiting</h3></div><div id="testWaitingRows"></div></section>
+    <section class="card" aria-labelledby="testHistoryH"><div class="card-head"><h3 id="testHistoryH">Recent results</h3><span class="muted">Open one for its steps</span></div><div id="testHistoryRows"></div></section>
+  </section>
   <section class="view" id="view-build" aria-labelledby="buildPageHeading" hidden>
     <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Packaged builds you schedule, and what each machine is doing.</p></div>
     <section class="card builds-card" id="buildsCard" aria-labelledby="buildsHeading" style="margin-bottom:16px" hidden>
@@ -1399,13 +1428,14 @@ const $ = id => document.getElementById(id);
 // Move existing controls once: their IDs, handlers and API contracts stay intact.
 $("workersMount").append($("workers"));
 $("mergeMount").append($("mergeNow"), $("integrationPlans"));
+$("mergePageMount").append($("mergeCard"));
 $("buildPageMount").append($("lane"));
 $("tasksMount").prepend($("queue"), $("boardBox"));
 $("agentsMount").append(document.querySelector(".usage"), $("agents"));
 $("activityMount").append($("lowerBox"));
 $("sidebarBottom").prepend($("settingsBtn"));
-const viewAliases = {queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "build", log: "activity", lowerBox: "activity"};
-const viewNames = ["overview", "tasks", "merge", "build", "agents", "activity"];
+const viewAliases = {testing: "test", queue: "tasks", board: "tasks", boardBox: "tasks", workers: "overview", lane: "build", log: "activity", lowerBox: "activity"};
+const viewNames = ["overview", "tasks", "merge", "test", "build", "agents", "activity"];
 let currentView = "";
 function showView(name, remember = true) {
   name = viewAliases[name] || name;
@@ -1413,8 +1443,7 @@ function showView(name, remember = true) {
   // A different view opens at its top, not at the previous view's scroll position.
   const changed = currentView && currentView !== name;
   currentView = name;
-  if (name === "merge") $("mergePageMount").append($("mergeCard"));
-  else if (name === "overview") $("overviewGrid").insertBefore($("mergeCard"), $("workersMount").nextSibling);
+  if (name === "merge") $("mergePageMount").append($("mergeCard"));  // the Overview shows its Merging lane card instead
   document.querySelectorAll(".view").forEach(el => { el.hidden = el.id !== "view-" + name; });
   document.querySelectorAll("[data-view]").forEach(a => {
     if (a.dataset.view === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -1942,6 +1971,7 @@ function renderOverview(d) {
   const active = d.merge_auto && d.merge_auto.running;
   $("mergeHeading").textContent = active && active.round ? `Merge round ${active.round}` : "Merging";
   renderLanes(d);
+  renderTesting(d);
 }
 
 // Overview lanes: one card each for coding, merging and building, the same shape so all three read at a glance.
@@ -2020,6 +2050,9 @@ function renderLanes(d) {
     if (roundSteps.length) mergeBody += `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${roundSteps.length}" aria-valuenow="${done}" aria-label="Merge round ${esc(running.round)} steps done"><i style="width:${Math.round(done / roundSteps.length * 100)}%"></i></div>`;
     const roundTests = testNodes.filter(x => /round/i.test(x.m.job.requested_by || ""));
     if (roundTests.length) mergeBody += `<p class="lane-sub">This round's tests run on ${esc(roundTests.map(x => x.m.name).join(", "))} (see Testing).</p>`;
+    const act = (mv.activity && mv.activity.updated) || mv.updated;
+    mergeBody += `<p class="lane-sub">${running.started ? `Started ${esc(clockTime(running.started))}, ${esc(ago(running.started))} ago` : ""}${sameRound && act ? ` · last activity ${esc(ago(act))} ago` : ""}</p>`;
+    if (sameRound && mv.next) mergeBody += `<p class="lane-sub">Next: ${esc(mv.next)}</p>`;
     if (running.prs && running.prs.length) mergeBody += `<p class="lane-sub">PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}</p>`;
   } else {
     const off = !ma.on && !!d.merge_auto;
@@ -2029,6 +2062,15 @@ function renderLanes(d) {
     mergeRows.push(row(PC_NAME, mergePaused ? "Merging paused" : waiting && pcWaitText ? pcWaitText : "Idle", "", false));
     mergeBody = laneRows(mergeRows) + `<p class="lane-why">${esc(mergePaused ? "Merging is paused. Resume it with the Merge button or on Machines." : off ? "Automatic merge rounds are off." : waiting ? (pcWaitText ? "The next round starts when the PC is free." : ma.why) : ready.length ? "The next round starts at the next check." : "No PRs are ready to merge.")}</p>`;
   }
+  const prev = mv.previous && mv.previous.round && !running ? mv.previous : null;
+  if (prev) {
+    const word = {landed: "landed", done: "landed", nothing: "had nothing to land", failed: "didn't land", crashed: "crashed", stopped: "was stopped",
+      interrupted: "was interrupted", limited: "stopped at its agent's limit", waiting: "was deferred"}[prev.result] || prev.result || "finished";
+    mergeBody += `<p class="lane-sub">Last round ${esc(prev.round)} ${esc(word)}${prev.ended ? `, ${esc(ago(prev.ended))} ago` : ""}. <a href="#merge">Details</a></p>`;
+  }
+  const resume = ma.resume && Object.keys(ma.resume).length;
+  if (ma.on) mergeBody += `<p class="lane-btns"><button type="button" data-merge-hold="${ma.held ? 0 : 1}">${ma.held ? "Resume merging" : "Pause merging"}</button>` +
+    (!running && !ma.held ? `<button type="button" data-merge-now="1">${resume ? "Resume saved round" : "Merge now"}</button>` : "") + `</p>`;
   const notYet = open.length - ready.length;
   mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PR check or a fix` : ""}</p>`;
   const mergeWhere = machineChip(PC_NAME, !!running) + (running && running.agent ? ` · ${esc(running.agent)}` : "");
@@ -2048,7 +2090,7 @@ function renderLanes(d) {
   const testNext = `<p class="lane-next">Next: ${notYet} ${notYet === 1 ? "PR" : "PRs"} waiting on a PR check or a fix</p>`;
   const testWhere = machineChip(PC_NAME, !!pcCheck) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, testNodes.some(x => x.m === m))).join(" + ") : "");
   $("laneTesting").innerHTML = laneHtml("Testing", "Testing", testPill, testBig, laneRows(testRows) + testWhy + testNext,
-    `<a class="lane-link" href="#build">Machines →</a>`, testWhere);
+    `<a class="lane-link" href="#test">Testing →</a>`, testWhere);
 
   // Building: only packaged builds (scheduled builds, the Build Lane, other PC build jobs).
   const rows = [];
@@ -2088,6 +2130,102 @@ function renderLanes(d) {
   }
   $("machinesGlance").innerHTML = `<span class="glance-label">Machines</span><ul>${mrows.join("")}</ul>`;
 }
+
+// Testing tab: PR checks and test runs on every machine, each with its steps, sections and check results.
+const TEST_MARK = {passed: "✓", failed: "✗", running: "●", skipped: "–", warning: "!", todo: "○", stopped: "■"};
+const testSteps = new Map();   // finished job id -> {steps, expected}; a finished job's steps never change
+const testOpen = new Set();     // history rows the viewer opened
+function testKind(M, j) { return ((M && M.recipes) || {})[j.recipe]?.kind || (j.recipe === "package" ? "builds" : "tests"); }
+function testTitle(j) {
+  if (j.recipe === "pr-check") return `PR check #${j.pr || (j.params && j.params.pr) || "?"}`;
+  if (j.recipe === "nightly-full") return "Nightly full tests";
+  if (/round/i.test(j.requested_by || "")) return `Tests for merge ${j.requested_by.replace(/^merge\s+/i, "")}`;
+  if (j.recipe === "node-checks") return `Tests: ${(j.params && j.params.only) || "Full"}`;
+  return j.recipe === "checkout-only" ? "Checkout test" : j.recipe;
+}
+function spanText(a, b) {
+  if (!a) return "";
+  const s = Math.max(0, ((b ? Date.parse(b) : Date.now()) - Date.parse(a)) / 1000);
+  return durationText(s);
+}
+function testStepsHtml(data, job) {
+  const steps = (data && data.steps) || [], live = job.state === "running";
+  if (!steps.length) return `<p class="muted">${live ? "Starting: no steps reported yet." : "This job reported no steps."}</p>`;
+  const names = new Set(steps.map(s => s.name));
+  const upcoming = live ? ((data && data.expected) || []).filter(n => !names.has(n)) : [];
+  const st = s => s.state === "running" && !live ? "stopped" : s.state;
+  const checks = list => list.length ? `<ul class="tchecks">${list.map(c => `<li class="${esc(c.state)}"><span class="ti" aria-hidden="true">${TEST_MARK[c.state] || "•"}</span>${esc(c.name)}${c.detail ? ` <span class="muted">${esc(c.detail)}</span>` : ""}<span class="sr"> (${esc(c.state)})</span></li>`).join("")}</ul>` : "";
+  const rows = steps.map(s => {
+    const state = s.cleanup && s.state === "failed" ? "cleanup" : st(s);
+    const secs = (s.sections || []).map(c => `<li class="${esc(st(c))}"><span class="ti" aria-hidden="true">${TEST_MARK[st(c)] || "•"}</span><b>${esc(c.name)}</b><span class="tt">${esc(spanText(c.start, c.end || (live ? "" : job.finished)))}${c.detail && !/^\d+s$/.test(c.detail) ? " · " + esc(c.detail) : ""}</span><span class="sr"> (${esc(st(c))})</span>${checks(c.checks || [])}</li>`).join("");
+    return `<li class="${esc(state)}${s.cleanup ? " cleanup" : ""}"><span class="ti" aria-hidden="true">${state === "cleanup" ? "–" : TEST_MARK[state] || "•"}</span><span class="tn">${esc(s.name)}${s.cleanup ? ' <span class="muted">(tidy-up)</span>' : ""}</span><span class="tt">${esc(spanText(s.start, s.end || (live ? "" : job.finished)))}${s.exit && !s.cleanup ? ` · exit ${esc(s.exit)}` : ""}</span><span class="sr"> (${esc(state)})</span>${secs ? `<ul class="tsecs">${secs}</ul>` : ""}${checks(s.checks || [])}</li>`;
+  }).concat(upcoming.map(n => `<li class="todo"><span class="ti" aria-hidden="true">○</span><span class="tn">${esc(n)}</span><span class="tt">not started</span></li>`));
+  return `<ol class="tsteps">${rows.join("")}</ol>`;
+}
+function testProgress(data, live) {
+  const steps = ((data && data.steps) || []).filter(s => !s.cleanup);
+  const total = Math.max(steps.length, live ? ((data && data.expected) || []).length : 0);
+  const done = steps.filter(s => s.state !== "running").length;
+  return total ? `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-label="Steps done"><i style="width:${Math.round(done / total * 100)}%"></i></div><p class="muted tprog">Step ${Math.min(done + 1, total)} of ${total}${steps.find(s => s.state === "running") ? `: ${esc(steps.find(s => s.state === "running").name)}` : ""}</p>` : "";
+}
+function testLinks(d, j) {
+  const pr = j.pr || (j.params && j.params.pr);
+  return [pr ? `<a href="${esc(d.repo_url)}/pull/${pr}" target="_blank" rel="noopener">PR #${pr}</a>` : "",
+    j.log_bytes ? `<a href="/api/jobs/log?id=${j.id}" target="_blank" rel="noopener">Full log ↗</a>` : "",
+    j.state === "running" || j.state === "queued" ? `<button type="button" data-job-cancel="${j.id}">Cancel</button>` : ""].filter(Boolean).join(" ");
+}
+function renderTesting(d) {
+  const M = d.machines, ma = d.merge_auto || {}, pcCheck = ma.running && ma.running.check != null ? ma.running : null;
+  const jobs = ((M && M.jobs) || []).filter(j => testKind(M, j) !== "builds");
+  const nodes = (M && M.machines) || [];
+  const running = nodes.filter(m => m.job && testKind(M, m.job) !== "builds").map(m => ({m, j: m.job}));
+  const queued = jobs.filter(j => j.state === "queued");
+  const done = jobs.filter(j => !["queued", "running"].includes(j.state));
+  const today = new Date().toDateString(), todays = done.filter(j => j.finished && new Date(j.finished).toDateString() === today);
+  const passed = todays.filter(j => j.state === "passed").length, failed = todays.filter(j => ["failed", "lost"].includes(j.state)).length;
+  const took = done.filter(j => j.state === "passed" && j.recipe === "pr-check" && j.started && j.finished).map(j => (Date.parse(j.finished) - Date.parse(j.started)) / 1000);
+  const avg = took.length ? durationText(took.reduce((a, b) => a + b, 0) / took.length) : "";
+  $("testStats").innerHTML = `<span><b>${running.length + (pcCheck ? 1 : 0)}</b> running</span><span><b>${queued.length}</b> queued</span>` +
+    `<span><b>${passed}</b> passed today</span><span><b>${failed}</b> failed today</span>${avg ? `<span>A PR check takes about <b>${esc(avg)}</b></span>` : ""}`;
+  // Running now
+  const cards = running.map(({m, j}) => `<article class="tcard"><div class="tcard-head"><h4>${esc(testTitle(j))}</h4><span class="chip building">▶ Running</span></div>
+    <p class="muted">${machineChip(m.name, true)} · job ${j.id} · started ${esc(clockTime(j.started))}, ${esc(ago(j.started))} ago · ${esc(jobWhat(j))}</p>
+    ${testProgress(j, true)}${testStepsHtml(j, j)}<p class="tlinks">${testLinks(d, j)}</p></article>`);
+  if (pcCheck) cards.unshift(`<article class="tcard"><div class="tcard-head"><h4>PR check #${esc(pcCheck.check)}</h4><span class="chip building">▶ Running</span></div>
+    <p class="muted">${machineChip(PC_NAME, true)} · started ${esc(clockTime(pcCheck.started))}, ${esc(ago(pcCheck.started))} ago. Checks on this PC report only their result.</p></article>`);
+  const pcOff = (d.pc_paused || []).includes("checks"), offNodes = nodes.filter(m => (m.paused_work || []).includes("checks")).map(m => m.name);
+  const off = [pcOff ? PC_NAME : "", ...offNodes].filter(Boolean);
+  $("testRunningRows").innerHTML = (cards.join("") || `<p class="muted">Nothing is testing right now.</p>`) +
+    (off.length ? `<p class="muted">PR checks are paused on ${esc(off.join(", "))} (Building, Machines).</p>` : "");
+  // Waiting: queued jobs, and PRs that are not ready to merge yet
+  const lastFor = pr => done.find(j => (j.pr || (j.params && j.params.pr)) === pr);
+  const notReady = (Array.isArray(d.merge) ? d.merge : []).filter(r => !r.ready && !running.some(x => (x.j.pr || (x.j.params || {}).pr) === r.pr));
+  const why = r => r.conflict ? "merge conflict" : r.parked ? r.parked : r.repair_wait ? "being fixed" : "waiting for a PR check";
+  const wrows = queued.map(j => `<li><span class="ti" aria-hidden="true">○</span><b>${esc(testTitle(j))}</b> <span class="muted">queued ${esc(ago(j.created))} ago · job ${j.id}</span> ${testLinks(d, j)}</li>`)
+    .concat(notReady.map(r => { const l = lastFor(r.pr), c = l ? JOB_CHIP[l.state] || ["idle", l.state] : null;
+      return `<li><span class="ti" aria-hidden="true">○</span><a href="${esc(r.pr_url)}" target="_blank" rel="noopener">#${r.pr}</a> ${esc(r.title)} <span class="muted">· ${esc(why(r))}${l ? ` · last check ${esc(c[1].replace(/^\S+ /, "").toLowerCase())} ${esc(ago(l.finished))} ago` : ""}</span></li>`; }));
+  $("testWaitingRows").innerHTML = wrows.length ? `<ul class="twait">${wrows.join("")}</ul>` : `<p class="muted">Nothing waiting.</p>`;
+  // Recent results
+  $("testHistoryRows").innerHTML = done.length ? done.map(j => { const c = JOB_CHIP[j.state] || ["idle", j.state], open = testOpen.has(j.id);
+    return `<details class="thist" data-test-job="${j.id}"${open ? " open" : ""}><summary><span class="chip ${c[0]}">${esc(c[1])}</span><b>${esc(testTitle(j))}</b><span class="muted">${esc(j.machine || "")} · ${esc(stamp(j.finished || j.created))} · took ${esc(spanText(j.started, j.finished) || "0s")}</span><span class="tsum">${esc(j.summary || "")}</span></summary>
+      <div class="thist-body">${open ? testStepsHtml(testSteps.get(j.id), j) : '<p class="muted">Loading steps…</p>'}<p class="tlinks">${testLinks(d, j)}</p></div></details>`; }).join("")
+    : `<p class="muted">No test runs yet.</p>`;
+  const nav = $("navTesting"); if (nav) { nav.hidden = !running.length && !pcCheck; nav.textContent = running.length + (pcCheck ? 1 : 0); }
+}
+async function loadTestSteps(id) {
+  if (testSteps.has(id)) return;
+  try { const r = await fetch(`/api/jobs/steps?id=${id}`); testSteps.set(id, await r.json()); }
+  catch (e) { testSteps.set(id, {steps: []}); }
+  if (last) renderTesting(last);
+}
+$("view-test").addEventListener("toggle", ev => {
+  const det = ev.target.closest && ev.target.closest("details[data-test-job]"); if (!det) return;
+  const id = +det.dataset.testJob;
+  if (det.open) { testOpen.add(id); loadTestSteps(id); } else testOpen.delete(id);
+}, true);
+$("view-test").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-job-cancel]"); if (b) agentCall("/api/jobs/cancel", {id: +b.dataset.jobCancel});
+});
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
 function renderWorkers(d) {
@@ -2994,6 +3132,11 @@ $("mergeNow").addEventListener("click", ev => {
 });
 $("mergeNow").addEventListener("click", async ev => {
   if (ev.target.closest("[data-merge-settings]")) { ev.preventDefault(); openSettings("project"); return; }
+  const b = ev.target.closest("button"); if (!b) return;
+  if (b.dataset.mergeHold !== undefined) agentCall("/api/merge/hold", {on: b.dataset.mergeHold === "1"});
+  else if (b.dataset.mergeNow) agentCall("/api/merge/now", {});
+});
+$("laneMerging").addEventListener("click", ev => {
   const b = ev.target.closest("button"); if (!b) return;
   if (b.dataset.mergeHold !== undefined) agentCall("/api/merge/hold", {on: b.dataset.mergeHold === "1"});
   else if (b.dataset.mergeNow) agentCall("/api/merge/now", {});

@@ -72,6 +72,15 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify(req.url === '/api/issue/get' ? {body: 'Missing access', comments: []} : {ok: true}));
   }
+  if (req.url.startsWith('/api/jobs/steps')) {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({expected: [], steps: [
+      {name: 'Fetch the commit', state: 'passed', exit: 0, start: now, end: now, cleanup: false, sections: [], checks: []},
+      {name: 'PR check', state: 'failed', exit: 1, start: now, end: now, cleanup: false, checks: [], sections: [
+        {name: 'Mapped preflight checks', state: 'failed', start: now, end: now, detail: '', checks: [
+          {name: 'ScanUIText', state: 'passed', detail: '5s', at: now}, {name: 'RunM5aTest', state: 'failed', detail: '80s', at: now}]}]},
+      {name: 'Abort an unfinished merge', state: 'failed', exit: 128, start: now, end: now, cleanup: true, sections: [], checks: []}]}));
+  }
   if (req.url !== '/api/status') data.page_id = 'page-a';  // a freshly served page is current
   res.setHeader('Content-Type', req.url === '/api/status' ? 'application/json' : 'text/html');
   res.end(req.url === '/api/status' ? JSON.stringify(data) : pageSource);
@@ -108,20 +117,13 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#agents'), false);
     assert.equal(await visible('#lowerBox'), false);
     assert.deepEqual(await page.locator('[data-view]').evaluateAll(links => links.map(link => link.dataset.view)),
-      ['overview', 'tasks', 'merge', 'build', 'agents', 'activity']);
+      ['overview', 'tasks', 'merge', 'test', 'build', 'agents', 'activity']);
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
-    assert.match(await page.locator('.round-status').innerText(), /Game tests/);
-    const workerWidth = (await page.locator('#workers').boundingBox()).width;
-    const mergeWidth = (await page.locator('#mergeCard').boundingBox()).width;
-    assert.ok(Math.abs(workerWidth - mergeWidth) <= 1, 'overview gives workers and merging equal column widths');
-    assert.equal(await visible('#mergeNow .msteps[aria-label="Current round steps"]'), false);
-    await page.locator('.round-detail summary').click();
-    await page.evaluate(() => render(last));
-    assert.equal(await page.locator('.round-detail').getAttribute('open'), '');
-    assert.match(await page.locator('.round-detail').innerText(), /47 min/);
-    await page.locator('.round-detail summary').click();
+    // The Overview has no second Merging box: the lane card carries the round's line and the Pause / Merge now buttons.
+    assert.equal(await visible('#mergeCard'), false);
+    assert.match(await page.locator('#laneMerging').innerText(), /Started[\s\S]*Pause merging/);
     await page.locator('#slots summary').first().click();
     await page.evaluate(() => render(last));
     assert.equal(await page.locator('#slots details[open]').count(), 1, 'polling preserves worker details');
@@ -144,8 +146,14 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('html').getAttribute('data-nav'), null);
     assert.equal(await page.evaluate(() => document.documentElement.style.zoom), '');
     // Each step expands independently; polling preserves explicit choices and keyboard focus.
-    await page.getByRole('link', {name: 'Round details →'}).click();
+    await page.locator('#laneMerging .lane-link').click();
     assert.equal(await visible('#view-merge'), true);
+    assert.match(await page.locator('.round-status').innerText(), /Game tests/);
+    await page.locator('.round-detail summary').click();
+    await page.evaluate(() => render(last));
+    assert.equal(await page.locator('.round-detail').getAttribute('open'), '');
+    assert.match(await page.locator('.round-detail').innerText(), /47 min/);
+    await page.locator('.round-detail summary').click();
     assert.equal(await visible('#mergeCard .merge-aside'), true);
     assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
@@ -248,6 +256,8 @@ const server = http.createServer(async (req, res) => {
     data.merge[0].round = '19';
     data.merge[0].in_round_branch = true;
     await page.evaluate(next => { last = next; render(next); }, data);
+    await page.evaluate(() => { location.hash = '#merge'; });
+    await page.locator('#mergeCard').waitFor();
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now idle');
     assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
     assert.match(await page.locator('#mergeNow .merge-current').innerText(), /Waiting for #992 to release the PC/);
@@ -351,7 +361,7 @@ const server = http.createServer(async (req, res) => {
     data.merge_auto.resume = {round: 20, authorized: false};
     data.merge_view = {active: false, state: 'idle', previous: {round: 20, result: 'interrupted', steps: [{name: 'Build', state: 'done'}, {name: 'Acceptance', state: 'waiting'}]}};
     await page.evaluate(next => { last = next; render(next); }, data);
-    assert.match(await page.locator('[data-merge-now]').innerText(), /Resume saved round/);
+    assert.match(await page.locator('#mergeNow [data-merge-now]').innerText(), /Resume saved round/);
     await page.locator('.round-history summary').click();
     assert.match(await page.locator('.round-history').innerText(), /Physical Escape stopped acceptance/);
     assert.doesNotMatch(await page.locator('.round-history summary').innerText(), /failed/);
@@ -539,7 +549,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(requests.at(-1).url, '/api/workers/ranks');
     assert.equal(requests.at(-1).body.limits.low, 7);
     assert.equal(await visible('#integrationPlans'), false, 'planning stays on the Merging page');
-    await page.getByRole('link', {name: 'Round details →'}).click();
+    await page.locator('#laneMerging .lane-link').click();
     assert.equal(await visible('#integrationPlans'), true);
     await page.locator('#planMerge').click();
     await page.locator('#planWhen').fill('2030-11-05T19:30');
@@ -692,6 +702,32 @@ const server = http.createServer(async (req, res) => {
         {id: 8, recipe: 'nightly-full', sha: 'd'.repeat(40), ref: 'main', params: {}, state: 'queued', machine: '', created: now, started: '', finished: '', summary: '', requested_by: 'nightly 2026-11-12', log_bytes: 0, pr: 0},
         {id: 7, recipe: 'node-checks', sha: 'c'.repeat(40), ref: 'claude/x', params: {only: 'RunFlowTest'}, state: 'running', machine: 'SF-NODE-01', created: now, started: now, finished: '', summary: '', requested_by: 'dashboard', log_bytes: 2048, pr: 1666},
         {id: 6, recipe: 'node-checks', sha: 'e'.repeat(40), ref: '', params: {}, state: 'failed', machine: 'SF-NODE-01', created: now, started: now, finished: now, summary: '1 of 12 failed on SF-NODE-01: RunM5aTest', requested_by: '', log_bytes: 9000, pr: 0}]};
+    // Testing tab: the running job with each step and the ones still to come, what waits, and finished runs with their steps.
+    const nodeJob = data.machines.machines[0].job;
+    nodeJob.steps = [{name: 'Fetch the commit', state: 'passed', exit: 0, start: now, end: now, cleanup: false, sections: [], checks: []},
+      {name: 'PR check', state: 'running', exit: null, start: now, end: '', cleanup: false, checks: [], sections: [
+        {name: 'Build LifeShareEditor', state: 'passed', start: now, end: now, detail: '', checks: []},
+        {name: 'Mapped preflight checks', state: 'running', start: now, end: '', detail: '', checks: [{name: 'ScanUIText', state: 'passed', detail: '5s', at: now}]}]}];
+    nodeJob.expected = ['Fetch the commit', 'PR check', 'Stop what this job left running'];
+    await page.locator('[data-view="test"]').click();
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /Mapped preflight checks/.test(document.querySelector('#testRunningRows').textContent));
+    const runningTest = await page.locator('#testRunningRows').innerText();
+    assert.match(runningTest, /Tests for|Tests: RunFlowTest/);
+    assert.match(runningTest, /SF-NODE-01/);
+    assert.match(runningTest, /Step 2 of 3: PR check/);
+    assert.match(runningTest, /Build LifeShareEditor[\s\S]*ScanUIText[\s\S]*Stop what this job left running\s*not started/);
+    assert.match(await page.locator('#testWaitingRows').innerText(), /Nightly full tests[\s\S]*queued/);
+    assert.match(await page.locator('#testStats').innerText(), /1\s*running[\s\S]*1\s*queued/);
+    await page.locator('details[data-test-job="6"] summary').click();
+    await page.waitForFunction(() => /tidy-up/.test(document.querySelector('details[data-test-job="6"]').textContent));
+    const hist = await page.locator('details[data-test-job="6"]').innerText();
+    assert.match(hist, /PR check[\s\S]*Mapped preflight checks[\s\S]*RunM5aTest[\s\S]*tidy-up/);
+    assert.doesNotMatch(hist, /exit 128/);
+    await page.evaluate(() => refresh());
+    assert.equal(await page.locator('details[data-test-job="6"]').getAttribute('open'), '', 'polling keeps an opened result open');
+    await page.screenshot({path: path.join(out, 'testing-tab.png'), fullPage: true});
+    delete nodeJob.steps; delete nodeJob.expected;
     await page.locator('[data-view="build"]').click();
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => !document.querySelector('#machinesCard').hidden);
@@ -719,7 +755,7 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => /2 queued/.test(document.querySelector('#jobsNote').textContent));
     assert.deepEqual(requests.at(-1).body, {recipe: 'node-checks', ref: 'main', only: 'RunFlowTest', strict_slots: false});
     page.once('dialog', d => d.accept());
-    await page.locator('[data-job-cancel="7"]').click();
+    await page.locator('#machinesCard [data-job-cancel="7"]').click();
     await page.waitForFunction(() => true);
     await page.locator('.machine-add summary').click();
     await page.locator('#machineName').fill('SF-NODE-03');

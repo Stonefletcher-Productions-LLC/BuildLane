@@ -121,6 +121,39 @@ def finish_file(path: str, result: str, note: str) -> None:
     write_file(path, d)
 
 
+def stop_orphan(path: str, live_round, note: str, booted: str = "", ended=()) -> str:
+    """A round file still saying running when no round of that number runs in this Fletchery (a restart, a crash, a
+    cancelled round) is history: mark it stopped so the Merging card says Idle instead of "May be stuck". Returns the
+    stopped round's number, or "" when nothing changed."""
+    import merge
+    d = read_file(path)
+    if not d or str(d.get("state", "")).lower() in merge.TERMINAL_STATES:
+        return ""
+    n = str(d.get("round", ""))
+    if live_round is not None and n == str(live_round):
+        return ""
+    # Only a round this Fletchery started and saw end (a cancel), or one started before this Fletchery did (a restart).
+    started = _when(d.get("started"))
+    if n not in {str(x) for x in ended} and not (started and booted and started < _when(booted)):
+        return ""
+    for step in d.get("steps", []) or []:
+        if isinstance(step, dict) and step.get("state") in ("running", "waiting"):
+            step["state"] = "todo"
+    d["state"] = d["result"] = "stopped"
+    d["note"] = note[:400]
+    d["updated"] = d["ended"] = now_iso()
+    write_file(path, d)
+    return n
+
+
+def _when(text):
+    try:
+        t = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
 def read_file(path: str) -> dict:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8-sig"))
