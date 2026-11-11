@@ -199,6 +199,16 @@
   #machineForm { display: flex; gap: 8px 12px; align-items: flex-end; flex-wrap: wrap; }
   #machineForm input { width: 14em; }
   .jobs-head { margin: 16px 0 6px; }
+  .builds-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; margin: 4px 0 10px; }
+  .builds-form label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+  .builds-form label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; white-space: nowrap; align-self: center; }
+  .builds-form input[type=text], .builds-form input[type=datetime-local], .builds-form select { font: inherit; color: var(--ink); }
+  .build-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .build-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+  .build-row.running, .build-row.queued { border-inline-start: 3px solid var(--running); }
+  .build-row.failed { border-inline-start: 3px solid var(--failed); }
+  .build-row .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .build-row .acts { grid-row: span 3; align-self: center; }
   .job-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
   .jobs-scroll { max-height: 360px; overflow: auto; }
   table.jobs { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -990,7 +1000,23 @@
   </section>
   <section class="view" id="view-merge" aria-labelledby="mergePageHeading" hidden><div class="page-heading"><h2 id="mergePageHeading">Merging</h2><p>Merge rounds, validation and scheduled windows.</p></div><div id="mergePageMount"></div></section>
   <section class="view" id="view-build" aria-labelledby="buildPageHeading" hidden>
-    <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Build machine activity and package requests.</p></div>
+    <div class="page-heading"><h2 id="buildPageHeading">Building</h2><p>Packaged builds you schedule, and what each machine is doing.</p></div>
+    <section class="card builds-card" id="buildsCard" aria-labelledby="buildsHeading" style="margin-bottom:16px" hidden>
+      <div class="card-head"><h3 id="buildsHeading">Builds</h3><span class="muted" id="buildsNote"></span></div>
+      <p class="muted">Pick a version and a time. At that time Fletchery reads the branch and packages whatever is on it.
+        The build waits for a free machine: a test node that can package, otherwise this PC between merge rounds.</p>
+      <form id="buildForm" class="builds-form">
+        <label>Version <input type="text" id="buildVersion" placeholder="0.3.9" size="8" required pattern="\d+\.\d+\.\d+"></label>
+        <label>Branch <input type="text" id="buildRef" size="16" placeholder="Test-Staging"></label>
+        <label>When <select id="buildWhenMode"><option value="now">Now</option><option value="at">At a time</option><option value="daily">Every day at</option></select></label>
+        <label id="buildAtLabel" hidden>Time <input type="datetime-local" id="buildAt"></label>
+        <label>Run on <select id="buildWhere"><option value="auto">Automatic</option><option value="node">A test node</option><option value="pc">This PC</option></select></label>
+        <label class="inline"><input type="checkbox" id="buildTests"> Full tests first</label>
+        <button type="submit" class="primary" id="buildSubmit">Schedule build</button>
+      </form>
+      <p id="buildMessage" role="status"></p>
+      <div id="buildRows"></div>
+    </section>
     <section class="card pc-card" id="pcCard" aria-labelledby="pcHeading" style="margin-bottom:16px" hidden>
       <div class="card-head"><h3 id="pcHeading">PC in use</h3><span class="chip" id="pcChip"></span></div>
       <div class="lane-what" id="pcWho"></div>
@@ -1019,7 +1045,8 @@
     </section>
     <div id="buildPageMount"></div>
     <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
-      <h3 id="packageHeading">Packages</h3>
+      <h3 id="packageHeading">Release controller packages</h3>
+      <p class="muted">The older flow through the staging release controller (GitHub). Use Builds above for a plain packaged build.</p>
       <button type="button" id="planPackage">Queue package</button>
       <p id="packageMessage" role="status"></p>
       <div id="packageRows"></div>
@@ -1631,6 +1658,7 @@ function render(d) {
 function renderStatus(d) {
   last = d;
   renderPlans(d);
+  renderBuilds(d);
   const ordinary = normalWorkerSessions(d);
   const emergency = emergencyWorkerState(d);
   const storage = d.storage;
@@ -1883,7 +1911,8 @@ function renderOverview(d) {
   const packageJob = integrations.find(r => r.kind === "package");
   const round = d.merge_auto?.running?.round;
   const mergeStatus = round ? `Merge round ${round} running` : merge ? `Merge window ${merge.state}` : "";
-  const packageStatus = packageJob ? `Package ${packageJob.version} ${packageJob.state}` : "";
+  const activeBuild = nextBuild(d);
+  const packageStatus = packageJob ? `Package ${packageJob.version} ${packageJob.state}` : activeBuild ? buildLine(activeBuild) : "";
   const integrationStatus = (mergeStatus ? `<a href="#merge">${esc(mergeStatus)}</a>` : "")
     + (packageStatus || d.lane ? `<a href="#build">${esc(packageStatus || $("laneChip").textContent || "Build machine")}</a>` : "");
   $("overviewStats").innerHTML = `<span>${d.max_parallel === 0 ? `<b>${normalWorkerSessions(d).length}</b> active · writing paused` : `<b>${normalWorkerSessions(d).length}/${d.max_parallel}</b> workers`}</span>${emergencyWorkerState(d).live.length ? `<span><b>${emergencyWorkerState(d).live.length}</b> emergency repair</span>` : ""}<a href="#tasks"><b>${prs}</b> PRs waiting</a><a href="#tasks"><b>${queued.length}</b> queued</a><a href="#tasks" class="${blocked.length ? "attention" : ""}"><b>${blocked.length}</b> need attention</a>${integrationStatus}`;
@@ -1979,7 +2008,8 @@ function renderLanes(d) {
   const buildPill = L && L.paused && !busyCount ? ["paused", "Paused"] : busyCount ? ["on", `${busyCount} of ${busyFlags.length} busy`] : ["idle", "Idle"];
   const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "machine" : "machines"} working` : "Nothing building";
   const queuedJobs = M && M.queued ? `${M.queued} test ${M.queued === 1 ? "job" : "jobs"} queued` : "";
-  const next = [pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
+  const nb = nextBuild(d);
+  const next = [nb ? esc(buildLine(nb)) : "", pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
   const nodes = (M && M.machines) || [];
   const buildWhere = machineChip(PC_NAME, pcBusy) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, !!m.job)).join(" + ") : "");
   $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + `<p class="lane-next">Next: ${next}</p>`,
@@ -2227,7 +2257,8 @@ function renderPc(d) {
 const JOB_CHIP = {queued: ["idle", "○ Queued"], running: ["building", "▶ Running"], passed: ["passed", "✓ Passed"],
                   failed: ["failed", "✗ Failed"], cancelled: ["cancelled", "○ Cancelled"], lost: ["failed", "✗ Lost"]};
 function jobWhat(j) {
-  const p = j.params || {}, tests = j.recipe === "node-checks" ? (p.only ? ` ${p.only}` : " Full") + (p.strict_slots ? " strict" : "") : "";
+  const p = j.params || {}, tests = j.recipe === "node-checks" ? (p.only ? ` ${p.only}` : " Full") + (p.strict_slots ? " strict" : "")
+    : j.recipe === "package" ? ` ${p.version || ""}${p.tests === "full" ? " with Full tests" : ""}` : "";
   return `${j.recipe}${tests}${j.pr ? " #" + j.pr : ""} at ${j.ref && j.ref !== j.sha ? j.ref + " " : ""}${j.sha.slice(0, 10)}`;
 }
 function machineStats(m) {
@@ -2265,7 +2296,7 @@ function renderMachines(d) {
   if (!(M.machines || []).length) rows.push(`<p class="muted">No nodes yet. Add one below and install the worker on it.</p>`);
   $("machineRows").innerHTML = rows.join("");
   const sel = $("jobRecipe");
-  if (!sel.options.length) sel.innerHTML = Object.keys(M.recipes || {}).map(r => `<option>${esc(r)}</option>`).join("");
+  if (!sel.options.length) sel.innerHTML = Object.keys(M.recipes || {}).filter(r => r !== "package").map(r => `<option>${esc(r)}</option>`).join("");
   $("jobsNote").textContent = M.queued ? `${M.queued} queued` : "";
   $("jobRows").innerHTML = (M.jobs || []).length ? `<tr><th>Job</th><th>What</th><th>State</th><th>Machine</th><th>When</th><th>Result</th><th></th></tr>` +
     M.jobs.map(j => { const c = JOB_CHIP[j.state] || ["idle", j.state];
@@ -2292,11 +2323,87 @@ $("machineForm").addEventListener("submit", async ev => {
   if (r && r.key) { const k = $("machineKey"); k.hidden = false; k.textContent = `Key for ${r.name} (shown once):\n${r.key}`; }
 });
 
+// ---- Builds (builds.py): a version at a time, run on a node or this PC ----
+const BUILD_STATE = {scheduled: "Scheduled", waiting: "Waiting for a machine", queued: "Queued on a node", running: "Building",
+  done: "Done", failed: "Failed", cancelled: "Cancelled"};
+function buildWhen(b) {
+  return b.repeat === "daily" ? `every day at ${clockTime(b.at)}` : stamp(b.at);
+}
+function buildLine(b) {
+  if (b.state === "running") return `Build ${b.version} running on ${b.machine || (b.route === "pc" ? "this PC" : "a node")}`;
+  if (b.state === "scheduled") return `Build ${b.version} at ${buildWhen(b)}`;
+  return `Build ${b.version} ${(BUILD_STATE[b.state] || b.state).toLowerCase()}`;
+}
+function nextBuild(d) {
+  const rows = (d.builds && d.builds.builds) || [];
+  const order = {running: 0, queued: 1, waiting: 2, scheduled: 3};
+  return rows.filter(b => b.state in order).sort((a, b) => order[a.state] - order[b.state] || String(a.at).localeCompare(String(b.at)))[0] || null;
+}
+let renderedBuilds = "";
+function renderBuilds(d) {
+  const B = d.builds, card = $("buildsCard");
+  card.hidden = !B;
+  if (!B) return;
+  $("buildRef").placeholder = B.base || "main";
+  const nodes = B.nodes || [];
+  $("buildsNote").textContent = (B.error ? B.error + " · " : "") + (nodes.length ? `can build on ${nodes.join(", ")} or this PC` : B.machines ? "no node can package right now: builds use this PC" : "builds use this PC")
+    + (B.out_dir ? ` · PC builds go to ${B.out_dir}` : "");
+  $("buildWhere").querySelector('option[value="node"]').disabled = !B.machines;
+  const rows = B.builds || [];
+  const finished = b => ["done", "failed", "cancelled"].includes(b.state);
+  const live = rows.filter(b => !finished(b)).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const old = rows.filter(finished).sort((a, b) => String(b.finished || b.created).localeCompare(String(a.finished || a.created)));
+  const row = b => {
+    const where = b.route === "pc" ? "this PC" : b.route === "node" ? (b.machine || "a test node") : b.where === "pc" ? "this PC" : b.where === "node" ? "a test node" : "automatic";
+    const what = `${esc(b.ref)}${b.sha ? ` at <code>${esc(b.sha.slice(0, 10))}</code>` : ""}${b.tests === "full" ? " · Full tests first" : ""} · ${esc(where)}`;
+    const when = b.repeat === "daily" ? `Every day at ${esc(clockTime(b.at))}, next ${esc(stamp(b.at))}` : b.state === "scheduled" ? `Starts ${esc(stamp(b.at))}`
+      : b.finished ? `Finished ${esc(stamp(b.finished))}` : b.started ? `Started ${esc(stamp(b.started))}` : `Due ${esc(stamp(b.at))}`;
+    const label = b.repeat ? "Stop repeating" : "Cancel";
+    const cancel = !finished(b) && !(b.state === "running" && b.route === "pc")
+      ? `<button type="button" data-build-cancel="${esc(b.id)}" data-build-label="${label} build ${esc(b.version)}">${label}</button>` : "";
+    const log = b.job ? `<a href="/api/jobs/log?id=${esc(b.job)}" target="_blank" rel="noopener">Log</a>` : "";
+    const note = b.state === "done" && b.output ? "Package: " + b.output : b.reason;
+    return `<li class="build-row ${esc(b.state)}"><div><b>${esc(b.version)}</b> <span class="chip">${esc(b.repeat ? "Repeats daily" : BUILD_STATE[b.state] || b.state)}</span></div>
+      <div class="acts">${log} ${cancel}</div>
+      <div class="meta">${what} · ${when}</div>
+      ${note ? `<div class="meta">${esc(note)}</div>` : ""}</li>`;
+  };
+  const html = (live.length ? `<ul class="build-list">${live.map(row).join("")}</ul>` : '<p class="muted">No builds scheduled.</p>')
+    + (old.length ? `<details class="build-history"><summary>Finished · ${old.length}</summary><ul class="build-list">${old.map(row).join("")}</ul></details>` : "");
+  if (html === renderedBuilds) return;
+  const open = !!card.querySelector(".build-history[open]");
+  $("buildRows").innerHTML = html;
+  renderedBuilds = html;
+  if (open) card.querySelector(".build-history")?.setAttribute("open", "");
+}
+$("buildWhenMode").addEventListener("change", () => { $("buildAtLabel").hidden = $("buildWhenMode").value === "now"; });
+$("buildForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const mode = $("buildWhenMode").value, at = $("buildAt").value, msg = $("buildMessage");
+  msg.textContent = "";
+  if (mode !== "now" && !at) { msg.textContent = "Choose a time."; return; }
+  const body = {version: $("buildVersion").value.trim(), ref: $("buildRef").value.trim(), at: mode === "now" ? "" : new Date(at).toISOString(),
+                repeat: mode === "daily" ? "daily" : "", tests: $("buildTests").checked ? "full" : "", where: $("buildWhere").value};
+  $("buildSubmit").disabled = true;
+  try {
+    const r = await post("/api/builds/add", body);
+    msg.textContent = `Build ${r.version} of ${r.ref} ${r.repeat ? "repeats every day from " + stamp(r.at) : mode === "now" ? "is queued now" : "starts " + stamp(r.at)}.`;
+    await refresh();
+  } catch (e) { msg.textContent = e.message; }
+  finally { $("buildSubmit").disabled = false; }
+});
+$("buildRows").addEventListener("click", async ev => {
+  const b = ev.target.closest("[data-build-cancel]"); if (!b) return;
+  if (!confirm(b.dataset.buildLabel + "?")) return;
+  try { const r = await post("/api/builds/cancel", {id: b.dataset.buildCancel}); $("buildMessage").textContent = r.message || ""; await refresh(); }
+  catch (e) { $("buildMessage").textContent = e.message; }
+});
+
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
   const machinesShown = renderMachines(d), pcShown = renderPc(d);
   if (machinesShown) $("pcCard").hidden = true;  // the This PC row in Machines says the same, with the details
-  $("buildEmpty").hidden = !!L || pcShown || machinesShown;
+  $("buildEmpty").hidden = !!L || pcShown || machinesShown || !!d.builds;
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");

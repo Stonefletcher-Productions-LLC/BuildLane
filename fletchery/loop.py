@@ -54,6 +54,7 @@ class State:
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
     worker_handoffs: dict = field(default_factory=dict)     # task -> cooperative pause and checkpoint receipt
     integration_queue: list = field(default_factory=list)     # durable merge windows and package requests
+    builds: list = field(default_factory=list)                # scheduled versioned builds (builds.py)
     planned_integration: bool = False                        # opt-in: feature work until a queued window is due
     merge_held: bool = False                                  # Pause merging in the Merge section
     repair_continuations: dict = field(default_factory=dict)  # PR -> last applied bounded blocker plan
@@ -228,6 +229,10 @@ class Engine:
         self.handoffs = self.ctx.handoffs = WorkerHandoffs(self)
         self._package_poll_job = None
         self._package_poll_at = 0.0
+        from builds import Builds
+        self.builds = Builds(self)
+        self._builds_job = None
+        self._builds_at = 0.0
         self._stats_cache: tuple[float, object] | None = None
         if ctx.agents is not None:  # one agent's pause and who wrote which branch survive a restart
             ctx.agents.paused = self.state.agent_paused
@@ -457,6 +462,9 @@ class Engine:
             if (self._package_poll_job is None or self._package_poll_job.done()) and time.monotonic() >= self._package_poll_at:
                 self._package_poll_at = time.monotonic() + 30
                 self._package_poll_job = asyncio.ensure_future(asyncio.to_thread(self.plans.package_step))
+            if (self._builds_job is None or self._builds_job.done()) and time.monotonic() >= self._builds_at:
+                self._builds_at = time.monotonic() + 30
+                self._builds_job = asyncio.ensure_future(asyncio.to_thread(self.builds.tick))
         self._merge_round(draining)
         self._maybe_node_pr_checks(draining)
         if self.plans.active_merge and self.plans.active_merge["state"] == "draining" and not self.merge_priority:
@@ -764,7 +772,9 @@ class Engine:
         cfg, st = self.cfg, self.state
         self.plans.active_merge = None
         # A PC check (prcheck.py) runs no agent: it holds the build checkout, not worker capacity.
-        self.merge_priority = self.round_job is not None and not self.round_info.get("check")
+        self.merge_priority = self.round_job is not None and not self.round_info.get("check") and not self.round_info.get("build")
+        if self._start_build(draining):
+            return
         if not cfg.merge_rounds:
             self.merge_why = ""
             return
@@ -1186,6 +1196,25 @@ class Engine:
                          "End the named process if it is a leftover, or pause merging to free the workers.")
         self._checkout_stall = stall
 
+    def _start_build(self, draining: bool) -> bool:
+        """Start a scheduled build that is waiting for this PC (builds.py) in the merge slot. A running round or PC
+        check finishes first; a due build then goes before the next round, since Alex asked for it at that time.
+        True when one started (or the slot is taken)."""
+        if self.round_job is not None:
+            return False
+        st = self.state
+        if self.dry_run or draining or st.held or st.merge_resume or (self._storage_job and not self._storage_job.done()):
+            return False
+        row = self.builds.next_pc()
+        if row is None:
+            return False
+        self.merge_why = f"Build {row['version']} is using this PC; merging waits"
+        self.round_info = {"build": row["id"], "round": f"Build {row['version']}", "agent": "", "prs": [],
+                           "head": row["sha"], "started": now()}
+        self.round_job = asyncio.ensure_future(asyncio.to_thread(self.builds.run_pc, row))
+        self.ctx.log(f"builds: {row['version']} ({row['ref']} at {row['sha'][:10]}) starting on this PC")
+        return True
+
     def _start_pr_check(self) -> bool:
         """Start one PC check (prcheck.py) in the merge slot. The caller only asks when no PR can join a round, so
         checks use the PC's idle time and never delay merging. True when a check started."""
@@ -1414,8 +1443,8 @@ class Engine:
         """While a round runs with an agent pool, cap only the round agent's account; True when new work may start."""
         if pool is not None:
             pool.round_account = None
-        if self.round_job is not None and self.round_info.get("check"):
-            return True  # a PC check uses no agent account
+        if self.round_job is not None and (self.round_info.get("check") or self.round_info.get("build")):
+            return True  # a PC check or build uses no agent account
         if self.round_job is None or pool is None or int(self.cfg.round_shared_sessions) < 0:
             return False
         spec = pool.specs.get(self.round_info.get("agent", ""))
@@ -1667,6 +1696,10 @@ class Engine:
                 wait = min(wait, max(1, min(positive_windows)))
             if any(r["kind"] == "package" and r["state"] not in __import__("plans").TERMINAL for r in self.plans.rows):
                 wait = min(wait, 30)
+            # A scheduled build starts within a minute of its time, and one waiting for this PC is noticed as soon as
+            # the slot frees.
+            if any(r["state"] not in ("done", "failed", "cancelled") for r in self.builds.rows):
+                wait = min(wait, 60)
             self.next_pass_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + wait,
                                                        timezone.utc).isoformat(timespec="seconds")
             deadline = loop.time() + wait

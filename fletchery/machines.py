@@ -61,7 +61,10 @@ RECIPES = {
     # A worker PR merged onto the base branch, then the project's PC check (LifeShare: Tools/CI/PrCheck.ps1). No commit
     # status: Fletchery labels the PR or posts the failure itself, as it does for a check on the PC (nodecheck.py).
     "pr-check": {"context": "", "labels": ["os:windows", "role:tests"], "min_ram_gb": 16, "timeout_minutes": 90},
+    # A packaged build Alex scheduled on Building -> Builds (builds.py). No commit status: a build is not a check.
+    "package": {"context": "", "labels": ["os:windows", "role:cook"], "min_ram_gb": 16, "timeout_minutes": 300},
 }
+BUILD_VERSION = re.compile(r"^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS machines (
@@ -392,6 +395,11 @@ class Machines:
                        (day,))
 
     # ---- the dashboard ----
+    def job(self, job_id: int) -> dict | None:
+        with self._db() as db:
+            r = db.execute("SELECT * FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+        return _job(r) if r else None
+
     def log_text(self, job_id: int, tail_bytes: int = 2 * 1024 * 1024) -> str:
         p = self.logs / f"{int(job_id)}.log"
         if not p.exists():
@@ -480,6 +488,11 @@ def check_params(recipe: str, params: dict) -> dict:
         if pr <= 0 or not SHA.match(head):
             raise ValueError("A pr-check job needs `pr` (a number) and `head` (the PR's 40-character head SHA)")
         out = {"pr": pr, "head": head}
+    elif recipe == "package":
+        version = str(params.get("version") or "").strip()
+        if not BUILD_VERSION.match(version):
+            raise ValueError("A build's version looks like 0.3.9")
+        out = {"version": version, "tests": "full" if params.get("tests") == "full" else ""}
     return out
 
 

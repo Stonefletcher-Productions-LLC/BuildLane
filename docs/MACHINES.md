@@ -14,7 +14,7 @@ last result, CPU, free RAM and disk. **Jobs** below it lists the queue and histo
   Revoking (dashboard or `machines.py revoke`) stops the key at once and queues the node's running job again.
   Ten bad sign-ins from one address in a minute are refused for a minute.
 - **Jobs are recipes, not commands.** A job names one of the node's recipes (`node-checks`, `nightly-full`,
-  `checkout-only`) with checked parameters (`only` is a comma list of check names; `strict_slots` is true or false)
+  `checkout-only`, `package`) with checked parameters (`only` is a comma list of check names; `strict_slots` is true or false)
   and a full commit SHA. The node has its own copy of the recipes and its own allow-list (`recipes` in its config),
   so a compromised coordinator still cannot make a node run anything else.
 - **Read-only code access.** The node fetches the exact commit with its own read-only deploy key. It holds no GitHub
@@ -28,6 +28,7 @@ last result, CPU, free RAM and disk. **Jobs** below it lists the queue and histo
 | `nightly-full` | the same with `-Set Full` | `Nightly full tests (node)` (what `ci.yml`'s nightly waits for) |
 | `checkout-only` | fetch and check out the commit, print it (a connection test) | none |
 | `pr-check` | the PC check of one worker PR: check out the base branch tip (the job's commit), fetch the PR head, Stop-JobProcesses, ResetContentWorkspace, merge the head (`--no-ff`), `Tools/CI/PrCheck.ps1 -BaseRef <base>`; then always Stop-JobProcesses, `git merge --abort`, ResetContentWorkspace | none: Fletchery labels the PR `ready` or posts the failure (see PR checks) |
+| `package` | a build scheduled on Building → Builds: Stop-JobProcesses, ResetContentWorkspace, `Build.ps1` and `BuildContent.ps1` (or `NodeTests.ps1` Full when "Full tests first" is ticked), `Package.ps1 -Version <v> -Out <buildsDir>\LifeShare-<v>`, then the same clean-up | none |
 
 A job needs the labels `os:windows` and `role:tests` and 16 GB of RAM (`checkout-only` needs nothing); a job can ask
 for more labels, such as `unreal:5.8.4`. A node runs one job at a time, oldest first. A job whose node stops
@@ -50,6 +51,29 @@ stops starting its own PR checks while a node is eligible, so its idle time goes
 **Nightly.** With `"nightly": {"at": "07:00", "branch": "main"}` (UTC) Fletchery queues `nightly-full` on main's
 head once a day, within three hours of that time. Leave it out until cutover; the Buildlane node runner still runs
 the nightly until then.
+
+## Builds (Building → Builds)
+
+Pick a version (`0.3.9`), a branch (the base branch if left empty), a time (now, at a time, or every day at a time),
+whether to run the Full tests first, and where: **Automatic**, **A test node** or **This PC**. At its time Fletchery
+reads the branch once and builds that commit, whatever lands after. The build then waits for a machine:
+
+- **Automatic** queues a `package` job when a node that can package is online: labels `os:windows` and `role:cook`
+  plus any in `workers.builds.nodeLabels` (use `["unreal:5.8.3"]` until the node's engine matches the PC), at least
+  16 GB of RAM, and not paused. Otherwise it builds on this PC.
+- **This PC** uses the merge checkout, so a running merge round or PC check finishes first; then the build goes
+  before the next round. It waits for the heavy lease like a round, and resets generated Content afterwards so the
+  next round starts clean. Packages go to `workers.builds.outDir` (default `<state dir>\builds`); the log is in
+  `<state dir>\build-logs`.
+- A node that has not added `package` to its config's `recipes` refuses the job; an Automatic build then moves to
+  this PC. The node writes packages to `buildsDir` in its config (default `<workRoot>\builds`).
+
+A folder that already exists is never overwritten: the commit is added to the name. A daily build starts a one-off
+copy each day; **Stop repeating** ends it. Builds are kept in state.json, so a restart keeps them; a PC build that was
+running when Fletchery stopped is marked failed.
+
+Profile (optional, `workers` block): `"builds": {"outDir": "E:\\lifeshare-scratch\\LifeShare-builds",
+"engine": "E:\\UE_5.8", "timeoutMinutes": 300, "nodeLabels": ["unreal:5.8.3"]}`.
 
 ## Setting it up
 
@@ -74,7 +98,7 @@ the nightly until then.
     "gitSshKey": "C:\\StoneNode\\keys\\lifeshare_deploy",
     "engine": "E:\\UE_5.8",
     "pauseFile": "E:\\GitHubRunner\\PAUSED-NODE",
-    "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check"]}
+    "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check", "package"]}
    ```
 
    The checkout is `<workRoot>\fletchery\LifeShare` (its own, so it never fights the Buildlane runner's checkout).
