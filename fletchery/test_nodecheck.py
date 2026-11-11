@@ -273,3 +273,20 @@ class RecipeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrphanRoundTests(unittest.TestCase):
+    def test_left_over_round_is_marked_stopped(self):
+        import json, os, tempfile, rounds, merge
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "merge-round.json")
+            json.dump({"round": "132", "state": "running", "steps": [{"name": "Build", "state": "done"},
+                       {"name": "Game specs", "state": "running"}]}, open(p, "w"))
+            self.assertEqual(rounds.stop_orphan(p, 132, "x"), "")          # the live round is left alone
+            self.assertEqual(rounds.stop_orphan(p, None, "restarted"), "132")
+            r = json.load(open(p))
+            self.assertEqual(r["state"], "stopped")
+            self.assertEqual([s["state"] for s in r["steps"]], ["done", "todo"])
+            self.assertEqual(rounds.stop_orphan(p, None, "again"), "")     # already history
+            v = merge.view(p, os.path.join(d, "none.json"))
+            self.assertFalse(v["active"])

@@ -112,16 +112,9 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
-    assert.match(await page.locator('.round-status').innerText(), /Game tests/);
-    const workerWidth = (await page.locator('#workers').boundingBox()).width;
-    const mergeWidth = (await page.locator('#mergeCard').boundingBox()).width;
-    assert.ok(Math.abs(workerWidth - mergeWidth) <= 1, 'overview gives workers and merging equal column widths');
-    assert.equal(await visible('#mergeNow .msteps[aria-label="Current round steps"]'), false);
-    await page.locator('.round-detail summary').click();
-    await page.evaluate(() => render(last));
-    assert.equal(await page.locator('.round-detail').getAttribute('open'), '');
-    assert.match(await page.locator('.round-detail').innerText(), /47 min/);
-    await page.locator('.round-detail summary').click();
+    // The Overview has no second Merging box: the lane card carries the round's line and the Pause / Merge now buttons.
+    assert.equal(await visible('#mergeCard'), false);
+    assert.match(await page.locator('#laneMerging').innerText(), /Started[\s\S]*Pause merging/);
     await page.locator('#slots summary').first().click();
     await page.evaluate(() => render(last));
     assert.equal(await page.locator('#slots details[open]').count(), 1, 'polling preserves worker details');
@@ -144,8 +137,14 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('html').getAttribute('data-nav'), null);
     assert.equal(await page.evaluate(() => document.documentElement.style.zoom), '');
     // Each step expands independently; polling preserves explicit choices and keyboard focus.
-    await page.getByRole('link', {name: 'Round details →'}).click();
+    await page.locator('#laneMerging .lane-link').click();
     assert.equal(await visible('#view-merge'), true);
+    assert.match(await page.locator('.round-status').innerText(), /Game tests/);
+    await page.locator('.round-detail summary').click();
+    await page.evaluate(() => render(last));
+    assert.equal(await page.locator('.round-detail').getAttribute('open'), '');
+    assert.match(await page.locator('.round-detail').innerText(), /47 min/);
+    await page.locator('.round-detail summary').click();
     assert.equal(await visible('#mergeCard .merge-aside'), true);
     assert.match(await page.locator('#mergeNow .merge-health').innerText(), /Active/);
     assert.match(await page.locator('#mergeNow .merge-subline').innerText(), /Last activity/);
@@ -248,6 +247,8 @@ const server = http.createServer(async (req, res) => {
     data.merge[0].round = '19';
     data.merge[0].in_round_branch = true;
     await page.evaluate(next => { last = next; render(next); }, data);
+    await page.evaluate(() => { location.hash = '#merge'; });
+    await page.locator('#mergeCard').waitFor();
     assert.equal(await page.locator('#mergeNow').getAttribute('class'), 'merge-now idle');
     assert.equal(await page.locator('#mergeNow .round-status').count(), 0);
     assert.match(await page.locator('#mergeNow .merge-current').innerText(), /Waiting for #992 to release the PC/);
@@ -351,7 +352,7 @@ const server = http.createServer(async (req, res) => {
     data.merge_auto.resume = {round: 20, authorized: false};
     data.merge_view = {active: false, state: 'idle', previous: {round: 20, result: 'interrupted', steps: [{name: 'Build', state: 'done'}, {name: 'Acceptance', state: 'waiting'}]}};
     await page.evaluate(next => { last = next; render(next); }, data);
-    assert.match(await page.locator('[data-merge-now]').innerText(), /Resume saved round/);
+    assert.match(await page.locator('#mergeNow [data-merge-now]').innerText(), /Resume saved round/);
     await page.locator('.round-history summary').click();
     assert.match(await page.locator('.round-history').innerText(), /Physical Escape stopped acceptance/);
     assert.doesNotMatch(await page.locator('.round-history summary').innerText(), /failed/);
@@ -539,7 +540,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(requests.at(-1).url, '/api/workers/ranks');
     assert.equal(requests.at(-1).body.limits.low, 7);
     assert.equal(await visible('#integrationPlans'), false, 'planning stays on the Merging page');
-    await page.getByRole('link', {name: 'Round details →'}).click();
+    await page.locator('#laneMerging .lane-link').click();
     assert.equal(await visible('#integrationPlans'), true);
     await page.locator('#planMerge').click();
     await page.locator('#planWhen').fill('2030-11-05T19:30');

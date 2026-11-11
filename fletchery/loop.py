@@ -218,6 +218,7 @@ class Engine:
         self._storage_job = None
         self._storage_after_round = False  # a round just landed: clean now, even while workers run
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
+        self.live_round = None          # that round's number while it runs; a round file naming another is left over
         self.round_info: dict = {}      # {"round", "agent", "prs", "started"} of that round
         self.merge_priority = False     # reserve new-job capacity for an eligible or active merge
         self.merge_backlog = 0          # the workers' PRs labelled for merging, last pass
@@ -345,6 +346,15 @@ class Engine:
                     t.labels = [l for l in t.labels if not graph.is_status_label(l)] + [graph.label_for(QUEUED)]
                     st.running.pop(str(t.number), None)
                     self.ctx.log(f"#{t.number} was left running by an earlier Fletchery; back in the queue")
+        # A round file left saying "running" by a restart, crash or cancelled round: history now, so Merging reads Idle.
+        try:
+            left = __import__("rounds").stop_orphan(self.cfg.merge_round_file or str(self.state_dir / "merge-round.json"),
+                                                    self.live_round, "Stopped: Fletchery restarted or the round was cancelled. "
+                                                    "Its PRs go into the next round.")
+            if left:
+                self.ctx.log(f"merge round {left} was left running by an earlier Fletchery or a cancel; marked stopped")
+        except Exception as e:
+            self.ctx.log(f"left-over round check: {type(e).__name__}: {e}")
         # Ready-only external PRs also need their existing-branch repair task.
         repair_prs = {int(n) for n in st.merge_excluded if str(n).isdigit()}
         repair_prs.update(int(n) for t in tasks.values() for n in
@@ -963,7 +973,9 @@ class Engine:
         request_id = self.plans.started(n)
         self.round_info = {"request_id": request_id, "round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
         self.merge_why = "a round is running"
+        self.live_round = n
         self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file, request_id))
+        self.round_job.add_done_callback(lambda _f, n=n: self.live_round == n and setattr(self, "live_round", None))
         self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
 
     async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str, request_id: str = "") -> dict:
