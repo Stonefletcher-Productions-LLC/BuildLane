@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from config import Config
 import graph
@@ -45,6 +46,7 @@ class State:
     merge_last: dict = field(default_factory=dict)            # {"round", "result", "at", "key", "summary", "pr"}
     merge_excluded: dict = field(default_factory=dict)         # PR -> {head, why, round, at}: unchanged failed heads wait for repair
     pr_checks: dict = field(default_factory=dict)             # PR -> {head, passed, at, output}: PC checks (prcheck.py)
+    node_pr_checks: dict = field(default_factory=dict)        # PR -> {head, passed, at, job, machine, summary}: nodecheck.py
     playtest_issue: int = 0                                  # the playtest checklist issue (mergePlaytest)
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
@@ -456,6 +458,7 @@ class Engine:
                 self._package_poll_at = time.monotonic() + 30
                 self._package_poll_job = asyncio.ensure_future(asyncio.to_thread(self.plans.package_step))
         self._merge_round(draining)
+        self._maybe_node_pr_checks(draining)
         if self.plans.active_merge and self.plans.active_merge["state"] == "draining" and not self.merge_priority:
             self.plans.update(self.plans.active_merge, state="queued", reason=self.merge_why)
         plan_draining = bool(self.merge_priority and self.plans.active_merge and self.plans.active_merge["state"] == "draining")
@@ -1187,8 +1190,14 @@ class Engine:
         """Start one PC check (prcheck.py) in the merge slot. The caller only asks when no PR can join a round, so
         checks use the PC's idle time and never delay merging. True when a check started."""
         import graph
+        import nodecheck
         import prcheck
         cfg, gh = self.cfg, self.ctx.gh
+        try:
+            if nodecheck.node_takes_checks(getattr(self, "machines", None)):
+                return False  # a test node checks PRs now (nodecheck.py); the PC keeps its idle time for rounds
+        except Exception as e:
+            self.ctx.log(f"node PR checks: {type(e).__name__}: {e}")
         label = cfg.merge_label or "ready"
         try:
             waiting = prcheck.candidates(gh.open_prs(), cfg, self.state.pr_checks, label, graph.PREFIX)
@@ -1230,6 +1239,84 @@ class Engine:
         except Exception as e:
             self.ctx.log(f"PC check: PR #{pr.number}: couldn't update the PR: {type(e).__name__}: {e}")
         self.ctx.log(f"PC check: PR #{pr.number} {'passed' if passed else 'failed'}")
+
+    def _maybe_node_pr_checks(self, draining: bool) -> None:
+        """Every minute, off the loop: act on finished node PR checks and queue the next one (nodecheck.py)."""
+        import time
+        import nodecheck
+        coord = getattr(self, "machines", None)
+        if self.dry_run or not nodecheck.conf_of(coord) or not self.cfg.pr_check_command:
+            return
+        job = getattr(self, "_node_check_job", None)
+        if (job is not None and not job.done()) or time.monotonic() < getattr(self, "_node_check_at", 0):
+            return
+        self._node_check_at = time.monotonic() + 60
+        self._node_check_job = asyncio.ensure_future(asyncio.to_thread(self._node_pr_check_step, coord, draining))
+
+    def _node_pr_check_step(self, coord, draining: bool) -> None:
+        import graph
+        import nodecheck
+        import prcheck
+        cfg, gh, m = self.cfg, self.ctx.gh, coord.machines
+        label = cfg.merge_label or "ready"
+        try:
+            for job in m.unhandled(nodecheck.RECIPE):
+                self._node_pr_check_result(coord, job)
+            conf = nodecheck.conf_of(coord)
+            if draining or m.active(nodecheck.RECIPE) or not nodecheck.eligible(coord, conf):
+                return
+            # Shadow: check the same PRs the PC does, to compare. Live: skip heads the PC already checked.
+            checked = {} if m.shadow else self.state.pr_checks
+            waiting = prcheck.candidates(gh.open_prs(), cfg, checked, label, graph.PREFIX)
+            pr = nodecheck.pick(waiting, m.active(nodecheck.RECIPE), self.state.node_pr_checks)
+            if not pr:
+                return
+            base = coord.resolve(cfg.base_branch)
+            job_id = m.enqueue(nodecheck.RECIPE, base, {"pr": pr.number, "head": pr.head_sha}, ref=cfg.base_branch,
+                               requested_by="PR check", labels=nodecheck.need_labels(conf), pr=pr.number)
+            self.ctx.log(f"node PR check: PR #{pr.number} at {pr.head_sha[:10]} queued as job {job_id}"
+                         f"{' (shadow)' if m.shadow else ''}")
+        except Exception as e:  # never take the loop down
+            self.ctx.log(f"node PR check: {type(e).__name__}: {e}")
+
+    def _node_pr_check_result(self, coord, job: dict) -> None:
+        import nodecheck
+        import prcheck
+        cfg, gh, m = self.cfg, self.ctx.gh, coord.machines
+        m.mark_handled(job["id"])
+        pr, head = int(job["params"].get("pr") or 0), str(job["params"].get("head") or "")
+        v = nodecheck.verdict(job)
+        where = job.get("machine") or "a test node"
+        if v == "none":
+            self.ctx.log(f"node PR check: PR #{pr} job {job['id']}: no result ({job.get('summary')}); it runs again later")
+            return
+        passed = v == "pass"
+        step = nodecheck.MERGE_STEP if str(job.get("summary") or "").startswith(nodecheck.MERGE_STEP) else nodecheck.CHECK_STEP
+        output = "" if passed else nodecheck.log_tail(m.log_text(job["id"]), step)
+        self.state.node_pr_checks[str(pr)] = {"head": head, "passed": passed, "at": now(), "job": job["id"],
+                                              "machine": where, "summary": job.get("summary") or ""}
+        if m.shadow:
+            pc = self.state.pr_checks.get(str(pr)) or {}
+            same = f"; the PC said {'pass' if pc.get('passed') else 'fail'}" if pc.get("head") == head else ""
+            self.ctx.log(f"node PR check (shadow): PR #{pr} {'passed' if passed else 'failed'} on {where}{same}")
+            self.state.save(self.state_dir / "state.json")
+            return
+        live = gh.api(f"repos/{cfg.repo}/pulls/{pr}", fresh=True) or {}
+        if live.get("state") != "open" or (live.get("head") or {}).get("sha") != head:
+            self.ctx.log(f"node PR check: PR #{pr} moved on from {head[:10]}; result dropped")
+            self.state.save(self.state_dir / "state.json")
+            return
+        self.state.pr_checks[str(pr)] = {"head": head, "passed": passed, "at": now(), "output": output[-2000:],
+                                         "machine": where}
+        self.state.save(self.state_dir / "state.json")
+        if passed:
+            gh.add_labels(pr, [cfg.merge_label or "ready"])
+            gh.comment(pr, f"Fletchery: PR check passed on {where} for head `{head[:10]}` (merged onto "
+                           f"`{cfg.base_branch}`, built, quick-tested). Labelled for the next merge round.")
+        else:
+            res = prcheck.CheckResult(1, output or str(job.get("summary") or "failed"))
+            gh.comment(pr, prcheck.failure_comment(SimpleNamespace(number=pr, head_sha=head), res, cfg.base_branch, where))
+        self.ctx.log(f"node PR check: PR #{pr} {'passed' if passed else 'failed'} on {where}")
 
     PLAYTEST_MARKER = "<!-- fletchery-playtest-checklist -->"
 
