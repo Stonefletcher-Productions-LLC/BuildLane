@@ -1773,7 +1773,7 @@ function renderStatus(d) {
         (!running && !ma.held && (!(d.integration_queue || {}).planned || (ma.resume && Object.keys(ma.resume).length)) ? `<button type="button" data-merge-now="1">${ma.resume && Object.keys(ma.resume).length ? "Resume saved round" : "Merge now"}</button>` : "") + `</span>` : "";
       box.insertAdjacentHTML("afterbegin", `<div class="mauto"><div class="merge-current">${line}</div>${btns}${lastLine}</div>`);
     }
-    const side = `<aside class="merge-aside" aria-label="Round context"><section class="merge-side-card"><h4>This round</h4><p class="merge-side-number">${included.length} ${included.length === 1 ? "PR" : "PRs"} included</p><p>${active || running ? "Results appear as checks finish and PRs land." : "No active merge round."}</p><ul class="merge-side-prs">${included.slice(0, 5).map(n => {const row = mergeRows.find(r => r.pr === n); return `<li><a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}${row ? ` · ${esc(row.title)}` : ""}</a></li>`;}).join("")}${included.length > 5 ? `<li>+${included.length - 5} more</li>` : ""}</ul></section><section class="merge-side-card"><h4>Machine</h4><p>${esc(mv.pc_text || (mv.pc ? mv.pc.what : "Machine status not reported"))}</p>${ma && !running && ma.why ? `<p>${esc(ma.why)}</p>` : ""}</section>${d.update_pending || d.restarting ? `<section class="merge-side-card"><h4>App update ready</h4><p>Activates after running work finishes.</p><p>${running ? "The current merge continues." : "Running sessions finish before reloading."}</p></section>` : ""}</aside>`;
+    const side = `<aside class="merge-aside" aria-label="Round context"><section class="merge-side-card"><h4>This round</h4><p class="merge-side-number">${included.length} ${included.length === 1 ? "PR" : "PRs"} included</p><p>${active || running ? "Results appear as checks finish and PRs land." : "No active merge round."}</p><ul class="merge-side-prs">${included.slice(0, 5).map(n => {const row = mergeRows.find(r => r.pr === n); return `<li><a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}${row ? ` · ${esc(row.title)}` : ""}</a></li>`;}).join("")}${included.length > 5 ? `<li>+${included.length - 5} more</li>` : ""}</ul></section><section class="merge-side-card"><h4>Runs on</h4><p>${esc(mv.pc_text || pcSentence(mv.pc) || pcSentence(d.pc) || (mv.pc && mv.pc.what) || (running ? "This PC" : "This PC. Free right now."))}</p>${ma && !running && ma.why ? `<p>${esc(ma.why)}</p>` : ""}</section>${d.update_pending || d.restarting ? `<section class="merge-side-card"><h4>App update ready</h4><p>Activates after running work finishes.</p><p>${running ? "The current merge continues." : "Running sessions finish before reloading."}</p></section>` : ""}</aside>`;
     const main = document.createElement("div"); main.className = "merge-main";
     while (box.firstChild) main.append(box.firstChild);
     const layout = document.createElement("div"); layout.className = "merge-layout"; layout.append(main); layout.insertAdjacentHTML("beforeend", side); box.append(layout);
@@ -2238,8 +2238,12 @@ function renderMachines(d) {
   $("machinesNote").textContent = (M.error ? M.error + " · " : "") + (M.listen ? `nodes connect to ${M.listen}` : "") +
     (M.shadow ? " · shadow: statuses go out as shadow/…" : "");
   const pc = d.pc || {};
+  const note = !pc.held && pc.note && (pc.note.label || pc.note.step) ? pc.note : null, held = pcHeldFor(pc);
+  const pcDetail = pc.held ? `since ${clockTime(pc.since)}${held ? `, ${held}` : ""}${pc.script ? ` · ${pc.script}` : ""}${pc.pid ? ` · process ${pc.pid}` : ""}`
+    : note ? `${note.label || "A job outside Fletchery"}: ${note.step || "working"}, between steps (last update ${ago(note.updated)} ago)` : "";
   const rows = [`<div class="machine" role="listitem"><span class="dot on" aria-label="online"></span><b>This PC</b>
-    <span class="what"><span>${pc.held ? esc(pcSentence(pc)) : "Coordinator, merge rounds and packages. Free right now."}</span></span></div>`];
+    <span class="what"><span>${pc.held ? esc(pcSentence(pc)) : "Coordinator, merge rounds and packages. Free right now."}</span>
+    ${pcDetail ? `<span class="when">${esc(pcDetail)}</span>` : ""}${pc.held && pc.workspace ? `<span class="when">${esc(pc.workspace)}</span>` : ""}</span></div>`];
   for (const m of M.machines || []) {
     const job = m.job, last = m.last;
     const state = m.revoked ? "revoked" : m.online ? "online" : `offline${m.last_seen ? ", last seen " + ago(m.last_seen) + " ago" : ", never connected"}`;
@@ -2283,8 +2287,9 @@ $("machineForm").addEventListener("submit", async ev => {
 
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
-  const machinesShown = renderMachines(d);
-  $("buildEmpty").hidden = !!L || renderPc(d) || machinesShown;
+  const machinesShown = renderMachines(d), pcShown = renderPc(d);
+  if (machinesShown) $("pcCard").hidden = true;  // the This PC row in Machines says the same, with the details
+  $("buildEmpty").hidden = !!L || pcShown || machinesShown;
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");
