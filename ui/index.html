@@ -92,7 +92,7 @@
   .sec-head .counts b { color: var(--ink); }
   .sec-sub { margin: 4px 0 12px; color: var(--muted); font-size: 14.5px; max-width: 90ch; }
   .tq { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px 28px;
-        height: var(--tq-h, 300px); min-height: 140px; }
+        max-height: var(--tq-h, 300px); min-height: 0; }
   .tq > div { display: flex; flex-direction: column; min-height: 0; }
   .tq .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
                 border: 1px solid #E3E9EF; border-radius: var(--r-sm); padding: 2px 10px; }
@@ -612,7 +612,7 @@
   .lane-what { font-size: 14px; }
   .lane-step, .lane-head .disk { font-size: 12px; }
   .tasks-view { display: grid; gap: 16px; }
-  .tq { height: var(--tq-h, 250px); gap: 16px; }
+  .tq { max-height: var(--tq-h, 250px); gap: 16px; }
   .tq li { font-size: 13px; }
   .tq .why, .sec-sub { font-size: 12px; }
   .board { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
@@ -901,6 +901,21 @@
   .mtask.t-merge { background: color-mix(in srgb, var(--lane-merge) 16%, var(--panel)); color: var(--lane-merge); }
   .mtask.t-build { background: color-mix(in srgb, var(--lane-build) 16%, var(--panel)); color: var(--lane-build); }
   .mtask.idle { background: var(--soft); color: var(--muted); font-weight: 400; }
+  /* Tidy pages (2026-11-11): folds for secondary actions and long, low-value lists. */
+  .more-menu { position: relative; }
+  .more-menu > summary { list-style: none; cursor: pointer; border: 1px solid var(--rule); border-radius: 8px; padding: 5px 12px; font-size: 13.5px; font-weight: 700; background: var(--panel); }
+  .more-menu > summary::-webkit-details-marker { display: none; }
+  .more-menu > summary::after { content: " ▾"; color: var(--muted); }
+  .more-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; display: grid; gap: 4px; min-width: 220px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+  .more-items button { text-align: left; }
+  .ag-off { margin: 4px 0 8px; }
+  .ag-off > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+  .mfold { list-style: none; border-top: 1px solid var(--rule); padding: 8px 0 0; }
+  .mfold > details > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; font-weight: 700; }
+  .mfold ul { list-style: none; margin: 6px 0 0; padding: 0; }
+  .job-add { margin: 8px 0; }
+  .job-add > summary { cursor: pointer; font-weight: 700; font-size: 13.5px; }
 </style>
 </head>
 <body>
@@ -947,7 +962,7 @@
     </div>
     <div class="actions">
       <button id="hold" type="button">Pause</button>
-      <button id="runnow" type="button">Check now</button>
+      <button id="runnow" type="button" title="Look at GitHub for new tasks, PRs and labels now instead of at the next scheduled check">Check GitHub</button>
       <button id="reloadPage" type="button" title="Reload these screens, the same as F5. Running work is not affected.">Refresh</button>
       <button id="settingsBtn" type="button" title="This project's settings, and your other projects">Settings</button>
       <button id="add" type="button" class="primary">Add task</button>
@@ -985,13 +1000,14 @@
       <div class="card-head"><h3 id="machinesHeading">Machines</h3><span class="muted" id="machinesNote"></span></div>
       <div id="machineRows" role="list"></div>
       <h4 class="jobs-head">Jobs <span class="muted" id="jobsNote"></span></h4>
+      <details class="job-add" id="jobAdd"><summary>Queue a test job</summary>
       <form id="jobForm" class="job-form">
         <label>Run <select id="jobRecipe"></select></label>
         <label>at <input id="jobRef" placeholder="branch or commit SHA" value="main" size="18" required></label>
         <label>only <input id="jobOnly" placeholder="RunFlowTest,RunM5aTest (empty: Full)" size="26"></label>
         <label><input type="checkbox" id="jobStrict"> strict navigation</label>
         <button type="submit">Queue</button>
-      </form>
+      </form></details>
       <div class="jobs-scroll" tabindex="0" aria-label="Jobs"><table class="jobs" id="jobRows"></table></div>
       <details class="machine-add"><summary>Add or revoke a machine</summary>
         <form id="machineForm"><label>Name <input id="machineName" placeholder="SF-NODE-02" size="16" required></label>
@@ -1073,9 +1089,10 @@
       <span class="ag-sum" id="agSum" role="status"></span>
       <span class="sp"></span>
       <button type="button" class="switch" id="escBtn" aria-pressed="true" title="When an agent fails a task, hand it to a stronger one before asking you">Escalate on failure</button>
-      <button type="button" id="agReload" title="Changed a plan or signed in again? Lifts usage-limit pauses and checks every sign-in now">Refresh agents</button>
+      <details class="more-menu"><summary>More</summary><div class="more-items">
+      <button type="button" id="agReload" title="Changed a plan or signed in again? Lifts usage-limit pauses and checks every sign-in now">Refresh sign-ins and limits</button>
       <button type="button" id="agAccounts" title="Sign-ins, plan or API key, and the API keys (Settings > Accounts)">Accounts &amp; keys</button>
-      <button type="button" id="agRefresh">Refresh benchmarks</button>
+      <button type="button" id="agRefresh">Refresh benchmarks</button></div></details>
       <button type="button" id="agAdd">Add agent</button>
     </div>
     <div class="ag-body" id="agBody">
@@ -1767,14 +1784,20 @@ function renderStatus(d) {
     const isParked = r => !inRound.has(r.pr) && !!r.parked;
     const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r)),
                      ...mergeRows.filter(isParked)];
-    let lastGroup = null;
-    $("c-pr").innerHTML = ordered.length ? ordered.map(r => {
-      const g = inRound.has(r.pr) ? `In round ${currentRound || "?"}` : isParked(r) ? "Parked: skipped until a new commit (not counted in the backlog)"
-        : (inRound.size ? "Waiting for a round" : "Waiting to merge, most-unblocking first");
-      const head = g !== lastGroup ? `<li class="mgroup">${esc(g)}</li>` : "";
-      lastGroup = g;
-      return head + mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
-    }).join("") : `<li class="empty">${Array.isArray(d.merge) ? "Nothing waiting to merge." : "GitHub PR queue is not available yet. Local merge progress is shown above."}</li>`;
+    // Ready PRs and the round stay in view; PRs still waiting on checks or fixes, and parked ones, fold away.
+    const roundRows = mergeRows.filter(r => inRound.has(r.pr));
+    const readyRows = mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r) && r.ready);
+    const notReady = mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r) && !r.ready);
+    const parked = mergeRows.filter(isParked);
+    const row = r => mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
+    const group = (title, rows) => rows.length ? `<li class="mgroup">${esc(title)} · ${rows.length}</li>` + rows.map(row).join("") : "";
+    const foldOpen = new Set([...$("c-pr").querySelectorAll("li.mfold > details[open]")].map(e => e.dataset.fold));
+    const fold = (title, rows) => rows.length ? `<li class="mfold"><details data-fold="${esc(title.split(":")[0])}"${foldOpen.has(title.split(":")[0]) ? " open" : ""}><summary>${esc(title)} · ${rows.length}</summary><ul>${rows.map(row).join("")}</ul></details></li>` : "";
+    $("c-pr").innerHTML = ordered.length
+      ? group(`In round ${currentRound || "?"}`, roundRows) + group(inRound.size ? "Ready for the next round" : "Ready to merge, most-unblocking first", readyRows)
+        + (!roundRows.length && !readyRows.length ? `<li class="empty">No PR is labelled ready yet.</li>` : "")
+        + fold("Not ready yet: waiting on checks or a fix", notReady) + fold("Parked: skipped until a new commit", parked)
+      : `<li class="empty">${Array.isArray(d.merge) ? "Nothing waiting to merge." : "GitHub PR queue is not available yet. Local merge progress is shown above."}</li>`;
   }
   function mergeRow(r, currentRound, membershipVerified) {
     const issue = n => `<a href="${esc(d.repo_url)}/issues/${n}" target="_blank" rel="noopener">#${n}</a>`;
@@ -1791,7 +1814,7 @@ function renderStatus(d) {
       if (r.parked) bits.push(`<b>Parked:</b> ${esc(r.parked)}`);
       if (r.fix_attempts) bits.push(`fixed ${r.fix_attempts}×`);
       return `<li><a class="t" href="${esc(r.pr_url)}" target="_blank" rel="noopener"><span class="num">PR #${r.pr}</span> ${esc(r.title)}${workerRankBadge(d.tasks.find(t => t.number === r.task)?.worker_rank)}</a>` +
-        `<span class="why">${issue(r.task)} · head <code>${esc(r.head)}</code> · ${bits.join(" · ")}</span></li>`;
+        `<span class="why">${r.task ? issue(r.task) + " · " : ""}${r.head ? `head <code>${esc(String(r.head).slice(0, 9))}</code> · ` : ""}${bits.join(" · ")}</span></li>`;
     }
   }
   for (const [k, list] of Object.entries(cols)) {
@@ -1979,7 +2002,9 @@ function renderWorkers(d) {
   $("wUp").disabled = d.max_parallel >= 30;
   $("handoffWorkers").hidden = !d.worker_handoffs;
   $("handoffWorkers").disabled = !(d.live || []).length;
-  const handoffs = Object.values(d.worker_handoffs || {}).filter(r => ["requested", "checkpointed", "interrupted"].includes(r.state));
+  const dayAgo = Date.now() - 864e5;
+  const handoffs = Object.values(d.worker_handoffs || {}).filter(r => ["requested", "checkpointed", "interrupted"].includes(r.state)
+    && !(r.requested && Date.parse(r.requested) < dayAgo));
   $("handoffStatus").hidden = !handoffs.length;
   $("handoffStatus").innerHTML = handoffs.map(r => `<p><b>#${esc(r.task)} ${esc(r.state === "requested" ? "will pause at the next checkpoint" : r.state === "interrupted" ? "handoff interrupted" : "checkpoint saved")}</b>${r.phase ? ` · ${esc(r.phase)} · ${r.staged.length} staged` : ""}${r.note ? `<br>${esc(r.note)}` : ""}${r.worktree ? `<br><small>${esc(r.worktree)}</small>` : ""}</p>`).join("");
   const busy = normalWorkerSessions(d).length;
@@ -2017,8 +2042,8 @@ function renderUsage(d) {
   const by = $("byAgent");
   if (A) {
     const spent = A.spent_today || {};
-    const parts = A.list.filter(a => a.enabled || spent[a.name]).map(a => `${esc(a.name)} <b>$${(spent[a.name] || 0).toFixed(2)}</b>`);
-    by.innerHTML = `<span>Today by agent: ${parts.join(" · ")}</span> <a class="linkbtn" href="#agents">Agents</a>`;
+    const parts = A.list.filter(a => spent[a.name] >= 0.005).sort((x, y) => spent[y.name] - spent[x.name]).map(a => `${esc(a.name)} <b>$${(spent[a.name] || 0).toFixed(2)}</b>`);
+    by.innerHTML = parts.length ? `<span>Today by agent: ${parts.join(" · ")}</span>` : "<span>No agent has spent anything today.</span>";
     by.title = "Today's estimated cost by agent, writing and reviewing, counted from this version on. Each agent's plan has its own limits; Codex on a ChatGPT plan reports no cost.";
     by.hidden = false;
   } else by.hidden = true;
@@ -2348,6 +2373,9 @@ function renderAgents(d) {
   });
   groups.sort((x, y) => provOrder(x) - provOrder(y));
   const closed = provClosed();
+  // Polling rebuilds the grid: keep folds the reader opened or closed this visit.
+  const wasOpen = new Map([...$("agGrid").querySelectorAll("details.prov")].map(e => [e.dataset.prov, e.open]));
+  const offOpen = new Set([...$("agGrid").querySelectorAll("details.prov")].filter(e => e.querySelector(":scope > details.ag-off[open]")).map(e => e.dataset.prov));
   $("agGrid").innerHTML = groups.map(g => {
     const P = provInfo(g), on = g.list.filter(a => a.enabled), work = on.reduce((n, a) => n + (a.busy || 0), 0),
           paused = on.find(a => a.paused_until), out = on.filter(a => a.signed_in === false && !a.paused_until);
@@ -2357,9 +2385,11 @@ function renderAgents(d) {
     else if (paused) tag = `<button type="button" class="chip paused" data-ag-refresh="1" title="${esc(paused.paused_reason)}. Upgraded the plan? Press to lift the pause now.">Paused until ${esc(clockTime(paused.paused_until))} · lift</button>`;
     else if (work) tag = `<span class="chip working">${work} working</span>`;
     else tag = `<span class="chip ready">${on.length} of ${g.list.length} on</span>`;
-    return `<details class="prov" data-prov="${esc(g.key)}"${closed.includes(g.key) ? "" : " open"}>
+    const open = wasOpen.has(g.key) ? wasOpen.get(g.key) : !closed.includes(g.key) && on.length > 0;
+    return `<details class="prov" data-prov="${esc(g.key)}"${open ? " open" : ""}>
       <summary><span class="chev" aria-hidden="true">▶</span><span class="pn">${esc(P.name)}</span><span class="pw">${esc(P.via)}</span><span class="sp"></span>${tag}</summary>
-      ${g.list.map(a => modelRow(a, A)).join("")}</details>`;
+      ${g.list.filter(a => a.enabled).map(a => modelRow(a, A)).join("")}${g.list.some(a => !a.enabled)
+        ? `<details class="ag-off"${offOpen.has(g.key) ? " open" : ""}><summary>${g.list.filter(a => !a.enabled).length} switched off</summary>${g.list.filter(a => !a.enabled).map(a => modelRow(a, A)).join("")}</details>` : ""}</details>`;
   }).join("");
   renderAccounts(groups, A);
   const kset = (A.keys || []).filter(k => k.set).length;
@@ -2883,7 +2913,7 @@ $("reloadPage").onclick = () => reloadPage();
 $("runnow").onclick = async () => {
   const btn = $("runnow"); btn.disabled = true; btn.textContent = "Checking…";
   try { await post("/api/run-now"); } catch (e) { alert(e.message); }
-  setTimeout(() => { btn.disabled = false; btn.textContent = "Check now"; refresh(); }, 1500);
+  setTimeout(() => { btn.disabled = false; btn.textContent = "Check GitHub"; refresh(); }, 1500);
 };
 $("add").onclick = () => { $("f-msg").textContent = ""; $("dlg").showModal(); $("f-title").focus(); };
 $("f-cancel").onclick = () => $("dlg").close();
