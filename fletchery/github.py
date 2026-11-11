@@ -352,6 +352,8 @@ class GitHub:
         for s in st.get("statuses", []):  # newest first: the first one per context is the current verdict
             latest.setdefault(s.get("context", ""), s)
         for ctx, s in latest.items():
+            if ctx.startswith("shadow/"):  # a test node's trial run (machines.py shadow mode) is not a verdict
+                continue
             if s.get("state") in ("failure", "error") and (not since or (s.get("updated_at") or "") > since):
                 out.append(Feedback(pr.number, "status", f"`{ctx}` {s['state']}: {s.get('description') or ''} "
                                                           f"{s.get('target_url') or ''}".strip(), s.get("updated_at") or ""))

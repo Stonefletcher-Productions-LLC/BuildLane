@@ -60,6 +60,8 @@ const server = http.createServer(async (req, res) => {
     if (req.url === '/api/pause') data.held = true;
     if (req.url === '/api/resume') data.held = false;
     if (req.url === '/api/storage/cleanup') data.storage.requested = true;
+    if (req.url === '/api/machines/add') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({name: body.name, key: 'fnk_test-key'})); }
+    if (req.url === '/api/jobs/add') data.machines.queued += 1;
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify(req.url === '/api/issue/get' ? {body: 'Missing access', comments: []} : {ok: true}));
   }
@@ -645,6 +647,48 @@ const server = http.createServer(async (req, res) => {
     delete data.pc;
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => document.querySelector('#pcCard').hidden);
+    // Machines: the PC and each node, what it runs now, its last result, and the job list.
+    assert.equal(await visible('#machinesCard'), false, 'no Machines card while machines are off');
+    data.machines = {listen: '100.83.43.111:8771', shadow: true, error: '', queued: 1,
+      recipes: {'node-checks': {context: 'Node checks'}, 'nightly-full': {context: 'Nightly full tests (node)'}, 'checkout-only': {context: ''}},
+      machines: [
+        {name: 'SF-NODE-01', online: true, revoked: false, last_seen: now, labels: ['os:windows', 'role:tests', 'unreal:5.8.4'], ram_gb: 24, version: '1',
+         stats: {cpu_percent: 63, ram_free_gb: 9.5, ram_total_gb: 24, disk_free_gb: 412},
+         job: {id: 7, recipe: 'node-checks', sha: 'c'.repeat(40), ref: 'claude/x', params: {only: 'RunFlowTest', strict_slots: false}, state: 'running', started: now, pr: 1666},
+         last: {id: 6, state: 'failed', finished: now, summary: '1 of 12 failed on SF-NODE-01: RunM5aTest'}},
+        {name: 'SF-NODE-02', online: false, revoked: false, last_seen: '', labels: [], ram_gb: 0, stats: {}, job: null, last: null}],
+      jobs: [
+        {id: 8, recipe: 'nightly-full', sha: 'd'.repeat(40), ref: 'main', params: {}, state: 'queued', machine: '', created: now, started: '', finished: '', summary: '', requested_by: 'nightly 2026-11-12', log_bytes: 0, pr: 0},
+        {id: 7, recipe: 'node-checks', sha: 'c'.repeat(40), ref: 'claude/x', params: {only: 'RunFlowTest'}, state: 'running', machine: 'SF-NODE-01', created: now, started: now, finished: '', summary: '', requested_by: 'dashboard', log_bytes: 2048, pr: 1666},
+        {id: 6, recipe: 'node-checks', sha: 'e'.repeat(40), ref: '', params: {}, state: 'failed', machine: 'SF-NODE-01', created: now, started: now, finished: now, summary: '1 of 12 failed on SF-NODE-01: RunM5aTest', requested_by: '', log_bytes: 9000, pr: 0}]};
+    await page.locator('[data-view="build"]').click();
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => !document.querySelector('#machinesCard').hidden);
+    const machineText = await page.locator('#machineRows').innerText();
+    assert.match(machineText, /This PC[\s\S]*Free right now/);
+    assert.match(machineText, /SF-NODE-01[\s\S]*Running job 7: node-checks RunFlowTest #1666 at claude\/x cccccccccc/);
+    assert.match(machineText, /Last: job 6 ✗ Failed[\s\S]*RunM5aTest/);
+    assert.match(machineText, /CPU 63% · RAM 9\.5 of 24 GB free · disk 412 GB free/);
+    assert.match(machineText, /SF-NODE-02[\s\S]*Offline, never connected/);
+    assert.equal(await page.locator('#jobRows tr').count(), 4);
+    assert.equal(await page.locator('#jobRows a[href="/api/jobs/log?id=7"]').count(), 1);
+    assert.equal(await page.locator('#jobRecipe option').count(), 3);
+    assert.match(await page.locator('#machinesNote').innerText(), /100\.83\.43\.111:8771[\s\S]*shadow/);
+    await page.locator('#jobOnly').fill('RunFlowTest');
+    await page.locator('#jobForm button[type="submit"]').click();
+    await page.waitForFunction(() => /2 queued/.test(document.querySelector('#jobsNote').textContent));
+    assert.deepEqual(requests.at(-1).body, {recipe: 'node-checks', ref: 'main', only: 'RunFlowTest', strict_slots: false});
+    page.once('dialog', d => d.accept());
+    await page.locator('[data-job-cancel="7"]').click();
+    await page.waitForFunction(() => true);
+    await page.locator('.machine-add summary').click();
+    await page.locator('#machineName').fill('SF-NODE-03');
+    await page.locator('#machineForm button[type="submit"]').click();
+    await page.waitForFunction(() => !document.querySelector('#machineKey').hidden);
+    assert.match(await page.locator('#machineKey').innerText(), /Key for SF-NODE-03 \(shown once\):\s*fnk_test-key/);
+    await page.screenshot({path: path.join(out, 'machines-building.png'), fullPage: true});
+    assert.equal(requests.filter(r => r.url === '/api/jobs/cancel').at(-1).body.id, 7);
+    delete data.machines;
     delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();
     await storageOff.addInitScript(() => Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }}));

@@ -189,6 +189,23 @@
 
   /* ---- build lane: quiet, light; the Now strip stays the loud one ---- */
   .pc-card { margin-bottom: 22px; }
+  .machine { display: grid; grid-template-columns: 14px minmax(120px, 1fr) 3fr; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line, #E3E8EE); }
+  .machine:first-child { border-top: 0; }
+  .machine .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: #B8C2CC; }
+  .machine .dot.on { background: var(--running, #1F7A4D); }
+  .machine .what { display: flex; flex-direction: column; gap: 2px; }
+  .machine .labels { font-size: 12px; color: var(--muted); }
+  .machine button { align-self: flex-start; font-size: 13px; min-height: 0; padding: 2px 8px; margin-top: 4px; }
+  #machineForm { display: flex; gap: 8px 12px; align-items: flex-end; flex-wrap: wrap; }
+  #machineForm input { width: 14em; }
+  .jobs-head { margin: 16px 0 6px; }
+  .job-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+  .jobs-scroll { max-height: 360px; overflow: auto; }
+  table.jobs { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.jobs th, table.jobs td { text-align: left; padding: 4px 8px; border-top: 1px solid var(--line, #E3E8EE); vertical-align: top; }
+  table.jobs td.sum { max-width: 420px; }
+  .machine-add { margin-top: 12px; }
+  #machineKey { white-space: pre-wrap; word-break: break-all; padding: 8px; background: var(--hold-bg, #FFF4D6); }
   .pc-card .card-head { display: flex; align-items: center; gap: 12px; }
   .merge-pc-wait { display: block; }
   section.lane { background: var(--panel); border-radius: var(--r-lg); padding: 16px 20px 18px; margin-bottom: 22px; }
@@ -872,6 +889,26 @@
       <div class="card-head"><h3 id="pcHeading">PC in use</h3><span class="chip" id="pcChip"></span></div>
       <div class="lane-what" id="pcWho"></div>
       <div class="lane-step" id="pcStep" role="status"></div>
+    </section>
+    <section class="card machines-card" id="machinesCard" aria-labelledby="machinesHeading" style="margin-bottom:16px" hidden>
+      <div class="card-head"><h3 id="machinesHeading">Machines</h3><span class="muted" id="machinesNote"></span></div>
+      <div id="machineRows" role="list"></div>
+      <h4 class="jobs-head">Jobs <span class="muted" id="jobsNote"></span></h4>
+      <form id="jobForm" class="job-form">
+        <label>Run <select id="jobRecipe"></select></label>
+        <label>at <input id="jobRef" placeholder="branch or commit SHA" value="main" size="18" required></label>
+        <label>only <input id="jobOnly" placeholder="RunFlowTest,RunM5aTest (empty: Full)" size="26"></label>
+        <label><input type="checkbox" id="jobStrict"> strict navigation</label>
+        <button type="submit">Queue</button>
+      </form>
+      <div class="jobs-scroll" tabindex="0" aria-label="Jobs"><table class="jobs" id="jobRows"></table></div>
+      <details class="machine-add"><summary>Add or revoke a machine</summary>
+        <form id="machineForm"><label>Name <input id="machineName" placeholder="SF-NODE-02" size="16" required></label>
+          <button type="submit">Add machine</button></form>
+        <p class="muted">Adding shows the node's key once. Put it in the node's key file; Fletchery keeps only its hash.
+          Revoking stops that key at once and queues its running job again.</p>
+        <pre id="machineKey" hidden></pre>
+      </details>
     </section>
     <div id="buildPageMount"></div>
     <section class="card" id="packagePlans" aria-labelledby="packageHeading" hidden>
@@ -1944,9 +1981,74 @@ function renderPc(d) {
   return true;
 }
 
+const JOB_CHIP = {queued: ["idle", "○ Queued"], running: ["building", "▶ Running"], passed: ["passed", "✓ Passed"],
+                  failed: ["failed", "✗ Failed"], cancelled: ["cancelled", "○ Cancelled"], lost: ["failed", "✗ Lost"]};
+function jobWhat(j) {
+  const p = j.params || {}, tests = j.recipe === "node-checks" ? (p.only ? ` ${p.only}` : " Full") + (p.strict_slots ? " strict" : "") : "";
+  return `${j.recipe}${tests}${j.pr ? " #" + j.pr : ""} at ${j.ref && j.ref !== j.sha ? j.ref + " " : ""}${j.sha.slice(0, 10)}`;
+}
+function machineStats(m) {
+  const s = m.stats || {}, bits = [];
+  if (s.cpu_percent != null) bits.push(`CPU ${Math.round(s.cpu_percent)}%`);
+  if (s.ram_free_gb != null) bits.push(`RAM ${s.ram_free_gb} of ${s.ram_total_gb || m.ram_gb} GB free`);
+  if (s.disk_free_gb != null) bits.push(`disk ${Math.round(s.disk_free_gb)} GB free`);
+  if (s.paused) bits.push("paused on the node");
+  return bits.join(" · ");
+}
+function renderMachines(d) {
+  const M = d.machines, card = $("machinesCard");
+  if (!M) { card.hidden = true; return false; }
+  card.hidden = false;
+  $("machinesNote").textContent = (M.error ? M.error + " · " : "") + (M.listen ? `nodes connect to ${M.listen}` : "") +
+    (M.shadow ? " · shadow: statuses go out as shadow/…" : "");
+  const pc = d.pc || {};
+  const rows = [`<div class="machine" role="listitem"><span class="dot on" aria-label="online"></span><b>This PC</b>
+    <span class="what"><span>${pc.held ? esc(pcSentence(pc)) : "Coordinator, merge rounds and packages. Free right now."}</span></span></div>`];
+  for (const m of M.machines || []) {
+    const job = m.job, last = m.last;
+    const state = m.revoked ? "revoked" : m.online ? "online" : `offline${m.last_seen ? ", last seen " + ago(m.last_seen) + " ago" : ", never connected"}`;
+    rows.push(`<div class="machine" role="listitem"><span class="dot ${m.online && !m.revoked ? "on" : ""}" aria-label="${esc(state)}"></span>
+      <b>${esc(m.name)}</b><span class="what">
+      <span>${job ? `Running job ${job.id}: ${esc(jobWhat(job))}, since ${esc(clockTime(job.started))}` : esc(state.charAt(0).toUpperCase() + state.slice(1)) + (m.online ? ", idle" : "")}</span>
+      ${last ? `<span class="when">Last: job ${last.id} ${esc((JOB_CHIP[last.state] || ["", last.state])[1])} ${esc(ago(last.finished))} ago${last.summary ? ": " + esc(last.summary) : ""}</span>` : ""}
+      ${machineStats(m) ? `<span class="when">${esc(machineStats(m))}</span>` : ""}
+      <span class="labels">${esc((m.labels || []).join(" "))}${m.version ? ` · worker v${esc(m.version)}` : ""}</span>
+      ${m.revoked ? "" : `<button type="button" data-machine-revoke="${esc(m.name)}">Revoke</button>`}</span></div>`);
+  }
+  if (!(M.machines || []).length) rows.push(`<p class="muted">No nodes yet. Add one below and install the worker on it.</p>`);
+  $("machineRows").innerHTML = rows.join("");
+  const sel = $("jobRecipe");
+  if (!sel.options.length) sel.innerHTML = Object.keys(M.recipes || {}).map(r => `<option>${esc(r)}</option>`).join("");
+  $("jobsNote").textContent = M.queued ? `${M.queued} queued` : "";
+  $("jobRows").innerHTML = (M.jobs || []).length ? `<tr><th>Job</th><th>What</th><th>State</th><th>Machine</th><th>When</th><th>Result</th><th></th></tr>` +
+    M.jobs.map(j => { const c = JOB_CHIP[j.state] || ["idle", j.state];
+      return `<tr><td>${j.id}</td><td>${esc(jobWhat(j))}${j.requested_by ? `<br><span class="muted">${esc(j.requested_by)}</span>` : ""}</td>
+        <td><span class="chip ${c[0]}">${esc(c[1])}</span>${j.cancel && j.state === "running" ? " stopping" : ""}</td><td>${esc(j.machine || "")}</td>
+        <td>${esc(clockTime(j.started || j.created))}${j.finished ? " to " + esc(clockTime(j.finished)) : ""}</td>
+        <td class="sum">${esc(j.summary || "")}</td>
+        <td>${j.log_bytes ? `<a href="/api/jobs/log?id=${j.id}" target="_blank" rel="noopener">Log</a> ` : ""}${j.state === "queued" || j.state === "running" ? `<button type="button" data-job-cancel="${j.id}">Cancel</button>` : ""}</td></tr>`; }).join("")
+    : `<tr><td class="muted">No jobs yet.</td></tr>`;
+  return true;
+}
+$("machinesCard").addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  if (b.dataset.machineRevoke && confirm(`Revoke ${b.dataset.machineRevoke}? Its key stops working at once.`)) agentCall("/api/machines/revoke", {name: b.dataset.machineRevoke});
+  if (b.dataset.jobCancel) agentCall("/api/jobs/cancel", {id: +b.dataset.jobCancel});
+});
+$("jobForm").addEventListener("submit", ev => {
+  ev.preventDefault();
+  agentCall("/api/jobs/add", {recipe: $("jobRecipe").value, ref: $("jobRef").value.trim(), only: $("jobOnly").value.trim(), strict_slots: $("jobStrict").checked});
+});
+$("machineForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const r = await agentCall("/api/machines/add", {name: $("machineName").value.trim()});
+  if (r && r.key) { const k = $("machineKey"); k.hidden = false; k.textContent = `Key for ${r.name} (shown once):\n${r.key}`; }
+});
+
 function renderLane(d) {
   const L = d.lane, sec = $("lane");
-  $("buildEmpty").hidden = !!L || renderPc(d);
+  const machinesShown = renderMachines(d);
+  $("buildEmpty").hidden = !!L || renderPc(d) || machinesShown;
   if (!L) { sec.hidden = true; return; }
   sec.hidden = false;
   const chip = $("laneChip"), btn = $("laneHold");

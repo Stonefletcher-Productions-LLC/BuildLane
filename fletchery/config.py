@@ -50,7 +50,7 @@ WORKER_KEYS = {
     "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
     "mergeRoundMax": "merge_round_max", "roundAgent": "merge_agent", "mergeNotes": "merge_notes",
     "mergeBudgetUsd": "merge_budget_usd", "mergeMaxTurns": "merge_max_turns", "mergeRetryMinutes": "merge_retry_minutes", "mergePlaytest": "merge_playtest", "prCheckCommand": "pr_check_command", "prCheckTimeoutMinutes": "pr_check_timeout_minutes", "playtestIssueTitle": "playtest_issue_title", "roundSharedSessions": "round_shared_sessions",
-    "mergeBacklogHigh": "merge_backlog_high", "mergeBacklogLow": "merge_backlog_low", "agents": "agents", "routing": "routing", "escalate": "escalate",
+    "mergeBacklogHigh": "merge_backlog_high", "mergeBacklogLow": "merge_backlog_low", "agents": "agents", "routing": "routing", "escalate": "escalate", "machines": "machines",
 }
 # profile key (top level) -> Config field
 PROFILE_KEYS = {"name": "name", "repo": "repo", "statusFile": "lane_status_file", "pauseFile": "lane_pause_file",
@@ -144,6 +144,7 @@ class Config:
     # "maxParallel", "keyEnv"}]; None = Claude only. `routing` says which agent takes which difficulty.
     agents: list = None
     routing: dict = None
+    machines: dict = None                    # machines.py: {"listen": "<Tailscale IP>:8771", "shadow": true, "nightly": {...}}; None = off
     escalate: bool = True                    # a failed attempt goes to a stronger agent before the task is blocked
     # the Build Lane, from the profile; "" hides the panel
     lane_status_file: str = ""
