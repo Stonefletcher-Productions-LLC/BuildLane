@@ -35,6 +35,8 @@ POST /api/issue/reply     {number, body, requeue=true}: comment on it and put it
     POST /api/machines/revoke {name}
     POST /api/jobs/add        {recipe, ref, only, strict_slots, pr}: queue a job for the machines
     POST /api/jobs/cancel     {id}
+    POST /api/builds/add      {version, ref, at, repeat: ""|"daily", tests: ""|"full", where: auto|node|pc}: schedule a build
+    POST /api/builds/cancel   {id}
 
 Every POST needs the header X-Fletchery-Token: a random value made at start and written only into the served page, so a
 web page from anywhere else cannot press the buttons. Requests whose Host is not this machine are refused (DNS
@@ -120,6 +122,10 @@ class Dashboard:
                          for row in snap.get("tasks", [])]
         snap["worker_handoffs"] = fm.handoffs.view() if hasattr(fm, "handoffs") else {}
         snap["integration_queue"] = fm.plans.view() if hasattr(fm, "plans") else None
+        try:
+            snap["builds"] = fm.builds.view() if hasattr(fm, "builds") else None
+        except Exception as e:
+            snap["builds"] = {"builds": [], "error": f"{type(e).__name__}: {e}"}
         snap["held"] = fm.state.held
         # Merge controls must reflect a click immediately, even during a slow GitHub poll.
         snap["merge_auto"] = {**snap.get("merge_auto", {}), "on": bool(fm.cfg.merge_rounds),
@@ -677,6 +683,12 @@ class Dashboard:
         self.fm.ctx.log(f"machines: job {job} queued from the dashboard ({data.get('recipe')} at {sha[:10]})")
         return {"id": job, "sha": sha}
 
+    def build_add(self, data: dict) -> dict:
+        return self.fm.builds.add(data)
+
+    def build_cancel(self, data: dict) -> dict:
+        return self.fm.builds.cancel(str(data.get("id") or ""))
+
     def job_cancel(self, data: dict) -> dict:
         return {"state": self._machines().machines.cancel(int(data.get("id") or 0))}
 
@@ -809,7 +821,8 @@ class Dashboard:
                               "/api/keys/clear": dash.clear_key, "/api/issue/get": dash.issue_get,
                               "/api/issue/reply": dash.issue_reply, "/api/machines/add": dash.machine_add,
                               "/api/machines/revoke": dash.machine_revoke, "/api/jobs/add": dash.job_add,
-                              "/api/jobs/cancel": dash.job_cancel}
+                              "/api/jobs/cancel": dash.job_cancel, "/api/builds/add": dash.build_add,
+                              "/api/builds/cancel": dash.build_cancel}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))
                     if self.path == "/api/agents/check":

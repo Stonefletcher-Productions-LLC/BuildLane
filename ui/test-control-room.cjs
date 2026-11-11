@@ -52,6 +52,13 @@ const server = http.createServer(async (req, res) => {
       const row = {...body, id: 'request-' + requests.length, state: 'queued', heads: body.kind === 'merge' ? {'1041': 'a'.repeat(40)} : undefined};
       data.integration_queue.requests.push(row); data.integration_queue.planned = true;
     }
+    if (req.url === '/api/builds/add') {
+      const row = {...body, id: 'b' + requests.length, state: 'scheduled', at: body.at || now, ref: body.ref || 'Test-Staging', sha: '', route: ''};
+      data.builds.builds.push(row);
+      res.writeHead(200, {'Content-Type': 'application/json'});
+      return res.end(JSON.stringify(row));
+    }
+    if (req.url === '/api/builds/cancel') data.builds.builds.find(b => b.id === body.id).state = 'cancelled';
     if (req.url === '/api/queue/cancel') data.integration_queue.requests.find(r => r.id === body.id).state = 'cancelled';
     if (req.url === '/api/queue/mode') data.integration_queue.planned = body.planned;
     if (req.url === '/api/workers/handoff') { data.held = true; data.worker_handoffs = {'891': {task: 891, state: 'requested'}}; }
@@ -721,6 +728,37 @@ const server = http.createServer(async (req, res) => {
     assert.match(await page.locator('#machineKey').innerText(), /Key for SF-NODE-03 \(shown once\):\s*fnk_test-key/);
     await page.screenshot({path: path.join(out, 'machines-building.png'), fullPage: true});
     assert.equal(requests.filter(r => r.url === '/api/jobs/cancel').at(-1).body.id, 7);
+    // Builds: schedule a version at a time, see where it runs, stop a daily one.
+    data.builds = {base: 'Test-Staging', nodes: ['SF-NODE-01'], machines: true, out_dir: 'E:\\builds', builds: [
+      {id: 'r1', version: '0.3.8', ref: 'Test-Staging', sha: 'c'.repeat(40), at: now, state: 'running', route: 'node', machine: 'SF-NODE-01', job: 9, tests: '', where: 'auto', repeat: '', reason: 'Building on SF-NODE-01.'},
+      {id: 'd1', version: '0.3.7', ref: 'main', sha: 'd'.repeat(40), at: now, state: 'done', route: 'pc', machine: 'This PC', tests: 'full', where: 'pc', repeat: '', finished: now, output: 'E:\\builds\\LifeShare-0.3.7'},
+    ]};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => !document.querySelector('#buildsCard').hidden);
+    assert.match(await page.locator('#buildsNote').innerText(), /can build on SF-NODE-01 or this PC/);
+    assert.match(await page.locator('#buildRows').innerText(), /0\.3\.8[\s\S]*Building[\s\S]*Test-Staging at cccccccccc · SF-NODE-01/);
+    assert.equal(await page.locator('#buildRows a[href="/api/jobs/log?id=9"]').count(), 1);
+    await page.locator('.build-history summary').click();
+    assert.match(await page.locator('.build-history').innerText(), /Package: E:\\builds\\LifeShare-0\.3\.7/);
+    assert.match(await page.locator('#laneBuilding').innerText(), /Build 0\.3\.8 running on SF-NODE-01/);
+    await page.locator('#buildVersion').fill('0.3.9');
+    await page.selectOption('#buildWhenMode', 'daily');
+    assert.equal(await page.locator('#buildAt').isVisible(), true);
+    await page.locator('#buildSubmit').click();
+    assert.match(await page.locator('#buildMessage').innerText(), /Choose a time/);
+    await page.locator('#buildAt').fill('2030-11-12T02:00');
+    await page.locator('#buildTests').check();
+    await page.locator('#buildSubmit').click();
+    await page.waitForFunction(() => /repeats every day/.test(document.querySelector('#buildMessage').textContent));
+    const add = requests.filter(r => r.url === '/api/builds/add').at(-1).body;
+    assert.equal(add.version, '0.3.9'); assert.equal(add.repeat, 'daily'); assert.equal(add.tests, 'full'); assert.equal(add.where, 'auto');
+    assert.equal(add.ref, ''); assert.match(add.at, /^2030-11-1[12]T/);
+    await page.waitForFunction(() => /Stop repeating/.test(document.querySelector('#buildRows').textContent));
+    await page.locator('#buildsCard').screenshot({path: path.join(out, 'builds-card.png')});
+    await page.locator('#buildRows [data-build-cancel]').filter({hasText: 'Stop repeating'}).click();
+    for (let i = 0; i < 100 && !requests.some(r => r.url === '/api/builds/cancel'); i++) await new Promise(r => setTimeout(r, 50));
+    assert.equal(requests.filter(r => r.url === '/api/builds/cancel').length, 1);
+    delete data.builds;
     delete data.machines;
     delete data.integration_queue; delete data.worker_ranks; delete data.worker_handoffs;
     const storageOff = await browser.newContext();

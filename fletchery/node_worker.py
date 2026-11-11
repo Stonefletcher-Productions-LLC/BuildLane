@@ -15,7 +15,8 @@ Config (JSON, e.g. C:\\StoneNode\\fletchery-worker.json):
      "gitSshKey": "C:\\\\StoneNode\\\\keys\\\\lifeshare_deploy",           # read-only deploy key
      "engine": "E:\\\\UE_5.8",
      "pauseFile": "E:\\\\GitHubRunner\\\\PAUSED-NODE",                    # while it exists, take no new job
-     "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check"]}   # what this node agrees to run
+     "buildsDir": "E:\\\\fletchery-builds",                            # optional: where `package` writes (default <workRoot>\\builds)
+     "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check", "package"]}   # what this node agrees to run
 
     python node_worker.py check   --config <file>     sign in to the coordinator once and print what it sees
     python node_worker.py run     --config <file>     the worker loop (what the logon task runs)
@@ -43,6 +44,7 @@ HEARTBEAT_SECONDS = 30
 LOG_FLUSH_SECONDS = 5
 SHA = re.compile(r"^[0-9a-f]{40}$")
 ONLY = re.compile(r"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$")
+BUILD_VERSION = re.compile(r"^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$")
 WINDOWS = os.name == "nt"
 BELOW_NORMAL = 0x00004000
 
@@ -81,6 +83,8 @@ def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Pa
         return [("Show the commit", ["git", "log", "-1", "--format=%H %s"], False)]
     if recipe == "pr-check":
         return pr_check_steps(params, ws, sha)
+    if recipe == "package":
+        return package_steps(params, ws, engine, result_json)
     if recipe not in ("node-checks", "nightly-full"):
         raise ValueError(f"unknown recipe {recipe!r}")
     tests = ["-Engine", engine, "-ResultJson", str(result_json)]
@@ -125,6 +129,49 @@ def pr_check_steps(params: dict, ws: Path, base: str) -> list[tuple[str, object,
         ("Abort an unfinished merge", ["git", "merge", "--abort"], True),
         ("Reset Content workspace", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), True),
     ]
+
+
+def package_out(builds_dir, name: str, version: str, sha: str) -> Path:
+    """Where a packaged build goes: <builds>\\<Name>-<version>, or with the commit added when that folder is taken (a
+    nightly that keeps one version, or the same version built again)."""
+    root = Path(builds_dir)
+    for folder in (f"{name}-{version}", f"{name}-{version}-{sha[:10]}"):
+        if not (root / folder).exists():
+            return root / folder
+    n = 2
+    while (root / f"{name}-{version}-{sha[:10]}-{n}").exists():
+        n += 1
+    return root / f"{name}-{version}-{sha[:10]}-{n}"
+
+
+def package_steps(params: dict, ws: Path, engine: str, result_json: Path | None = None) -> list[tuple[str, object, bool]]:
+    """A packaged build of whatever is at the commit: editor build and BuildContent (or the Full tests, which do both),
+    then Tools/Package.ps1 with the chosen version, then the same clean-up as the test recipes so the next job (or merge
+    round, on the PC) starts from a clean checkout. Shared by the node and the PC (builds.py)."""
+    version = str(params.get("version") or "")
+    if not BUILD_VERSION.match(version):
+        raise ValueError("bad `version`")
+    out = str(params.get("out_dir") or "")
+    if not out:
+        raise ValueError("no output folder")
+    steps: list[tuple[str, object, bool]] = [
+        ("Clear stale processes from this checkout", lambda: _stop_processes(ws), False),
+        ("Reset generated Content from prior jobs", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), False),
+    ]
+    if params.get("tests") == "full":
+        tests = ["-Engine", engine] + (["-ResultJson", str(result_json)] if result_json else [])
+        steps.append(("Build, BuildContent and Full tests", _ps("Tools/CI/NodeTests.ps1", ws, tests), False))
+    else:
+        steps += [("Build the editor", _ps("Tools/Build.ps1", ws, ["-Engine", engine, "-AllowLaneRunning"]), False),
+                  ("BuildContent", _ps("Tools/BuildContent.ps1", ws, ["-Engine", engine, "-AllowLaneRunning"]), False)]
+    steps += [
+        (f"Package {version}", _ps("Tools/Package.ps1", ws, ["-Engine", engine, "-Version", version, "-Out", out,
+                                                            "-AllowLaneRunning"]), False),
+        ("Stop what this job left running", lambda: _stop_processes(ws), True),
+        ("Reset Content after the run", ["git", "checkout", "--", "Content/Sim"], True),
+        ("Reset Content workspace", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), True),
+    ]
+    return steps
 
 
 # ---- machine stats ----
@@ -344,7 +391,7 @@ class Job:
         result_json = tmp / "node-result.json"
         deadline = time.monotonic() + float(job.get("timeout_minutes") or 120) * 60
         env = _git_env(cfg)
-        code, summary = 0, ""
+        code, summary, out_dir = 0, "", ""
         try:
             code = self.checkout(env)
             if code:
@@ -353,8 +400,12 @@ class Job:
                 ws = _workspace(cfg)
                 job_env = dict(env)
                 job_env["FLETCHERY_JOB"] = str(job["id"])
-                for name, step, always in recipe_steps(job["recipe"], job.get("params") or {}, ws, cfg, result_json,
-                                                          job["sha"]):
+                params = dict(job.get("params") or {})
+                if job["recipe"] == "package":  # the node picks the folder; the coordinator never names a path
+                    params["out_dir"] = str(package_out(cfg.get("buildsDir") or Path(cfg["workRoot"]) / "builds",
+                                                        "LifeShare", str(params.get("version") or ""), job["sha"]))
+                    out_dir = params["out_dir"]
+                for name, step, always in recipe_steps(job["recipe"], params, ws, cfg, result_json, job["sha"]):
                     if (code or self.cancelled) and not always:
                         continue
                     argv = step() if callable(step) else step
@@ -378,6 +429,8 @@ class Job:
         except (OSError, ValueError):
             pass
         shutil.rmtree(tmp, ignore_errors=True)
+        if not summary and out_dir and code == 0:
+            summary = f"Packaged to {out_dir} on {cfg.get('machine', 'the node')}"
         if not summary:
             summary = _summary(result) or ("Passed" if code == 0 else f"Failed (exit {code})")
         return code, summary, result
