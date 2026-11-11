@@ -162,6 +162,18 @@ def result_of(output: dict) -> str:
     return "landed" if output.get("landed_pr") else "failed"
 
 
+def output_cut_short(reason: str) -> bool:
+    """The agent's reply hit its output limit (Codex: "Incomplete response returned, reason: max_output_tokens"). The
+    round's work is fine and on disk, so it is an interruption to resume, not a failure that resets the worktree
+    (LifeShare #1537, round 100 on 2026-11-10)."""
+    return bool(re.search(r"max_output_tokens|incomplete response returned", reason or "", re.I))
+
+
+def session_stop_result(error: str) -> str:
+    """How a merger session that ended without a valid answer counts."""
+    return "interrupted" if operator_interruption(error) or output_cut_short(error) else "failed"
+
+
 def operator_interruption(reason: str) -> bool:
     """A reported physical/operator stop, not a general validation failure."""
     return bool(re.search(

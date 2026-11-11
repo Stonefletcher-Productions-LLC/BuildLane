@@ -369,6 +369,11 @@ const server = http.createServer(async (req, res) => {
     assert.doesNotMatch(await page.locator('#state').innerText(), /Idle/);
     assert.equal(await page.locator('#slots .free').count(), 0);
     await page.locator('#workers').screenshot({path: path.join(out, 'workers-merge-wait-light.png')});
+    // A round that shares its account only caps that account: other agents keep coding, so no wait banner.
+    data.merge_auto.round_shares = ['codex', 4];
+    await page.evaluate(d => render(d), data);
+    assert.doesNotMatch(await page.locator('#slots').innerText(), /New coding waits/);
+    delete data.merge_auto.round_shares;
     data.merge_auto.running = {};
     data.merge_auto.why = 'The PC is reserved by another build';
     await page.evaluate(d => render(d), data);

@@ -1563,6 +1563,9 @@ async function setEmergencyWorkers(v) {
 function workerMergeWait(d) {
   const ma = d.merge_auto || {};
   if (d.held || d.max_parallel === 0 || d.restarting || d.update_pending || d.setup_needed || d.signed_out || d.limit_until || !ma.on || ma.held || !ma.priority) return null;
+  // A round that shares its account (round_shares) only caps that account; every other agent keeps coding, so there
+  // is nothing to wait for (2026-11-11: the banner said coding waited while 10 of 10 workers ran).
+  if (Array.isArray(ma.round_shares) && ma.round_shares.length) return null;
   const round = ma.running && ma.running.round;
   const mv = d.merge_view || {};
   const step = mv.active && String(mv.round) === String(round)
@@ -1885,7 +1888,8 @@ function renderLanes(d) {
   const sameRound = running && String(mv.round) === String(running.round);
   const step = sameRound ? steps.find(st => st.state === "running") || steps.find(st => st.state === "failed") : null;
   const failed = sameRound && (mv.state === "failed" || steps.some(st => st.state === "failed"));
-  const ready = (Array.isArray(d.merge) ? d.merge : []).filter(r => !(running && (running.prs || []).includes(r.pr)));
+  const open = (Array.isArray(d.merge) ? d.merge : []).filter(r => !(running && (running.prs || []).includes(r.pr)));
+  const ready = open.filter(r => r.ready);  // labelled for merging; the rest wait on a PC check or a fix
   const mergePill = running ? (failed ? ["failed", `Round ${running.round} failing`] : ["on", `Round ${running.round}`])
     : !ma.on && d.merge_auto ? ["idle", "Off"] : ma.held ? ["paused", "Paused"] : ready.length ? ["paused", "Waiting"] : ["idle", "Idle"];
   const done = steps.filter(st => st.state === "done").length;
@@ -1897,7 +1901,8 @@ function renderLanes(d) {
   } else {
     mergeBody += `<p class="lane-why">${esc(ma.held ? "Merging is paused. Resume it on the Merging page." : !ma.on && d.merge_auto ? "Automatic merge rounds are off." : ma.why || (ready.length ? "The next round starts when the PC is free." : "No PRs are ready to merge."))}</p>`;
   }
-  mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round</p>`;
+  const notYet = open.length - ready.length;
+  mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PC check or a fix` : ""}</p>`;
   $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`);
 
   // Building: the PC, the Build Lane, then each test node

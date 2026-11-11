@@ -42,6 +42,13 @@ class InterruptionResultTests(unittest.TestCase):
                 self.assertEqual(rounds.result_of({'state': 'failed', 'gave_up': reason}), 'failed')
         self.assertEqual(rounds.result_of({'state': 'failed', 'summary': 'User stopped with physical Escape'}), 'failed')
 
+    def test_codex_output_limit_is_an_interruption_to_resume(self):
+        err = 'codex failed: Incomplete response returned, reason: max_output_tokens; Incomplete response returned, reason: max_output_tokens'
+        self.assertTrue(rounds.output_cut_short(err))
+        self.assertEqual(rounds.session_stop_result(err), 'interrupted')
+        self.assertFalse(rounds.operator_interruption(err))  # so the round resumes on its own, no person needed
+        self.assertEqual(rounds.session_stop_result('Build failed: LSPets.cpp(1309): error C2065'), 'failed')
+
     def test_verified_landed_result_is_not_overridden_by_earlier_stop_note(self):
         self.assertEqual(rounds.result_of({'state': 'landed', 'landed_pr': 88,
                                           'gave_up': 'Operator stopped earlier acceptance.'}), 'landed')

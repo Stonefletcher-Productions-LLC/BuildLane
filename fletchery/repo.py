@@ -16,6 +16,11 @@ _TASK_CHECKOUT_LOCK = threading.RLock()
 
 
 
+def _ref_lock_error(msg: str) -> bool:
+    m = msg.lower()
+    return "cannot lock ref" in m or ("unable to create" in m and ".lock" in m)
+
+
 class LeaseBusy(RuntimeError):
     """The PC's heavy-work lease is held by something that names no workspaces (a merge round or the Build Lane), so
     a task checkout can't be proven free. That is a wait, not a verdict on the task: LifeShare 2026-11-08, nine tasks
@@ -40,8 +45,23 @@ class Repo:
             raise RuntimeError(f"git {' '.join(args)}: {p.stderr.strip()}")
         return p.stdout.strip()
 
-    def fetch_base(self) -> None:
-        self.git("fetch", "--no-tags", self.remote, self.base)
+    FETCH_TRIES = 5
+    FETCH_WAITS = (2, 4, 8, 16)
+
+    def fetch_base(self, sleep=None) -> None:
+        """Retries a ref-lock clash: several worktrees share one .git, so a fetch from a task, a PC check or the
+        storage pass can hold refs/remotes/origin/<base>.lock for a moment and a round's fetch failed outright with
+        "cannot lock ref" (LifeShare #1589, 2026-11-11). Other fetch errors are raised at once."""
+        import time
+        sleep = sleep or time.sleep
+        for attempt in range(self.FETCH_TRIES):
+            try:
+                self.git("fetch", "--no-tags", self.remote, self.base)
+                return
+            except RuntimeError as e:
+                if not _ref_lock_error(str(e)) or attempt == self.FETCH_TRIES - 1:
+                    raise
+                sleep(self.FETCH_WAITS[min(attempt, len(self.FETCH_WAITS) - 1)])
 
     def _registered_worktrees(self) -> set[Path]:
         listed = self.git("worktree", "list", "--porcelain", "-z")

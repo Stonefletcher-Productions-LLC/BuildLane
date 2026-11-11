@@ -1013,7 +1013,8 @@ class Engine:
             r = await guard.run("merger", prompt, wt, cfg.merge_budget_usd, cfg.merge_max_turns)
             self._spend(agent or "claude", r.cost_usd)
             for _ in range(2):  # stopped part way with a progress note: carry on in the same session
-                if r.ok or rounds.operator_interruption(r.error or "") or not r.session_id or "no JSON answer" not in (r.error or "") or not hasattr(rt, "command"):
+                cut = "no JSON answer" in (r.error or "") or rounds.output_cut_short(r.error or "")
+                if r.ok or rounds.operator_interruption(r.error or "") or not r.session_id or not cut or not hasattr(rt, "command"):
                     break
                 self.ctx.log(f"merge round {n}: {agent} stopped before the end; asking it to carry on")
                 rt.resume_session = r.session_id
@@ -1023,7 +1024,7 @@ class Engine:
                     rt.resume_session = ""
                 self._spend(agent or "claude", r.cost_usd)
             out = r.output or {}
-            res["result"] = rounds.result_of(out) if r.ok else ("interrupted" if rounds.operator_interruption(r.error or "") else "failed")
+            res["result"] = rounds.result_of(out) if r.ok else rounds.session_stop_result(r.error or "")
             res["stop_reason"] = str(out.get("stop_reason") or out.get("gave_up") or r.error or "")[:7000]
             res["pr"] = int(out.get("landed_pr") or 0)
             res["summary"] = (out.get("summary") or out.get("gave_up") or r.error or "")[:600]

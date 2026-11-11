@@ -487,6 +487,25 @@ async def fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt:
             ctx.live.done(task.number)
 
 
+def feedback_excerpt(text: str, limit: int = 2500) -> str:
+    """What the "came back N times; stopping" comment keeps of one piece of feedback. The blocker planner reads only
+    that comment, and a PC check log names its errors near the end, so a cut at the start hid them: on 2026-11-11
+    the planner saw "24 changed files, 20 code fi" for #1509 and #1457 and blamed a long-fixed runner problem. Keeps
+    the first line, every error line (up to 20) and the end of the log, inside a code fence."""
+    text = (text or "").replace("\r\n", "\n").strip()
+    if len(text) <= limit:
+        body = text
+    else:
+        lines = text.split("\n")
+        errors = [ln for ln in lines[1:] if re.search(r"\berror\b|\bfailed\b|\bFAIL\b", ln, re.I)][:20]
+        head = lines[0][:300]
+        err = "\n".join(x[:300] for x in errors)
+        room = max(400, limit - len(head) - len(err) - 40)
+        tail = text[-room:]
+        body = "\n".join(x for x in (head, "Error lines:" if err else "", err, "...", tail) if x)
+    return "````\n" + body.replace("````", "```") + "\n````"
+
+
 async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt: int, ctx: Context,
                   out: Outcome) -> Outcome:
     cfg, gh, repo, pool = ctx.cfg, ctx.gh, ctx.repo, ctx.agents
@@ -497,7 +516,7 @@ async def _fix_pr(task: Task, pr: PullRequest, feedback: list[Feedback], attempt
     if attempt > cfg.fixer_attempts:
         gh.set_status(task.number, BLOCKED)
         gh.comment(task.number, f"Fletchery: PR #{pr.number} came back {attempt - 1} times; stopping. Last feedback:\n\n"
-                                + "\n".join(f"> {f.text[:300]}" for f in feedback))
+                                + "\n\n".join(feedback_excerpt(f.text) for f in feedback))
         out.detail = "fixer attempts exhausted"
         return out
     # Reserve before the first await: concurrent fixes must see this capacity
