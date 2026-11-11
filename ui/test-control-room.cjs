@@ -95,7 +95,7 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => document.querySelector('#projName').textContent === 'Harbor');
     assert.equal(await visible('#workers'), true);
     // Overview lanes: coding, merging and building read at a glance.
-    assert.equal(await page.locator('#lanes .lane-card').count(), 3);
+    assert.equal(await page.locator('#lanes .lane-card').count(), 4);
     assert.match(await page.locator('#laneCoding').innerText(), /2 of 8 workers[\s\S]*#891[\s\S]*#899/);
     assert.match(await page.locator('#laneMerging').innerText(), /round 16/i);
     assert.match(await page.locator('#laneBuilding').innerText(), /Gaming PC/);
@@ -743,17 +743,33 @@ const server = http.createServer(async (req, res) => {
     for (let i = 0; i < 100 && requests.filter(r => r.url === '/api/machines/pause').length < 2; i++) await page.waitForTimeout(50);
     assert.deepEqual(requests.filter(r => r.url === '/api/machines/pause').at(-1).body, {machine: 'PC', kind: 'coding', paused: false});
     delete data.pc_paused; data.machines.machines[0].paused_work = [];
-    // A node's PR check is merging work: it shows on the Merging card, not as a build.
+    // A node's PR check is testing work: it has its own Testing card, not Merging or Building.
     const node = data.machines.machines[0], keepJob = node.job;
     node.job = {id: 9, recipe: 'pr-check', sha: 'b'.repeat(40), ref: 'Test-Staging', params: {pr: 1568, head: 'c'.repeat(40)}, state: 'running', started: now, pr: 1568, requested_by: 'pr-check'};
     await page.evaluate(() => refresh());
-    await page.waitForFunction(() => /SF-NODE-01 · PR check #1568/.test(document.querySelector('#laneMerging').textContent));
+    await page.waitForFunction(() => /SF-NODE-01 · PR check #1568/.test(document.querySelector('#laneTesting').textContent));
     const mergeLane = await page.locator('#laneMerging').textContent();
-    assert.match(mergeLane, /Gaming PC · Merge round 16: Game tests/);   // the round's step is named on the PC's own line
+    assert.match(mergeLane, /Gaming PC · Game tests \(step \d of \d\)/);   // the round's step and progress on the PC's own line
+    assert.doesNotMatch(mergeLane, /PR check/);
     const buildLane = await page.locator('#laneBuilding').textContent();
     assert.match(buildLane, /Nothing building/);
-    assert.match(buildLane, /On Merging instead: Gaming PC: Merge round 16: Game tests · SF-NODE-01: PR check #1568/);
+    assert.doesNotMatch(buildLane, /PR check|Merge round/);
     assert.match(await page.locator('#machinesGlance').textContent(), /PR check #1568/);
+    // Between rounds merge_auto.running is {} and merge_view still holds the last round: no "undefined", no stray steps.
+    const keepRun = data.merge_auto.running, keepPc = data.pc;
+    data.merge_auto.running = {};
+    data.pc = {held: true, kind: 'task', who: 'codex-walkslide-1642', step: 'RunAnimReview', since: now};
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => !/Merge round 16/.test(document.querySelector('#laneMerging').textContent));
+    const idle = await page.locator('#laneMerging').innerText();
+    assert.doesNotMatch(idle, /undefined|Step \d/i);
+    assert.match(idle, /Waiting for the Unreal slot \(codex-walkslide-1642: RunAnimReview\)|Idle/);
+    assert.doesNotMatch(await page.locator('#lanes').innerText(), /undefined/);
+    data.merge_auto.held = true;
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /Paused/.test(document.querySelector('#laneMerging').textContent));
+    assert.match(await page.locator('#laneMerging').innerText(), /Gaming PC · Merging paused/);
+    delete data.merge_auto.held; data.merge_auto.running = keepRun; data.pc = keepPc;
     node.job = keepJob;
     await page.evaluate(() => refresh());
     assert.equal(requests.filter(r => r.url === '/api/jobs/cancel').at(-1).body.id, 7);
