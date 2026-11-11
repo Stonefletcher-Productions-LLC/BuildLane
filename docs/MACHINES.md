@@ -27,6 +27,7 @@ last result, CPU, free RAM and disk. **Jobs** below it lists the queue and histo
 | `node-checks` | Stop-JobProcesses, ResetContentWorkspace, `NodeTests.ps1 -Engine -ResultJson [-Only] [-StrictSlots]`, then always Stop-JobProcesses, `git checkout -- Content/Sim`, ResetContentWorkspace | `Node checks` |
 | `nightly-full` | the same with `-Set Full` | `Nightly full tests (node)` (what `ci.yml`'s nightly waits for) |
 | `checkout-only` | fetch and check out the commit, print it (a connection test) | none |
+| `pr-check` | the PC check of one worker PR: check out the base branch tip (the job's commit), fetch the PR head, Stop-JobProcesses, ResetContentWorkspace, merge the head (`--no-ff`), `Tools/CI/PrCheck.ps1 -BaseRef <base>`; then always Stop-JobProcesses, `git merge --abort`, ResetContentWorkspace | none: Fletchery labels the PR `ready` or posts the failure (see PR checks) |
 
 A job needs the labels `os:windows` and `role:tests` and 16 GB of RAM (`checkout-only` needs nothing); a job can ask
 for more labels, such as `unreal:5.8.4`. A node runs one job at a time, oldest first. A job whose node stops
@@ -35,6 +36,16 @@ answering for 3 minutes is queued again once, then marked lost. Logs are kept in
 **Shadow.** Until cutover, `"shadow": true` (the default) sends the statuses as `shadow/Node checks` and
 `shadow/Nightly full tests (node)`, so nothing that `ci.yml` or `lane.yml` reads changes. Set `"shadow": false` at
 cutover, after the Buildlane node runner is stopped, so the two never both report.
+
+**PR checks** (`nodecheck.py`). With `"prCheck": {"labels": ["unreal:5.8.3"]}` in `workers.machines` (and
+`workers.prCheckCommand` set), Fletchery queues one `pr-check` at a time for a node that is online, not paused and has
+those labels plus `os:windows` and `role:tests`. The extra label keeps PR checks off a node whose engine differs from
+the PC's: a node on 5.8.4 would save content the PC's 5.8.3 can't load. Fletchery reads the finished job: a pass labels
+the PR for merging, a merge conflict or a failing check is posted on the PR (the step's log tail) for its fixer, and
+anything else (exit 2 from PrCheck.ps1, a fetch or worker error, a lost job) records nothing, so it runs again.
+In shadow mode the node checks the same PRs as the PC and only its result is kept (`node_pr_checks` in state.json,
+and a log line comparing it with the PC's); the PC still decides. With shadow off the node's result counts and the PC
+stops starting its own PR checks while a node is eligible, so its idle time goes to merge rounds.
 
 **Nightly.** With `"nightly": {"at": "07:00", "branch": "main"}` (UTC) Fletchery queues `nightly-full` on main's
 head once a day, within three hours of that time. Leave it out until cutover; the Buildlane node runner still runs
@@ -63,7 +74,7 @@ the nightly until then.
     "gitSshKey": "C:\\StoneNode\\keys\\lifeshare_deploy",
     "engine": "E:\\UE_5.8",
     "pauseFile": "E:\\GitHubRunner\\PAUSED-NODE",
-    "recipes": ["node-checks", "nightly-full", "checkout-only"]}
+    "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check"]}
    ```
 
    The checkout is `<workRoot>\fletchery\LifeShare` (its own, so it never fights the Buildlane runner's checkout).

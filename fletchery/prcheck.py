@@ -85,8 +85,8 @@ def run(repo, pr, cfg, timeout_s: int | None = None) -> CheckResult:
     return CheckResult(p.returncode, _tail((p.stdout or "") + ("\n" + p.stderr if p.stderr else "")))
 
 
-def failure_comment(pr, result: CheckResult, base: str) -> str:
+def failure_comment(pr, result: CheckResult, base: str, where: str = "the build PC") -> str:
     """Starts with a lane-feedback marker ("failed") so the worker's fixer picks it up."""
-    return (f"PC check failed on the build PC for head `{pr.head_sha[:10]}` (merged onto `{base}`, then built and "
+    return (f"PC check failed on {where} for head `{pr.head_sha[:10]}` (merged onto `{base}`, then built and "
             f"quick-tested). Fix this on the branch; the PC check runs again on the new head, and the PR is labelled "
             f"for merging once it passes.\n\n```\n{result.output[-6000:]}\n```")

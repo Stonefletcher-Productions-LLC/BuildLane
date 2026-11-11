@@ -15,7 +15,7 @@ Config (JSON, e.g. C:\\StoneNode\\fletchery-worker.json):
      "gitSshKey": "C:\\\\StoneNode\\\\keys\\\\lifeshare_deploy",           # read-only deploy key
      "engine": "E:\\\\UE_5.8",
      "pauseFile": "E:\\\\GitHubRunner\\\\PAUSED-NODE",                    # while it exists, take no new job
-     "recipes": ["node-checks", "nightly-full", "checkout-only"]}         # what this node agrees to run
+     "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check"]}   # what this node agrees to run
 
     python node_worker.py check   --config <file>     sign in to the coordinator once and print what it sees
     python node_worker.py run     --config <file>     the worker loop (what the logon task runs)
@@ -72,12 +72,15 @@ def _stop_processes(ws: Path) -> list[str]:
     return ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd]
 
 
-def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Path) -> list[tuple[str, object, bool]]:
+def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Path,
+                 sha: str = "") -> list[tuple[str, object, bool]]:
     """(name, argv or a callable giving argv, always) for each step, mirroring node-checks.yml / nightly-node.yml.
     `always` steps run even after a failure (clean-up)."""
     engine = cfg.get("engine") or r"E:\UE_5.8"
     if recipe == "checkout-only":
         return [("Show the commit", ["git", "log", "-1", "--format=%H %s"], False)]
+    if recipe == "pr-check":
+        return pr_check_steps(params, ws, sha)
     if recipe not in ("node-checks", "nightly-full"):
         raise ValueError(f"unknown recipe {recipe!r}")
     tests = ["-Engine", engine, "-ResultJson", str(result_json)]
@@ -95,6 +98,31 @@ def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Pa
         ("Build, BuildContent and tests", _ps("Tools/CI/NodeTests.ps1", ws, tests), False),
         ("Stop what this job left running", lambda: _stop_processes(ws), True),
         ("Reset Content after the run", ["git", "checkout", "--", "Content/Sim"], True),
+        ("Reset Content workspace", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), True),
+    ]
+
+
+MERGE_STEP = "Merge the PR onto the base"
+CHECK_STEP = "PR check"
+
+
+def pr_check_steps(params: dict, ws: Path, base: str) -> list[tuple[str, object, bool]]:
+    """The PC check (Fletchery prcheck.py) on a node: the job's commit is the base branch tip, already checked out; merge
+    the PR head onto it and run the project's check against that base, like the PC does in its build checkout.
+    Tools/CI/PrCheck.ps1 exits 0 pass, 1 fail, 2 no result; Fletchery labels the PR or posts the failure."""
+    pr, head = params.get("pr"), str(params.get("head") or "")
+    if not isinstance(pr, int) or pr <= 0 or not SHA.match(head) or not SHA.match(base or ""):
+        raise ValueError("bad pr-check parameters")
+    ident = ["-c", "user.name=Fletchery node", "-c", "user.email=fletchery-node@localhost"]
+    return [
+        ("Fetch the PR head", ["git", "fetch", "--no-tags", "origin", head], False),
+        ("Clear stale processes from this checkout", lambda: _stop_processes(ws), False),
+        ("Reset generated Content from prior jobs", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), False),
+        (MERGE_STEP, ["git", *ident, "merge", "--no-ff", "--no-edit", "-m", f"PR check: merge PR #{pr} ({head[:10]})", head],
+         False),
+        (CHECK_STEP, _ps("Tools/CI/PrCheck.ps1", ws, ["-BaseRef", base]), False),
+        ("Stop what this job left running", lambda: _stop_processes(ws), True),
+        ("Abort an unfinished merge", ["git", "merge", "--abort"], True),
         ("Reset Content workspace", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), True),
     ]
 
@@ -325,7 +353,8 @@ class Job:
                 ws = _workspace(cfg)
                 job_env = dict(env)
                 job_env["FLETCHERY_JOB"] = str(job["id"])
-                for name, step, always in recipe_steps(job["recipe"], job.get("params") or {}, ws, cfg, result_json):
+                for name, step, always in recipe_steps(job["recipe"], job.get("params") or {}, ws, cfg, result_json,
+                                                          job["sha"]):
                     if (code or self.cancelled) and not always:
                         continue
                     argv = step() if callable(step) else step
@@ -371,7 +400,7 @@ def load_config(path: str) -> dict:
     for k in ("coordinator", "machine", "keyFile", "workRoot", "repoUrl"):
         if not cfg.get(k):
             raise SystemExit(f"{path}: `{k}` is missing")
-    cfg.setdefault("recipes", ["node-checks", "nightly-full", "checkout-only"])
+    cfg.setdefault("recipes", ["node-checks", "nightly-full", "checkout-only", "pr-check"])
     return cfg
 
 

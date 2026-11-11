@@ -58,6 +58,9 @@ RECIPES = {
     "nightly-full": {"context": "Nightly full tests (node)", "labels": ["os:windows", "role:tests"], "min_ram_gb": 16,
                      "timeout_minutes": 150},
     "checkout-only": {"context": "", "labels": [], "min_ram_gb": 0, "timeout_minutes": 30},
+    # A worker PR merged onto the base branch, then the project's PC check (LifeShare: Tools/CI/PrCheck.ps1). No commit
+    # status: Fletchery labels the PR or posts the failure itself, as it does for a check on the PC (nodecheck.py).
+    "pr-check": {"context": "", "labels": ["os:windows", "role:tests"], "min_ram_gb": 16, "timeout_minutes": 90},
 }
 
 SCHEMA = """
@@ -135,7 +138,7 @@ class Machines:
         with self._db() as db:
             db.executescript(SCHEMA)
             have = {r[1] for r in db.execute("PRAGMA table_info(jobs)")}
-            for col, decl in (("pr", "INTEGER NOT NULL DEFAULT 0"),):  # columns added after the first release
+            for col, decl in (("pr", "INTEGER NOT NULL DEFAULT 0"), ("handled", "INTEGER NOT NULL DEFAULT 0")):  # columns added after the first release
                 if col not in have:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {col} {decl}")
 
@@ -301,6 +304,35 @@ class Machines:
                     out.append(row["id"])
         return out
 
+    # ---- results Fletchery acts on (nodecheck.py) ----
+    def active(self, recipe: str) -> list[dict]:
+        """Queued and running jobs of one recipe."""
+        with self._db() as db:
+            return [_job(r) for r in db.execute("SELECT * FROM jobs WHERE recipe=? AND state IN ('queued','running') "
+                                                "ORDER BY id", (recipe,)).fetchall()]
+
+    def unhandled(self, recipe: str) -> list[dict]:
+        """Finished jobs of one recipe whose result Fletchery has not acted on yet, oldest first."""
+        with self._db() as db:
+            return [_job(r) for r in db.execute(f"SELECT * FROM jobs WHERE recipe=? AND handled=0 AND state IN "
+                                                f"({','.join('?' * len(DONE))}) ORDER BY id", (recipe, *DONE)).fetchall()]
+
+    def mark_handled(self, job_id: int) -> None:
+        with self._lock, self._db() as db:
+            db.execute("UPDATE jobs SET handled=1 WHERE id=?", (int(job_id),))
+
+    def eligible(self, labels: list, min_ram_gb: float = 0) -> list[str]:
+        """Online, unrevoked, unpaused nodes that carry every label and have the RAM."""
+        at = datetime.now(timezone.utc)
+        out = []
+        with self._db() as db:
+            for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL ORDER BY name").fetchall():
+                stats = json.loads(m["stats"] or "{}")
+                if (_age(m["last_seen"], at) <= ONLINE_SECONDS and not stats.get("paused")
+                        and set(labels) <= set(json.loads(m["labels"] or "[]")) and float(m["ram_gb"] or 0) >= min_ram_gb):
+                    out.append(m["name"])
+        return out
+
     # ---- GitHub commit statuses ----
     def status_for(self, row) -> tuple[str, str] | None:
         """(state, description) for a job's commit status now, or None when it reports nothing."""
@@ -439,6 +471,15 @@ def check_params(recipe: str, params: dict) -> dict:
         if only and not ONLY.match(only):
             raise ValueError("`only` is a comma list of check names (letters, digits, _)")
         out = {"only": only, "strict_slots": bool(params.get("strict_slots"))}
+    elif recipe == "pr-check":
+        try:
+            pr = int(params.get("pr") or 0)
+        except (TypeError, ValueError):
+            pr = 0
+        head = str(params.get("head") or "").lower()
+        if pr <= 0 or not SHA.match(head):
+            raise ValueError("A pr-check job needs `pr` (a number) and `head` (the PR's 40-character head SHA)")
+        out = {"pr": pr, "head": head}
     return out
 
 
