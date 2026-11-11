@@ -290,3 +290,39 @@ class OrphanRoundTests(unittest.TestCase):
             self.assertEqual(rounds.stop_orphan(p, None, "again"), "")     # already history
             v = merge.view(p, os.path.join(d, "none.json"))
             self.assertFalse(v["active"])
+
+
+class JobStepsTests(unittest.TestCase):
+    LOG = ("##[step] Fetch the commit\n$ git fetch\n##[step] Fetch the commit: exit 0\n"
+           "##[step] PR check\nPR check against abc\n== Build LifeShareEditor\nResult: Succeeded\n"
+           "== Mapped preflight checks\nPASS  ScanUIText (5s)\nFAIL  RunSpecs (200s)\n"
+           "##[step] PR check: exit 1\n##[step] Abort an unfinished merge\n##[step] Abort an unfinished merge: exit 128\n")
+
+    def test_steps_sections_checks_and_cleanup(self):
+        import machines
+        with tempfile.TemporaryDirectory() as d:
+            m = machines.Machines(d, "o/r")
+            job = m.enqueue("pr-check", "a" * 40, params={"pr": 5, "head": "b" * 40})
+            self.assertIsNotNone(job)
+            jid = job if isinstance(job, int) else job["id"]
+            # chunks split mid-line still give whole marks
+            m._mark(jid, self.LOG[:30]); m._mark(jid, self.LOG[30:])
+            steps = machines.parse_steps(m._marks(jid))
+        self.assertEqual([s["name"] for s in steps], ["Fetch the commit", "PR check", "Abort an unfinished merge"])
+        self.assertEqual(steps[0]["state"], "passed")
+        check = steps[1]
+        self.assertEqual(check["state"], "failed")
+        self.assertEqual([(s["name"], s["state"]) for s in check["sections"]],
+                         [("Build LifeShareEditor", "passed"), ("Mapped preflight checks", "failed")])
+        self.assertEqual([(c["name"], c["state"], c["detail"]) for c in check["sections"][1]["checks"]],
+                         [("ScanUIText", "passed", "5s"), ("RunSpecs", "failed", "200s")])
+        self.assertTrue(steps[2]["cleanup"])
+        self.assertTrue(all(s["start"] for s in steps))
+
+    def test_failed_build_closes_its_section(self):
+        import machines
+        marks = [("t", l) for l in ["##[step] PR check", "== Build LifeShareEditor", "FAIL Build LifeShareEditor (exit 1)",
+                                     "##[step] PR check: exit 1"]]
+        steps = machines.parse_steps(marks)
+        self.assertEqual(steps[0]["sections"][0]["state"], "failed")
+        self.assertEqual(steps[0]["sections"][0]["detail"], "exit 1")

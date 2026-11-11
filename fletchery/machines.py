@@ -46,6 +46,13 @@ LOST_SECONDS = 180           # a running job without a heartbeat for this long i
 MAX_ATTEMPTS = 2             # a lost job is queued again once, then fails
 MAX_BODY = 1024 * 1024
 LOG_MAX_BYTES = 50 * 1024 * 1024
+# The lines of a job's log that mark its progress (Testing tab): the worker's own steps, the project script's sections
+# ("== Build LifeShareEditor") and each check's result ("PASS  RunSpecs (200s)"). Each is kept with the time it arrived.
+MARK = re.compile(r"^(##\[step\] .+|== .+|(PASS|FAIL|SKIP|WARN)\s+\S.*)$")
+STEP_END = re.compile(r"^##\[step\] (.+): exit (-?\d+)$")
+RESULT = re.compile(r"^(PASS|FAIL|SKIP|WARN)\s+(.+?)(?:\s+\(([^)]*)\))?\s*$")
+RESULT_STATE = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped", "WARN": "warning"}
+FALLBACK_LOG_BYTES = 5 * 1024 * 1024
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 LABEL = re.compile(r"^[A-Za-z0-9_.:+-]{1,64}$")
@@ -141,6 +148,8 @@ class Machines:
         self.repo = repo
         self.shadow = shadow
         self._lock = threading.RLock()
+        self._partial: dict[int, str] = {}   # a job's last log line while it is still arriving
+        self._steps_cache: dict[int, tuple] = {}
         with self._db() as db:
             db.executescript(SCHEMA)
             have = {r[1] for r in db.execute("PRAGMA table_info(jobs)")}
@@ -286,12 +295,16 @@ class Machines:
                 data = data[:max(0, LOG_MAX_BYTES - row["log_bytes"])] + b"\n[log cut at 50 MB]\n"
             with open(self.logs / f"{int(job_id)}.log", "ab") as f:
                 f.write(data)
+            self._mark(int(job_id), data.decode("utf-8", "replace"))
             db.execute("UPDATE jobs SET log_bytes=log_bytes+?, heartbeat=? WHERE id=?", (len(data), now(), job_id))
 
     def finish(self, machine: str, job_id: int, exit_code: int, summary: str = "", result=None) -> None:
         with self._lock, self._db() as db:
             row = self._own(db, job_id, machine)
             state = "cancelled" if row["cancel"] else ("passed" if int(exit_code) == 0 else "failed")
+            tail = self._partial.pop(int(job_id), "")
+            if tail:
+                self._mark(int(job_id), tail + "\n")
             text = json.dumps(result)[:200_000] if result is not None else ""
             db.execute("UPDATE jobs SET state=?, finished=?, exit_code=?, summary=?, result=? WHERE id=?",
                        (state, now(), int(exit_code), (summary or "")[:500], text, job_id))
@@ -446,6 +459,52 @@ class Machines:
                 f.seek(size - tail_bytes)
             return f.read().decode("utf-8", "replace")
 
+    def _mark(self, job_id: int, text: str) -> None:
+        """Keep the progress lines of a job's log, each with the time it arrived, in job-logs/<id>.marks."""
+        lines = (self._partial.pop(job_id, "") + text).split("\n")
+        tail = lines.pop()
+        if tail:
+            self._partial[job_id] = tail[-4000:]
+        hits = [ln.rstrip("\r") for ln in lines if MARK.match(ln.rstrip("\r"))]
+        if hits:
+            at = now()
+            with open(self.logs / f"{job_id}.marks", "a", encoding="utf-8") as f:
+                f.write("".join(f"{at}\t{h[:400]}\n" for h in hits))
+
+    def _marks(self, job_id: int) -> list[tuple[str, str]]:
+        p = self.logs / f"{int(job_id)}.marks"
+        if p.exists():
+            out = []
+            for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                at, _, line = ln.partition("\t")
+                out.append((at, line))
+            return out
+        log = self.logs / f"{int(job_id)}.log"   # a job from before marks were kept: its steps, without times
+        if not log.exists() or log.stat().st_size > FALLBACK_LOG_BYTES:
+            return []
+        return [("", ln.rstrip("\r")) for ln in log.read_text(encoding="utf-8", errors="replace").splitlines()
+                if MARK.match(ln.rstrip("\r"))]
+
+    def job_steps(self, job_id: int) -> dict:
+        """A job's steps for the Testing tab: {"steps": [...], "expected": [names the last passed run of its recipe had]}."""
+        with self._db() as db:
+            row = db.execute("SELECT * FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+            if not row:
+                return {"steps": [], "expected": []}
+            prev = db.execute("SELECT id FROM jobs WHERE recipe=? AND state='passed' AND id<? ORDER BY id DESC LIMIT 1",
+                              (row["recipe"], int(job_id))).fetchone()
+        key = (row["log_bytes"], row["state"])
+        hit = self._steps_cache.get(int(job_id))
+        if hit and hit[0] == key:
+            steps = hit[1]
+        else:
+            steps = parse_steps(self._marks(job_id))
+            self._steps_cache[int(job_id)] = (key, steps)
+        expected = []
+        if prev and row["state"] in ("queued", "running"):
+            expected = [st["name"] for st in self.job_steps(prev["id"])["steps"] if not st.get("cleanup")]
+        return {"steps": steps, "expected": expected}
+
     def view(self, jobs: int = 50) -> dict:
         """Machines, and the newest `jobs` jobs, newest first."""
         at = datetime.now(timezone.utc)
@@ -466,7 +525,7 @@ class Machines:
             out.append({"name": m["name"], "revoked": bool(m["revoked"]), "online": _age(m["last_seen"], at) <= ONLINE_SECONDS,
                         "last_seen": m["last_seen"] or "", "labels": json.loads(m["labels"] or "[]"), "ram_gb": m["ram_gb"],
                         "version": m["version"], "stats": json.loads(m["stats"] or "{}"),
-                        "job": _job(job) if job else None, "last": _job(prev) if prev else None,
+                        "job": dict(_job(job), **self.job_steps(job["id"])) if job else None, "last": _job(prev) if prev else None,
                         "paused_work": paused.get(m["name"], [])})
         return {"machines": out, "jobs": [_job(r) for r in recent], "queued": queued, "shadow": self.shadow,
                 "recipes": {k: {"context": v["context"], "kind": KIND.get(k, "")} for k, v in RECIPES.items()},
@@ -483,6 +542,55 @@ class _Closing:
 
     def __exit__(self, *exc):
         self.db.close()
+
+
+def parse_steps(marks: list[tuple[str, str]]) -> list[dict]:
+    """Steps from a job's progress lines. Each step: {name, state, exit, start, end, cleanup, sections: [{name, state,
+    start, end, detail, checks: [{name, state, detail, at}]}], checks: [...]}. Steps after the first failure only
+    tidy up ("cleanup"), so their exit codes don't read as more failures."""
+    steps: list[dict] = []
+    cur = sec = None
+    failed = False
+    for at, line in marks:
+        m = STEP_END.match(line)
+        if m and cur is not None and cur["name"] == m.group(1):
+            code = int(m.group(2))
+            cur.update(state="passed" if code == 0 else "failed", exit=code, end=at)
+            if sec is not None and sec["state"] == "running":
+                sec.update(state="passed" if code == 0 else "failed", end=at)
+            failed = failed or (code != 0 and not cur["cleanup"])
+            cur = sec = None
+            continue
+        if line.startswith("##[step] "):
+            cur = {"name": line[9:].strip(), "state": "running", "exit": None, "start": at, "end": "", "cleanup": failed,
+                   "sections": [], "checks": []}
+            steps.append(cur)
+            sec = None
+            continue
+        if cur is None:
+            continue
+        if line.startswith("== "):
+            if sec is not None and sec["state"] == "running":
+                sec.update(state="passed", end=at)
+            sec = {"name": line[3:].strip(), "state": "running", "start": at, "end": "", "detail": "", "checks": []}
+            cur["sections"].append(sec)
+            continue
+        m = RESULT.match(line)
+        if m:
+            state, name, detail = RESULT_STATE[m.group(1)], m.group(2).strip(), (m.group(3) or "").strip()
+            if sec is not None and sec["name"] == name:
+                sec.update(state=state, end=at, detail=detail)
+                sec = None
+                continue
+            check = {"name": name, "state": state, "detail": detail, "at": at}
+            (sec["checks"] if sec is not None else cur["checks"]).append(check)
+            if state == "failed" and sec is not None:
+                sec["failed_check"] = True
+    for st in steps:
+        for sc in st["sections"]:
+            if sc.pop("failed_check", False) and sc["state"] == "passed":
+                sc["state"] = "failed"
+    return steps
 
 
 def _job(r) -> dict:

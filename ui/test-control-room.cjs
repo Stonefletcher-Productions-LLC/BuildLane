@@ -72,6 +72,15 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify(req.url === '/api/issue/get' ? {body: 'Missing access', comments: []} : {ok: true}));
   }
+  if (req.url.startsWith('/api/jobs/steps')) {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({expected: [], steps: [
+      {name: 'Fetch the commit', state: 'passed', exit: 0, start: now, end: now, cleanup: false, sections: [], checks: []},
+      {name: 'PR check', state: 'failed', exit: 1, start: now, end: now, cleanup: false, checks: [], sections: [
+        {name: 'Mapped preflight checks', state: 'failed', start: now, end: now, detail: '', checks: [
+          {name: 'ScanUIText', state: 'passed', detail: '5s', at: now}, {name: 'RunM5aTest', state: 'failed', detail: '80s', at: now}]}]},
+      {name: 'Abort an unfinished merge', state: 'failed', exit: 128, start: now, end: now, cleanup: true, sections: [], checks: []}]}));
+  }
   if (req.url !== '/api/status') data.page_id = 'page-a';  // a freshly served page is current
   res.setHeader('Content-Type', req.url === '/api/status' ? 'application/json' : 'text/html');
   res.end(req.url === '/api/status' ? JSON.stringify(data) : pageSource);
@@ -108,7 +117,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await visible('#agents'), false);
     assert.equal(await visible('#lowerBox'), false);
     assert.deepEqual(await page.locator('[data-view]').evaluateAll(links => links.map(link => link.dataset.view)),
-      ['overview', 'tasks', 'merge', 'build', 'agents', 'activity']);
+      ['overview', 'tasks', 'merge', 'test', 'build', 'agents', 'activity']);
     assert.equal(await page.locator('#slots details').count(), 2);
     assert.equal(await page.locator('#slots .free').count(), 1);
     assert.equal(await visible('#emergencyWorkers'), false, 'older payloads hide unavailable emergency controls');
@@ -693,6 +702,32 @@ const server = http.createServer(async (req, res) => {
         {id: 8, recipe: 'nightly-full', sha: 'd'.repeat(40), ref: 'main', params: {}, state: 'queued', machine: '', created: now, started: '', finished: '', summary: '', requested_by: 'nightly 2026-11-12', log_bytes: 0, pr: 0},
         {id: 7, recipe: 'node-checks', sha: 'c'.repeat(40), ref: 'claude/x', params: {only: 'RunFlowTest'}, state: 'running', machine: 'SF-NODE-01', created: now, started: now, finished: '', summary: '', requested_by: 'dashboard', log_bytes: 2048, pr: 1666},
         {id: 6, recipe: 'node-checks', sha: 'e'.repeat(40), ref: '', params: {}, state: 'failed', machine: 'SF-NODE-01', created: now, started: now, finished: now, summary: '1 of 12 failed on SF-NODE-01: RunM5aTest', requested_by: '', log_bytes: 9000, pr: 0}]};
+    // Testing tab: the running job with each step and the ones still to come, what waits, and finished runs with their steps.
+    const nodeJob = data.machines.machines[0].job;
+    nodeJob.steps = [{name: 'Fetch the commit', state: 'passed', exit: 0, start: now, end: now, cleanup: false, sections: [], checks: []},
+      {name: 'PR check', state: 'running', exit: null, start: now, end: '', cleanup: false, checks: [], sections: [
+        {name: 'Build LifeShareEditor', state: 'passed', start: now, end: now, detail: '', checks: []},
+        {name: 'Mapped preflight checks', state: 'running', start: now, end: '', detail: '', checks: [{name: 'ScanUIText', state: 'passed', detail: '5s', at: now}]}]}];
+    nodeJob.expected = ['Fetch the commit', 'PR check', 'Stop what this job left running'];
+    await page.locator('[data-view="test"]').click();
+    await page.evaluate(() => refresh());
+    await page.waitForFunction(() => /Mapped preflight checks/.test(document.querySelector('#testRunningRows').textContent));
+    const runningTest = await page.locator('#testRunningRows').innerText();
+    assert.match(runningTest, /Tests for|Tests: RunFlowTest/);
+    assert.match(runningTest, /SF-NODE-01/);
+    assert.match(runningTest, /Step 2 of 3: PR check/);
+    assert.match(runningTest, /Build LifeShareEditor[\s\S]*ScanUIText[\s\S]*Stop what this job left running\s*not started/);
+    assert.match(await page.locator('#testWaitingRows').innerText(), /Nightly full tests[\s\S]*queued/);
+    assert.match(await page.locator('#testStats').innerText(), /1\s*running[\s\S]*1\s*queued/);
+    await page.locator('details[data-test-job="6"] summary').click();
+    await page.waitForFunction(() => /tidy-up/.test(document.querySelector('details[data-test-job="6"]').textContent));
+    const hist = await page.locator('details[data-test-job="6"]').innerText();
+    assert.match(hist, /PR check[\s\S]*Mapped preflight checks[\s\S]*RunM5aTest[\s\S]*tidy-up/);
+    assert.doesNotMatch(hist, /exit 128/);
+    await page.evaluate(() => refresh());
+    assert.equal(await page.locator('details[data-test-job="6"]').getAttribute('open'), '', 'polling keeps an opened result open');
+    await page.screenshot({path: path.join(out, 'testing-tab.png'), fullPage: true});
+    delete nodeJob.steps; delete nodeJob.expected;
     await page.locator('[data-view="build"]').click();
     await page.evaluate(() => refresh());
     await page.waitForFunction(() => !document.querySelector('#machinesCard').hidden);
@@ -720,7 +755,7 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => /2 queued/.test(document.querySelector('#jobsNote').textContent));
     assert.deepEqual(requests.at(-1).body, {recipe: 'node-checks', ref: 'main', only: 'RunFlowTest', strict_slots: false});
     page.once('dialog', d => d.accept());
-    await page.locator('[data-job-cancel="7"]').click();
+    await page.locator('#machinesCard [data-job-cancel="7"]').click();
     await page.waitForFunction(() => true);
     await page.locator('.machine-add summary').click();
     await page.locator('#machineName').fill('SF-NODE-03');

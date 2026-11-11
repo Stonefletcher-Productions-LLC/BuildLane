@@ -31,6 +31,7 @@
 POST /api/issue/get       {number}: the issue and its comments (the Needs you reader)
 POST /api/issue/reply     {number, body, requeue=true}: comment on it and put it back in the queue
     GET  /api/jobs/log?id=N   a machine job's log (machines.py)
+    GET  /api/jobs/steps?id=N a machine job's steps, sections and check results, with times (machines.py)
     POST /api/machines/add    {name}: register a node; the answer has its key, shown this once
     POST /api/machines/revoke {name}
     POST /api/machines/pause  {machine, kind, paused}: stop one machine from one kind of work ("PC": coding, merging,
@@ -785,6 +786,13 @@ class Dashboard:
                     except ValueError:
                         text = ""
                     return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
+                if self.path == "/api/jobs/steps":
+                    coord = getattr(dash.fm, "machines", None)
+                    try:
+                        data = coord.machines.job_steps(int(query.get("id", ["0"])[0])) if coord else {"steps": [], "expected": []}
+                    except ValueError:
+                        data = {"steps": [], "expected": []}
+                    return self._json(200, data)
                 if self.path == "/favicon.ico":  # the app window's taskbar icon
                     return self._send(200, (UI / "Fletchery.ico").read_bytes(), "image/x-icon")
                 return self._json(404, {"error": "not found"})
