@@ -888,6 +888,19 @@
   .rank-caps .emergency-help { margin: 0; }
   .handoff-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
   .handoff-row .emergency-help { margin: 0; }
+  .lane-where { margin: -2px 0 0; font-size: 12.5px; color: var(--muted); }
+  .where-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: 2px; }
+  .mchip { font-weight: 700; color: var(--ink); border: 1px solid var(--rule); border-radius: 5px; padding: 0 6px; background: var(--soft); white-space: nowrap; }
+  .mchip.on { border-color: var(--c); }
+  .machines-glance { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; font-size: 13px; }
+  .glance-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .machines-glance ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; min-width: 0; }
+  .machines-glance li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+  .mtask { font-size: 12px; font-weight: 700; border-radius: 99px; padding: 2px 9px; white-space: nowrap; }
+  .mtask.t-code { background: color-mix(in srgb, var(--lane-code) 16%, var(--panel)); color: var(--lane-code); }
+  .mtask.t-merge { background: color-mix(in srgb, var(--lane-merge) 16%, var(--panel)); color: var(--lane-merge); }
+  .mtask.t-build { background: color-mix(in srgb, var(--lane-build) 16%, var(--panel)); color: var(--lane-build); }
+  .mtask.idle { background: var(--soft); color: var(--muted); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -947,6 +960,7 @@
   <section class="view" id="view-overview" aria-labelledby="overviewHeading">
     <div class="page-heading"><h2 id="overviewHeading">Overview</h2><p>Work in progress, at a glance.</p></div>
     <section class="needs-strip" id="needsStrip" aria-labelledby="needsHeading" hidden><h3 id="needsHeading">Needs you <span id="attentionCount"></span></h3><ul class="needs-list" id="attentionPreview"></ul><a href="#tasks">View all →</a></section>
+    <div class="machines-glance" id="machinesGlance" aria-label="What each machine is doing"></div>
     <div class="lanes" id="lanes" aria-label="Coding, merging and building right now">
       <section class="lane-card lane-coding" id="laneCoding" aria-labelledby="laneCodingH"></section>
       <section class="lane-card lane-merging" id="laneMerging" aria-labelledby="laneMergingH"></section>
@@ -1858,10 +1872,15 @@ function renderOverview(d) {
 }
 
 // Overview lanes: one card each for coding, merging and building, the same shape so all three read at a glance.
-function laneHtml(key, title, pill, big, body, link) {
+function laneHtml(key, title, pill, big, body, link, where) {
   return `<div class="lane-top"><span class="lane-dot" aria-hidden="true"></span><h3 id="lane${key}H">${title}</h3>` +
-    `<span class="lane-pill ${pill[0]}">${esc(pill[1])}</span></div><div class="lane-big">${big}</div>${body}${link}`;
+    `<span class="lane-pill ${pill[0]}">${esc(pill[1])}</span></div>` +
+    (where ? `<p class="lane-where"><span class="where-label">Runs on</span> ${where}</p>` : "") +
+    `<div class="lane-big">${big}</div>${body}${link}`;
 }
+// Coding sessions, merge rounds and PC checks run on the PC Fletchery lives on; test jobs run on the machines in d.machines.
+const PC_NAME = "Gaming PC";
+function machineChip(name, on) { return `<b class="mchip${on ? " on" : ""}">${esc(name)}</b>`; }
 function laneRows(items) {
   return items.length ? `<ul class="lane-rows">${items.join("")}</ul>` : "";
 }
@@ -1880,7 +1899,8 @@ function renderLanes(d) {
   const codingWhy = !ordinary.length ? `<p class="lane-why">${esc(d.held ? "Paused: press Resume to start new work." : d.max_parallel === 0 ? "Workers is 0, so no new coding starts." : mergeWait ? mergeWait.title + "." : queued.length - waiting.length ? "Starting the next ready task at the next check." : "No ready tasks.")}</p>` : "";
   $("laneCoding").innerHTML = laneHtml("Coding", "Coding", codingPill, esc(codingBig), laneRows(sessions) + codingWhy +
     `<p class="lane-next">Next: ${queued.length - waiting.length} ready · ${waiting.length} waiting on other tasks</p>`,
-    `<a class="lane-link" href="#workers" data-scroll="workers">Workers: ${d.max_parallel} →</a>`);
+    `<a class="lane-link" href="#workers" data-scroll="workers">Workers: ${d.max_parallel} →</a>`,
+    machineChip(PC_NAME, ordinary.length > 0) + (ordinary.length ? ` · ${esc([...new Set(ordinary.map(a => a.agent).filter(Boolean))].join(", ") || "choosing agents")}` : ""));
 
   // Merging
   const ma = d.merge_auto || {}, mv = d.merge_view || {}, running = ma.running;
@@ -1903,7 +1923,9 @@ function renderLanes(d) {
   }
   const notYet = open.length - ready.length;
   mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PC check or a fix` : ""}</p>`;
-  $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`);
+  const roundJobs = running ? ((d.machines && d.machines.machines) || []).filter(m => m.job && /round/i.test(m.job.requested_by || "") && String(m.job.requested_by).includes(String(running.round))) : [];
+  const mergeWhere = machineChip(PC_NAME, !!running) + roundJobs.map(m => " + " + machineChip(m.name, true)).join("") + (running && running.agent ? ` · ${esc(running.agent)}` : "");
+  $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`, mergeWhere);
 
   // Building: the PC, the Build Lane, then each test node
   const pc = d.pc || {}, L = d.lane, M = d.machines;
@@ -1928,9 +1950,25 @@ function renderLanes(d) {
   const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "machine" : "machines"} working` : "Nothing building";
   const queuedJobs = M && M.queued ? `${M.queued} test ${M.queued === 1 ? "job" : "jobs"} queued` : "";
   const next = [pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
+  const nodes = (M && M.machines) || [];
+  const buildWhere = machineChip(PC_NAME, pcBusy) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, !!m.job)).join(" + ") : "");
   $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + `<p class="lane-next">Next: ${next}</p>`,
-    `<a class="lane-link" href="#build">Building →</a>`);
+    `<a class="lane-link" href="#build">Building →</a>`, buildWhere);
   ["Coding", "Merging", "Building"].forEach((k, i) => $("lane" + k).dataset.state = [codingPill, mergePill, buildPill][i][0]);
+
+  // Machines at a glance: each machine and what it is doing right now.
+  const pcJobs = [];
+  if (ordinary.length) pcJobs.push(`<span class="mtask t-code">Coding ×${ordinary.length}</span>`);
+  if (emergency.live.length) pcJobs.push(`<span class="mtask t-code">Repair ×${emergency.live.length}</span>`);
+  if (running) pcJobs.push(`<span class="mtask t-merge">Merge round ${esc(running.round)}${step ? `: ${esc(step.name)}` : ""}</span>`);
+  if (pcBusy && !(running && /round/i.test(`${pc.who || ""} ${pc.what || ""}`))) pcJobs.push(`<span class="mtask t-build">${esc(pc.step || pc.script || "Building")}${pc.who ? ` for ${esc(pc.who)}` : ""}</span>`);
+  const mrows = [`<li><span class="mdot ${pcJobs.length ? "busy" : "on"}" aria-hidden="true"></span><b>${PC_NAME}</b>${pcJobs.join("") || '<span class="mtask idle">Free</span>'}</li>`];
+  for (const m of nodes) {
+    const what = m.revoked ? '<span class="mtask idle">Revoked</span>' : !m.online ? '<span class="mtask idle">Offline</span>'
+      : m.job ? `<span class="mtask t-build">${esc(m.job.recipe)}${m.job.pr ? " #" + m.job.pr : ""}${m.job.requested_by && /round/i.test(m.job.requested_by) ? ` for ${esc(m.job.requested_by)}` : ""}</span>` : '<span class="mtask idle">Idle</span>';
+    mrows.push(`<li><span class="mdot ${m.job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><b>${esc(m.name)}</b>${what}</li>`);
+  }
+  $("machinesGlance").innerHTML = `<span class="glance-label">Machines</span><ul>${mrows.join("")}</ul>`;
 }
 
 const CAP_STEP = v => v < 20 ? 5 : 10;
