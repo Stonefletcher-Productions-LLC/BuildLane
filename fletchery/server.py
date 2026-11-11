@@ -30,6 +30,11 @@
     POST /api/keys/clear      {name}
 POST /api/issue/get       {number}: the issue and its comments (the Needs you reader)
 POST /api/issue/reply     {number, body, requeue=true}: comment on it and put it back in the queue
+    GET  /api/jobs/log?id=N   a machine job's log (machines.py)
+    POST /api/machines/add    {name}: register a node; the answer has its key, shown this once
+    POST /api/machines/revoke {name}
+    POST /api/jobs/add        {recipe, ref, only, strict_slots, pr}: queue a job for the machines
+    POST /api/jobs/cancel     {id}
 
 Every POST needs the header X-Fletchery-Token: a random value made at start and written only into the served page, so a
 web page from anywhere else cannot press the buttons. Requests whose Host is not this machine are refused (DNS
@@ -143,6 +148,12 @@ class Dashboard:
             snap["pc"] = __import__("merge").pc_status(cfg.heavy_lease_file)
         except Exception:
             snap["pc"] = {}
+        coord = getattr(fm, "machines", None)
+        try:
+            snap["machines"] = {**coord.machines.view(), "error": coord.error,
+                                "listen": f"{coord.api.host}:{coord.api.port}" if coord.api else ""} if coord else None
+        except Exception as e:
+            snap["machines"] = {"machines": [], "jobs": [], "error": f"{type(e).__name__}: {e}"}
         snap["emergency_workers"] = {"max_parallel": cfg.emergency_workers,
                                      "live": [row for row in activity if row["emergency"]],
                                      "why": "Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else fm.emergency_why}
@@ -634,6 +645,41 @@ class Dashboard:
         return {"name": name, "set": False}
 
     # ---- server ----
+    # ---- machines (machines.py) ----
+    def _machines(self):
+        coord = getattr(self.fm, "machines", None)
+        if not coord:
+            raise ValueError("Machines are off: add workers.machines to the profile")
+        return coord
+
+    def machine_add(self, data: dict) -> dict:
+        name = str(data.get("name") or "").strip()
+        key = self._machines().machines.add_machine(name)
+        self.fm.ctx.log(f"machines: {name} added from the dashboard")
+        return {"name": name, "key": key}
+
+    def machine_revoke(self, data: dict) -> dict:
+        name = str(data.get("name") or "")
+        if not self._machines().machines.revoke(name):
+            raise ValueError(f"{name} is not an active machine")
+        self.fm.ctx.log(f"machines: {name} revoked from the dashboard")
+        return {"revoked": name}
+
+    def job_add(self, data: dict) -> dict:
+        coord = self._machines()
+        ref = str(data.get("ref") or "").strip()
+        sha = coord.resolve(ref)
+        if not sha:
+            raise ValueError(f"GitHub has no commit for {ref!r}")
+        job = coord.machines.enqueue(str(data.get("recipe") or ""), sha,
+                                     {"only": data.get("only") or "", "strict_slots": bool(data.get("strict_slots"))},
+                                     ref=ref, requested_by="dashboard", pr=int(data.get("pr") or 0))
+        self.fm.ctx.log(f"machines: job {job} queued from the dashboard ({data.get('recipe')} at {sha[:10]})")
+        return {"id": job, "sha": sha}
+
+    def job_cancel(self, data: dict) -> dict:
+        return {"state": self._machines().machines.cancel(int(data.get("id") or 0))}
+
     def page_id(self) -> str:
         """Changes when this backend restarts (new token) or ui/index.html changes, so an open
         window can tell it is showing old screens and reload itself."""
@@ -707,6 +753,13 @@ class Dashboard:
                         return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
                     except (OSError, ValueError, TypeError):
                         return self._json(404, {"error": "Current round log is unavailable"})
+                if self.path == "/api/jobs/log":
+                    coord = getattr(dash.fm, "machines", None)
+                    try:
+                        text = coord.machines.log_text(int(query.get("id", ["0"])[0])) if coord else ""
+                    except ValueError:
+                        text = ""
+                    return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
                 if self.path == "/favicon.ico":  # the app window's taskbar icon
                     return self._send(200, (UI / "Fletchery.ico").read_bytes(), "image/x-icon")
                 return self._json(404, {"error": "not found"})
@@ -754,7 +807,9 @@ class Dashboard:
                               "/api/settings/check": dash.settings_check, "/api/projects/new": dash.project_new,
                               "/api/projects/switch": dash.project_switch, "/api/restart": dash.restart, "/api/keys/set": dash.set_key,
                               "/api/keys/clear": dash.clear_key, "/api/issue/get": dash.issue_get,
-                              "/api/issue/reply": dash.issue_reply}
+                              "/api/issue/reply": dash.issue_reply, "/api/machines/add": dash.machine_add,
+                              "/api/machines/revoke": dash.machine_revoke, "/api/jobs/add": dash.job_add,
+                              "/api/jobs/cancel": dash.job_cancel}
                     if self.path in routes:
                         return self._json(200, routes[self.path](data))
                     if self.path == "/api/agents/check":

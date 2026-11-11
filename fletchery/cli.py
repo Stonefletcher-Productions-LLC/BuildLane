@@ -160,6 +160,21 @@ def start_dashboard(fm, port: int):
     return d
 
 
+def start_machines(fm, cfg):
+    """The machines coordinator (machines.py): only when the profile has workers.machines."""
+    if not getattr(cfg, "machines", None):
+        return None
+    from machines import Coordinator
+    try:
+        coord = Coordinator(cfg, fm.ctx.gh, fm.ctx.log)
+        coord.start()
+    except Exception as e:  # a bad machines block must not stop Fletchery
+        fm.ctx.log(f"machines: not started: {type(e).__name__}: {e}")
+        return None
+    fm.machines = coord
+    return coord
+
+
 async def _serve_only(changed) -> None:
     """Workers off: the screens and the Build Lane panel only. Returns when Fletchery's code changes or a restart is
     asked for (a project switch)."""
@@ -380,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Fletchery running for {cfg.name}: pid {os.getpid()}, Build Lane only (workers off).", flush=True)
         dash = start_dashboard(fm, cfg.dashboard_port)
+        machines = start_machines(fm, cfg)
         start_code = code_fingerprint()
         changed = lambda: bool(fm.restart_reason) or code_fingerprint() != start_code  # noqa: E731
         restart = False
@@ -392,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             pass
         finally:
+            if machines:
+                machines.stop()
             if dash:
                 dash.stop()
             try:
