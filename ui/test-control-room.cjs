@@ -747,10 +747,12 @@ const server = http.createServer(async (req, res) => {
     const node = data.machines.machines[0], keepJob = node.job;
     node.job = {id: 9, recipe: 'pr-check', sha: 'b'.repeat(40), ref: 'Test-Staging', params: {pr: 1568, head: 'c'.repeat(40)}, state: 'running', started: now, pr: 1568, requested_by: 'pr-check'};
     await page.evaluate(() => refresh());
-    await page.waitForFunction(() => /checking PR #1568/.test(document.querySelector('#laneMerging').textContent));
+    await page.waitForFunction(() => /SF-NODE-01 · PR check #1568/.test(document.querySelector('#laneMerging').textContent));
+    const mergeLane = await page.locator('#laneMerging').textContent();
+    assert.match(mergeLane, /Gaming PC · Merge round 16: Game tests/);   // the round's step is named on the PC's own line
     const buildLane = await page.locator('#laneBuilding').textContent();
-    assert.match(buildLane, /SF-NODE-01 · no build · checking PR #1568/);
-    assert.doesNotMatch(buildLane, /machines? working/);
+    assert.match(buildLane, /Nothing building/);
+    assert.match(buildLane, /On Merging instead: Gaming PC: Merge round 16: Game tests · SF-NODE-01: PR check #1568/);
     assert.match(await page.locator('#machinesGlance').textContent(), /PR check #1568/);
     node.job = keepJob;
     await page.evaluate(() => refresh());

@@ -1954,9 +1954,6 @@ function machineChip(name, on) { return `<b class="mchip${on ? " on" : ""}">${es
 function laneRows(items) {
   return items.length ? `<ul class="lane-rows">${items.join("")}</ul>` : "";
 }
-// Node jobs that belong to merging (a PR check, or tests for a merge round), not to packaging a build.
-function isMergeJob(j) { return !!j && (j.recipe === "pr-check" || /round/i.test(j.requested_by || "")); }
-function mergeJobText(j) { return j.recipe === "pr-check" ? `checking PR #${j.pr || "?"}` : `tests for ${j.requested_by}`; }
 function renderLanes(d) {
   // Coding
   const ordinary = normalWorkerSessions(d), emergency = emergencyWorkerState(d), mergeWait = workerMergeWait(d);
@@ -1986,65 +1983,79 @@ function renderLanes(d) {
   let mergePill = running ? (failed ? ["failed", `Round ${running.round} failing`] : ["on", `Round ${running.round}`])
     : !ma.on && d.merge_auto ? ["idle", "Off"] : ma.held ? ["paused", "Paused"] : ready.length ? ["paused", "Waiting"] : ["idle", "Idle"];
   const done = steps.filter(st => st.state === "done").length;
-  let mergeBig = "No round running", mergeBody = "";
+  // What each machine is doing, written once and used on every card and the strip, so a job reads the same everywhere.
+  const pc = d.pc || {}, L = d.lane, M = d.machines, nodes = (M && M.machines) || [];
+  const roundText = running ? `Merge round ${running.round}${step ? `: ${step.name}` : ""}` : "";
+  const pcBusy = !!pc.held, pcMerging = !!running || (pcBusy && pc.kind === "round"), pcBuilding = pcBusy && !pcMerging && pc.kind !== "task";
+  const pcBuildText = pcBuilding ? `${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}` : "";
+  const doing = m => {   // a node's job: which card it belongs to, and its one wording
+    const j = m.job;
+    if (m.revoked || !m.online || !j) return {lane: "", text: m.revoked ? "Revoked" : !m.online ? "Offline" : "Idle"};
+    if (j.recipe === "pr-check") return {lane: "merging", text: `PR check #${j.pr || "?"}`};
+    if (/round/i.test(j.requested_by || "")) return {lane: "merging", text: `${j.requested_by}: ${j.recipe === "node-checks" ? "tests" : j.recipe}${j.params && j.params.only ? " " + j.params.only : ""}`};
+    if (j.recipe === "package") return {lane: "building", text: `Build ${(j.params && j.params.version) || ""}`.trim()};
+    return {lane: "building", text: j.recipe === "nightly-full" ? "Nightly tests" : `Tests: ${jobWhat(j)}`};
+  };
+  const row = (name, text, since, busy = true) => `<li class="${busy ? "busy" : ""}"><span class="mdot ${busy ? "busy" : "on"}" aria-hidden="true"></span><span class="t"><b>${esc(name)}</b> · ${esc(text)}</span>${since ? `<span class="st">${esc(ago(since))}</span>` : ""}</li>`;
+  const lanesOf = nodes.map(m => ({m, ...doing(m)}));
+
+  // Merging: the round on the PC and the PR checks on nodes
+  const mergeNodes = lanesOf.filter(x => x.lane === "merging");
+  const mergeRows = [];
+  if (running) mergeRows.push(row(PC_NAME, roundText, running.started));
+  for (const x of mergeNodes) mergeRows.push(row(x.m.name, x.text, x.m.job.started));
+  let mergeBig = running ? `Round ${esc(running.round)}` : mergeNodes.length ? "Checking PRs" : "No round running";
+  let mergeBody = laneRows(mergeRows);
   if (running) {
-    mergeBig = esc(step ? step.name : mv.headline || "Starting");
     if (steps.length) mergeBody += `<div class="lane-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${steps.length}" aria-valuenow="${done}" aria-label="Merge steps done"><i style="width:${Math.round(done / steps.length * 100)}%"></i></div>`;
-    mergeBody += `<p class="lane-sub">Step ${Math.min(done + 1, steps.length || 1)} of ${steps.length || "?"} · ${esc(ago(running.started))} so far${running.prs && running.prs.length ? ` · PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}` : ""}</p>`;
+    mergeBody += `<p class="lane-sub">Step ${Math.min(done + 1, steps.length || 1)} of ${steps.length || "?"}${running.prs && running.prs.length ? ` · PRs ${running.prs.map(n => `<a href="${esc(d.repo_url)}/pull/${n}" target="_blank" rel="noopener">#${n}</a>`).join(" ")}` : ""}</p>`;
   } else {
     mergeBody += `<p class="lane-why">${esc(ma.held ? "Merging is paused. Resume it on the Merging page." : !ma.on && d.merge_auto ? "Automatic merge rounds are off." : ma.why || (ready.length ? "The next round starts when the PC is free." : "No PRs are ready to merge."))}</p>`;
   }
   const notYet = open.length - ready.length;
-  mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PC check or a fix` : ""}</p>`;
-  const roundJobs = ((d.machines && d.machines.machines) || []).filter(m => m.online && isMergeJob(m.job));
-  if (roundJobs.length) mergeBody = laneRows(roundJobs.map(m => `<li class="busy"><span class="mdot busy" aria-hidden="true"></span><span class="t"><b>${esc(m.name)}</b> · ${esc(mergeJobText(m.job))}</span>${m.job.started ? `<span class="st">${esc(ago(m.job.started))}</span>` : ""}</li>`)) + mergeBody;
-  if (!running && roundJobs.length && mergePill[0] === "idle") mergePill = ["on", "Checking PRs"];
-  const mergeWhere = machineChip(PC_NAME, !!running) + roundJobs.map(m => " + " + machineChip(m.name, true)).join("") + (running && running.agent ? ` · ${esc(running.agent)}` : "");
+  mergeBody += `<p class="lane-next">Next: ${ready.length} ${ready.length === 1 ? "PR" : "PRs"} ready for a round${notYet ? ` · ${notYet} waiting on a PR check or a fix` : ""}</p>`;
+  if (!running && mergeNodes.length && mergePill[0] === "idle") mergePill = ["on", "Checking PRs"];
+  const mergeWhere = machineChip(PC_NAME, !!running) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, mergeNodes.some(x => x.m === m))).join(" + ") : "") + (running && running.agent ? ` · ${esc(running.agent)}` : "");
   $("laneMerging").innerHTML = laneHtml("Merging", "Merging", mergePill, mergeBig, mergeBody, `<a class="lane-link" href="#merge">Merging →</a>`, mergeWhere);
 
-  // Building: the PC, the Build Lane, then each test node
-  const pc = d.pc || {}, L = d.lane, M = d.machines;
-  const rows = [], busyFlags = [];
-  const pcBusy = !!pc.held, pcMerging = pcBusy && pc.kind === "round", pcBuilding = pcBusy && !pcMerging;
-  busyFlags.push(pcBuilding);
-  rows.push(`<li class="${pcBuilding ? "busy" : ""}"><span class="mdot ${pcBuilding ? "busy" : "on"}" aria-hidden="true"></span><span class="t"><b>Gaming PC</b> · ${pcMerging ? "merging, see Merging" : pcBusy ? esc(`${pc.step || pc.script || "working"}${pc.who || pc.what ? ` for ${pc.who || pc.what}` : ""}`) : "free"}</span>${pcBusy && pc.since ? `<span class="st">${esc(ago(pc.since))}</span>` : ""}</li>`);
+  // Building: only build work (scheduled builds, the Build Lane, other tests). Machines busy elsewhere are named once below.
+  const rows = [];
+  if (pcBuilding) rows.push(row(PC_NAME, pcBuildText, pc.since));
+  let laneBusy = false;
   if (L && L.available !== false && (L.step || laneQueue(L).length)) {
-    const laneBusy = !!L.step && !L.done;
-    busyFlags.push(laneBusy);
-    rows.push(`<li class="${laneBusy ? "busy" : ""}"><span class="mdot ${laneBusy ? "busy" : L.paused ? "" : "on"}" aria-hidden="true"></span><span class="t"><b>Build Lane</b> · ${L.paused ? "paused" : laneBusy ? esc(L.step) : "idle"}${laneQueue(L).length ? ` · ${laneQueue(L).length} waiting` : ""}</span></li>`);
+    laneBusy = !!L.step && !L.done;
+    rows.push(row("Build Lane", `${L.paused ? "paused" : laneBusy ? L.step : "idle"}${laneQueue(L).length ? ` · ${laneQueue(L).length} waiting` : ""}`, "", laneBusy));
   }
-  for (const m of (M && M.machines) || []) {
-    const merging = isMergeJob(m.job), job = merging ? null : m.job, last = m.last;
-    busyFlags.push(!!job);
-    const state = m.revoked ? "revoked" : !m.online ? `offline${m.last_seen ? ", seen " + ago(m.last_seen) + " ago" : ""}` : merging ? "no build · " + mergeJobText(m.job) : job ? jobWhat(job) : "idle" + (last ? `, last ${last.recipe || "job"}${last.pr ? " #" + last.pr : ""} ${last.state === "passed" ? "✓" : last.state === "failed" || last.state === "lost" ? "✗" : last.state}` : "");
-    rows.push(`<li class="${job ? "busy" : ""}"><span class="mdot ${job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><span class="t"><b>${esc(m.name)}</b> · ${esc(state)}</span>${job && job.started ? `<span class="st">${esc(ago(job.started))}</span>` : ""}</li>`);
-  }
-  const busyCount = busyFlags.filter(Boolean).length;
+  const buildNodes = lanesOf.filter(x => x.lane === "building");
+  for (const x of buildNodes) rows.push(row(x.m.name, x.text, x.m.job.started));
+  const busyCount = (pcBuilding ? 1 : 0) + (laneBusy ? 1 : 0) + buildNodes.length;
+  const elsewhere = [];
+  if (pcMerging) elsewhere.push(`${PC_NAME}: ${roundText || "merge round"}`);
+  else if (pcBusy && pc.kind === "task") elsewhere.push(`${PC_NAME}: ${pc.who || "a worker task"}`);
+  for (const x of mergeNodes) elsewhere.push(`${x.m.name}: ${x.text}`);
   const pkg = (d.integration_queue?.requests || []).find(r => r.kind === "package" && ["queued", "draining", "running", "blocked"].includes(r.state));
-  const buildPill = L && L.paused && !busyCount ? ["paused", "Paused"] : busyCount ? ["on", `${busyCount} of ${busyFlags.length} busy`] : ["idle", "Idle"];
-  const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "machine" : "machines"} working` : "Nothing building";
-  const queuedJobs = M && M.queued ? `${M.queued} test ${M.queued === 1 ? "job" : "jobs"} queued` : "";
+  const buildPill = L && L.paused && !busyCount ? ["paused", "Paused"] : busyCount ? ["on", `${busyCount} building`] : ["idle", "Idle"];
+  const buildBig = busyCount ? `${busyCount} ${busyCount === 1 ? "build" : "builds"} running` : "Nothing building";
+  const queuedJobs = M && M.queued ? `${M.queued} machine ${M.queued === 1 ? "job" : "jobs"} queued` : "";
   const nb = nextBuild(d);
   const next = [nb ? esc(buildLine(nb)) : "", pkg ? `package ${esc(pkg.version || "")} ${esc(pkg.state)}` : "", queuedJobs].filter(Boolean).join(" · ") || "nothing queued";
-  const nodes = (M && M.machines) || [];
-  const buildWhere = machineChip(PC_NAME, pcBuilding) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, !!m.job && !isMergeJob(m.job))).join(" + ") : "");
-  $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + `<p class="lane-next">Next: ${next}</p>`,
+  const buildWhy = elsewhere.length ? `<p class="lane-why">On Merging instead: ${esc(elsewhere.join(" · "))}</p>` : "";
+  const buildWhere = machineChip(PC_NAME, pcBuilding) + (nodes.length ? " + " + nodes.map(m => machineChip(m.name, buildNodes.some(x => x.m === m))).join(" + ") : "");
+  $("laneBuilding").innerHTML = laneHtml("Building", "Building", buildPill, buildBig, laneRows(rows) + buildWhy + `<p class="lane-next">Next: ${next}</p>`,
     `<a class="lane-link" href="#build">Building →</a>`, buildWhere);
   ["Coding", "Merging", "Building"].forEach((k, i) => $("lane" + k).dataset.state = [codingPill, mergePill, buildPill][i][0]);
 
-  // Machines at a glance: each machine and what it is doing right now.
+  // Machines at a glance: each machine and what it is doing right now, in the same words as the cards.
   const pcJobs = [];
   if (ordinary.length) pcJobs.push(`<span class="mtask t-code">Coding ×${ordinary.length}</span>`);
   if (emergency.live.length) pcJobs.push(`<span class="mtask t-code">Repair ×${emergency.live.length}</span>`);
-  if (running) pcJobs.push(`<span class="mtask t-merge">Merge round ${esc(running.round)}${step ? `: ${esc(step.name)}` : ""}</span>`);
-  if (pcBusy && !(running && /round/i.test(`${pc.who || ""} ${pc.what || ""}`))) pcJobs.push(`<span class="mtask t-build">${esc(pc.step || pc.script || "Building")}${pc.who ? ` for ${esc(pc.who)}` : ""}</span>`);
+  if (running) pcJobs.push(`<span class="mtask t-merge">${esc(roundText)}</span>`);
+  if (pcBuilding) pcJobs.push(`<span class="mtask t-build">${esc(pcBuildText)}</span>`);
   const offTag = kinds => kinds && kinds.length ? `<span class="mtask idle" title="Paused on Building, Machines">${esc(kinds.map(k => WORK_NAMES[k] || k).join(", "))} paused</span>` : "";
   const mrows = [`<li><span class="mdot ${pcJobs.length ? "busy" : "on"}" aria-hidden="true"></span><b>${PC_NAME}</b>${pcJobs.join("") || '<span class="mtask idle">Free</span>'}${offTag(d.pc_paused)}</li>`];
-  for (const m of nodes) {
-    const what = m.revoked ? '<span class="mtask idle">Revoked</span>' : !m.online ? '<span class="mtask idle">Offline</span>'
-      : isMergeJob(m.job) ? `<span class="mtask t-merge">${m.job.recipe === "pr-check" ? `PR check #${esc(m.job.pr || "?")}` : `${esc(m.job.recipe)} for ${esc(m.job.requested_by)}`}</span>`
-      : m.job ? `<span class="mtask t-build">${esc(m.job.recipe)}${m.job.pr ? " #" + m.job.pr : ""}${m.job.requested_by && /round/i.test(m.job.requested_by) ? ` for ${esc(m.job.requested_by)}` : ""}</span>` : '<span class="mtask idle">Idle</span>';
-    mrows.push(`<li><span class="mdot ${m.job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><b>${esc(m.name)}</b>${what}${m.revoked ? "" : offTag(m.paused_work)}</li>`);
+  for (const x of lanesOf) {
+    const m = x.m, cls = x.lane === "merging" ? "t-merge" : x.lane === "building" ? "t-build" : "idle";
+    mrows.push(`<li><span class="mdot ${m.job ? "busy" : m.online && !m.revoked ? "on" : ""}" aria-hidden="true"></span><b>${esc(m.name)}</b><span class="mtask ${cls}">${esc(x.text)}</span>${m.revoked ? "" : offTag(m.paused_work)}</li>`);
   }
   $("machinesGlance").innerHTML = `<span class="glance-label">Machines</span><ul>${mrows.join("")}</ul>`;
 }
