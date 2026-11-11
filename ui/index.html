@@ -92,6 +92,7 @@
   .sec-head .counts b { color: var(--ink); }
   .sec-sub { margin: 4px 0 12px; color: var(--muted); font-size: 14.5px; max-width: 90ch; }
   .tq { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px 28px;
+        grid-template-rows: minmax(0, 1fr);  /* an auto row grows past max-height and the lists spill over the cards below */
         max-height: var(--tq-h, 300px); min-height: 0; }
   .tq > div { display: flex; flex-direction: column; min-height: 0; }
   .tq .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -114,7 +115,7 @@
   .tq .why a { color: var(--lane); }
   .tq li.next .pos, .tq li.next .why { color: var(--running); font-weight: 700; }
   .tq .none { color: var(--muted); font-size: 14px; padding: 6px 0; }
-  @media (max-width: 900px) { .tq { grid-template-columns: 1fr; grid-template-rows: 3fr 2fr; } .tq .why { white-space: normal; } }
+  @media (max-width: 900px) { .tq { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); } .tq .why { white-space: normal; } }
 
 
   /* ---- usage: cap, plan/API switch, this week ---- */
@@ -1815,7 +1816,6 @@ function renderStatus(d) {
     if (mergeFocus) [...box.querySelectorAll("[data-merge-focus]")].find(el => el.dataset.mergeFocus === mergeFocus)?.focus({preventScroll:true});
     const currentRound = active ? mv.round : running ? running.round : "";
     const inRound = new Set(included);
-    $("n-pr").textContent = mergeRows.length || "";
     const isParked = r => !inRound.has(r.pr) && !!r.parked;
     const ordered = [...mergeRows.filter(r => inRound.has(r.pr)), ...mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r)),
                      ...mergeRows.filter(isParked)];
@@ -1824,6 +1824,11 @@ function renderStatus(d) {
     const readyRows = mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r) && r.ready);
     const notReady = mergeRows.filter(r => !inRound.has(r.pr) && !isParked(r) && !r.ready);
     const parked = mergeRows.filter(isParked);
+    // The card's number is what can merge (in the round or ready), not every open PR: 49 next to "No PR is labelled
+    // ready yet" read as a contradiction (11-11). The folded groups below carry their own counts.
+    const mergeable = roundRows.length + readyRows.length;
+    $("n-pr").textContent = mergeable || "";
+    $("n-pr").title = `${mergeable} in a round or ready · ${mergeRows.length} open PRs in all`;
     const row = r => mergeRow(r, inRound.has(r.pr) ? currentRound : "", active);
     const group = (title, rows) => rows.length ? `<li class="mgroup">${esc(title)} · ${rows.length}</li>` + rows.map(row).join("") : "";
     const foldOpen = new Set([...$("c-pr").querySelectorAll("li.mfold > details[open]")].map(e => e.dataset.fold));
