@@ -335,6 +335,45 @@ class Machines:
                 db.execute("ROLLBACK")
                 raise
 
+    def preempt_for_rounds(self, at: datetime | None = None) -> list[tuple[int, str, int]]:
+        """Stop a PR check (or other low-priority job) so a waiting merge-round job gets a node now. Claim order alone
+        made round jobs wait for the PR check in front of them: up to 9 minutes on 2026-11-12 (rounds 140, 141), close to
+        `run`'s 10-minute no-node limit. Only when no node that could take the round job is idle, only jobs ranked below
+        builds, at most one per waiting round job, and the most recently started first (least work lost). The stopped
+        check gives no result, so it simply runs again later. Returns [(stopped job, machine, round job)]."""
+        at = at or datetime.now(timezone.utc)
+        out = []
+        with self._lock, self._db() as db:
+            waiting = [r for r in db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY id").fetchall()
+                       if claim_rank(r["requested_by"]) == 0]
+            if not waiting:
+                return out
+            nodes = []
+            for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL").fetchall():
+                if _age(m["last_seen"], at) > ONLINE_SECONDS or json.loads(m["stats"] or "{}").get("paused"):
+                    continue
+                run = db.execute("SELECT * FROM jobs WHERE machine=? AND state='running'", (m["name"],)).fetchone()
+                nodes.append((m, set(json.loads(m["labels"] or "[]")), set(self._paused(db, m["name"])), run))
+            used: set[str] = set()
+            for job in waiting:
+                able = [n for n in nodes if n[0]["name"] not in used and KIND.get(job["recipe"]) not in n[2]
+                        and set(json.loads(job["labels"])) <= n[1]
+                        and float(job["min_ram_gb"] or 0) <= float(n[0]["ram_gb"] or 0)]
+                if not able:
+                    continue
+                free = [n for n in able if n[3] is None or n[3]["cancel"]]  # idle, or already being stopped
+                if free:
+                    used.add(free[0][0]["name"])
+                    continue
+                low = [n for n in able if claim_rank(n[3]["requested_by"]) >= 2]
+                if not low:
+                    continue
+                m, _, _, run = max(low, key=lambda n: str(n[3]["started"] or ""))
+                db.execute("UPDATE jobs SET cancel=1 WHERE id=?", (run["id"],))
+                used.add(m["name"])
+                out.append((run["id"], m["name"], job["id"]))
+        return out
+
     def _own(self, db, job_id, machine):
         row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         if not row or row["machine"] != machine or row["state"] != "running":
@@ -865,6 +904,9 @@ class Coordinator:
     def tick(self, at: datetime | None = None) -> None:
         for job in self.machines.reap(at):
             self.log(f"machines: job {job} lost its machine")
+        for stopped, machine, wanted in self.machines.preempt_for_rounds(at):
+            self.log(f"machines: stopping job {stopped} on {machine} so merge-round job {wanted} can run now; "
+                     "it runs again later")
         nightly = self.conf.get("nightly") or {}
         if nightly.get("at"):
             day = self.machines.nightly_due(nightly["at"], at)

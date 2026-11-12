@@ -87,6 +87,11 @@ which queues a `node-checks` job, waits, prints the result and the failing outpu
 result. On 2 (no node free, node paused from Tests, lost, out of memory) the merger runs the tests on this PC as before.
 The labels pick a node whose engine matches this PC. The job shows on the Merging card as the round's.
 
+A round's job goes first in the node queue, and it no longer waits for the job in front of it: when no node that could
+take it is idle, Fletchery stops the most recently started PR check (never a build or another round's job) on one such
+node. The stopped check gives no result and runs again later. On 2026-11-12 round jobs waited up to 9 minutes behind
+PR checks, close to the 10 minutes after which `run` gives up with no result.
+
 ### Whole rounds on a node
 
 Add `"whole": true` to `roundTests` and a round leaves this PC's Unreal alone: it doesn't wait for or take the PC heavy

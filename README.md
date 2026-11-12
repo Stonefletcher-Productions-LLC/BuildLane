@@ -353,6 +353,19 @@ itself. Nobody is asked for approval: turning rounds on is the approval. Workers
 
 The Merge section shows the round's steps, the last result, and **Pause merging** / **Merge now**. A round that landed
 nothing waits **Retry a failed round after** minutes before trying the same PRs again, unless one of them changes.
+
+**A failed round finds its bad PR.** When a round of several PRs fails, lands none and names no PR at fault, Fletchery
+tries that batch again in halves, straight away and ahead of other ready PRs (a PR moves with any prerequisite in the
+batch). Each part's merger runs the check that failed first and stops at once if it fails again. A half that passes
+lands; a half that fails is halved again; a PR that fails on its own is left out at its head and goes to its fixer (or a
+repair issue), exactly like a PR the merger left out itself. Before blaming a lone PR, the merger runs the failing check
+on the base branch alone; a failure there ("Base is red"), a cancelled or timed-out test, or a lost node blames no PR.
+Limits, unreachable models, busy checkouts and interruptions leave the split where it was. The split is kept in
+`state.json` (`merge_split`), so a restart carries on with the next part.
+
+**Conflicts are caught before a round.** GitHub's PR list never says whether a PR conflicts, so before starting a round
+Fletchery reads each ready PR (once per head, at most every 10 minutes) and leaves out any that conflicts with the base
+branch, with its dependents, until its head changes. The PR's fixer (or a repair issue) is told to merge the base in.
 During Game specs, the dashboard reads fresh check events from the workspace holding the test reservation on each
 three-second refresh. The panel puts running and failed checks first, shows a pass count, and displays recent engine
 output during data validation and native specs when available. The round checkpoint still controls phase acceptance.

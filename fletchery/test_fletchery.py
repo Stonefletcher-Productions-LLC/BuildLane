@@ -1316,6 +1316,8 @@ rf = _rounds.read_file(str(tmp / "state" / "merge-round.json"))
 assert rf["state"] == "done" and rf["prs"] == [11, 12] and "Landed as #77" in rf["note"], rf
 assert not any(c[0] == "worker" for c in ctx.runtime.calls)
 # a round that landed nothing waits before trying the same PRs again; a changed PR or Merge now retries at once
+# (a round of one PR here: a failed batch of several is tried in parts at once, test_split_rounds.py)
+_cfg.merge_round_max = 1
 ctx.runtime.script[("merger", 0)] = {"state": "failed", "landed_pr": 0, "merged": [], "left_out": [],
                                      "summary": "Build failed."}
 ctx.runtime.calls.clear()
