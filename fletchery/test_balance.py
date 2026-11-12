@@ -146,6 +146,9 @@ class BalanceTests(unittest.IsolatedAsyncioTestCase):
         ready = [self.ready_pr(11), self.ready_pr(22)]
         self.assertEqual([p.number for p in rounds.by_value(ready, tasks)], [22, 11])
         self.assertEqual([p.number for p in rounds.by_value(ready, {})], [11, 22], "ties stay oldest first")
+        late = self.ready_pr(33)
+        late.labels = list(late.labels) + ["merge-next"]
+        self.assertEqual([p.number for p in rounds.by_value(ready + [late], tasks)], [33, 22, 11], "merge-next goes first")
 
     def test_twice_deferred_head_is_parked_until_it_changes(self):
         import rounds
