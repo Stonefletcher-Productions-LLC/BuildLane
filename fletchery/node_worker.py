@@ -17,7 +17,9 @@ Config (JSON, e.g. C:\\StoneNode\\fletchery-worker.json):
                                                                          # content here and push it to fletchery/round-N only
      "engine": "E:\\\\UE_5.8",
      "pauseFile": "E:\\\\GitHubRunner\\\\PAUSED-NODE",                    # while it exists, take no new job
-     "buildsDir": "E:\\\\fletchery-builds",                            # optional: where `package` writes (default <workRoot>\\builds)
+     "buildsDir": "E:\\\\fletchery-builds",
+     "heavyLeaseFile": "E:\\\\GitHubRunner\\\\ResourceLeases\\\\heavy.json",  # optional, for a node on a PC that also
+                                                                         # runs Unreal itself: hold the PC's heavy lease per job                            # optional: where `package` writes (default <workRoot>\\builds)
      "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check", "package"]}   # what this node agrees to run
 
     python node_worker.py check   --config <file>     sign in to the coordinator once and print what it sees
@@ -206,9 +208,72 @@ def package_steps(params: dict, ws: Path, engine: str, result_json: Path | None 
     return steps
 
 
+# ---- the PC heavy lease (a node that shares a PC with other Unreal work) ----
+# Alex, 2026-11-12: the Gaming PC is also a node. Its job scripts run with -AllowLaneRunning, so the worker itself takes
+# the PC's heavy lease (LifeShare Tools/CI/HeavyLease.ps1, same file and record shape as a LocalAcquire) for each job,
+# and claims nothing while someone else holds it. A PC round or a local editor run then waits for the job, not the other
+# way round. processStartUtc is left out on purpose: HeavyLease then counts the hold live while this worker's PID lives.
+
+def lease_holder(cfg: dict) -> str:
+    """Who else holds the heavy lease now ("" when it is free or not configured)."""
+    path = cfg.get("heavyLeaseFile")
+    if not path or not Path(path).exists():
+        return ""
+    try:
+        rec = json.loads(Path(path).read_text(encoding="utf-8-sig") or "{}")
+    except (OSError, ValueError):
+        return "an unreadable lease"
+    if rec.get("token") and rec.get("token") == cfg.get("_lease_token"):
+        return ""
+    return str(rec.get("purpose") or rec.get("runId") or "another run")[:120]
+
+
+def take_lease(cfg: dict, job: dict, ws: Path, wait: float = 120, sleep=time.sleep) -> str:
+    """Create the lease for this job (atomic, like HeavyLease.ps1's CreateNew); wait briefly if another run took it
+    between the claim and now. Returns the token, or "" when the job runs without it."""
+    path = cfg.get("heavyLeaseFile")
+    if not path:
+        return ""
+    import uuid
+    from datetime import datetime, timezone
+    token = uuid.uuid4().hex
+    rec = {"schemaVersion": 1, "owner": "local", "runId": "local", "attempt": "0", "token": token, "pid": os.getpid(),
+           "acquiredUtc": datetime.now(timezone.utc).isoformat(), "host": os.environ.get("COMPUTERNAME", ""),
+           "user": os.environ.get("USERNAME", ""), "workspaces": str(ws),
+           "purpose": f"Fletchery node job {job.get('id')}: {job.get('recipe')} at {str(job.get('sha', ''))[:10]}"}
+    end = time.monotonic() + wait
+    while True:
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(json.dumps(rec))
+            cfg["_lease_token"] = token
+            return token
+        except FileExistsError:
+            if time.monotonic() > end:
+                return ""
+            sleep(5)
+
+
+def drop_lease(cfg: dict, token: str) -> None:
+    """Remove the lease only if it is still this job's."""
+    path = cfg.get("heavyLeaseFile")
+    if not path or not token:
+        return
+    try:
+        if json.loads(Path(path).read_text(encoding="utf-8-sig") or "{}").get("token") == token:
+            Path(path).unlink()
+    except (OSError, ValueError):
+        pass
+    cfg.pop("_lease_token", None)
+
+
 # ---- machine stats ----
 def stats(cfg: dict) -> dict:
     out = {"paused": bool(cfg.get("pauseFile")) and Path(cfg["pauseFile"]).exists()}
+    holder = lease_holder(cfg)
+    if holder:  # the PC is busy with other Unreal work: show as paused and take no job until it is free
+        out["paused"], out["lease"] = True, holder
     try:
         out["disk_free_gb"] = shutil.disk_usage(cfg.get("workRoot") or ".").free / 2**30
     except OSError:
@@ -299,6 +364,66 @@ class Coordinator:
             raise RuntimeError(f"{path}: HTTP {e.code} {detail}") from None
 
 
+# ---- copying a packaged build back to the PC ----
+UPLOAD_CHUNK = 4 * 1024 * 1024
+
+
+def upload_build(coord, job_id: int, folder, log=print, chunk: int = UPLOAD_CHUNK) -> str:
+    """Zip a packaged build folder and send it to the coordinator in chunks (Alex, 2026-11-12: builds made on the node
+    must land on the PC). Returns where the PC unpacked it, or "" when the copy failed (the build stays on the node)."""
+    import base64
+    import hashlib
+    import zipfile
+    folder = Path(folder)
+    if not folder.is_dir():
+        log(f"upload: {folder} is not a folder")
+        return ""
+    zpath = folder.parent / (folder.name + ".zip")
+    try:
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+            for f in sorted(folder.rglob("*")):
+                if f.is_file():
+                    z.write(f, f.relative_to(folder).as_posix())
+        h = hashlib.sha256()
+        with open(zpath, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        total, digest = zpath.stat().st_size, h.hexdigest()
+        log(f"upload: {zpath.name} {total / 2**30:.2f} GiB to the PC")
+        offset, tries, answer = 0, 0, {}
+        with open(zpath, "rb") as f:
+            while True:
+                f.seek(offset)
+                data = f.read(chunk)
+                last = offset + len(data) >= total
+                try:
+                    answer = coord.call("/v1/upload", {"job_id": job_id, "name": zpath.name, "offset": offset,
+                                                       "data": base64.b64encode(data).decode("ascii"), "done": last,
+                                                       "sha256": digest if last else ""}, timeout=300)
+                    tries = 0
+                except Exception as e:
+                    tries += 1
+                    if tries > 5:
+                        log(f"upload: gave up: {e}")
+                        return ""
+                    time.sleep(5 * tries)
+                    continue
+                if answer.get("ok") is False:
+                    offset = int(answer.get("offset") or 0)  # the PC has a different amount: carry on from there
+                    continue
+                if last:
+                    return str(answer.get("path") or "")
+                offset += len(data)
+    except Exception as e:
+        log(f"upload: failed: {type(e).__name__}: {e}")
+        return ""
+    finally:
+        try:
+            zpath.unlink()
+        except OSError:
+            pass
+
+
 # ---- running a job ----
 def _git_env(cfg: dict) -> dict:
     env = dict(os.environ)
@@ -321,6 +446,7 @@ class Job:
         self.proc: subprocess.Popen | None = None
         self.cancelled = False
         self.done = threading.Event()
+        self.pc_copy = ""
 
     def out(self, text: str) -> None:
         with self.lock:
@@ -448,6 +574,10 @@ class Job:
                         code, summary = rc, f"{name} failed (exit {rc})"
                 if self.cancelled:
                     code, summary = code or 130, "Cancelled from Fletchery"
+                elif out_dir and code == 0 and cfg.get("uploadBuilds", True):
+                    self.out(f"==> Copy the build to the PC")
+                    self.pc_copy = upload_build(self.coord, int(job["id"]), out_dir, self.out)
+                    self.out(f"Copied to the PC: {self.pc_copy}" if self.pc_copy else "Not copied; the build stays here")
                 elif time.monotonic() > deadline and code:
                     summary = "Timed out"
         except Exception as e:
@@ -465,6 +595,8 @@ class Job:
         shutil.rmtree(tmp, ignore_errors=True)
         if not summary and out_dir and code == 0:
             summary = f"Packaged to {out_dir} on {cfg.get('machine', 'the node')}"
+            if self.pc_copy:
+                summary += f"; copied to {self.pc_copy} on the PC"
         if not summary:
             summary = _summary(result) or ("Passed" if code == 0 else f"Failed (exit {code})")
         return code, summary, result
@@ -533,7 +665,13 @@ def run(cfg: dict, once: bool = False) -> int:
                 job = coord.call("/v1/claim", {"stats": st, "paused": bool(st.get("paused"))}).get("job")
                 if job:
                     log(f"job {job['id']}: {job['recipe']} at {job['sha'][:10]}")
-                    code, summary, result = Job(coord, cfg, job, log).run()
+                    token = take_lease(cfg, job, _workspace(cfg))
+                    if cfg.get("heavyLeaseFile") and not token:
+                        log(f"job {job['id']}: the heavy lease stayed taken ({lease_holder(cfg)}); running without it")
+                    try:
+                        code, summary, result = Job(coord, cfg, job, log).run()
+                    finally:
+                        drop_lease(cfg, token)
                     log(f"job {job['id']}: exit {code}: {summary}")
                     for attempt in range(10):
                         try:
@@ -583,8 +721,10 @@ def uninstall() -> int:
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Fletchery node worker")
-    ap.add_argument("command", choices=["check", "run", "once", "install", "uninstall"])
+    ap.add_argument("command", choices=["check", "run", "once", "install", "uninstall", "upload"])
     ap.add_argument("--config", default="")
+    ap.add_argument("--job", type=int, default=0, help="upload: the package job that made the build")
+    ap.add_argument("--folder", default="", help="upload: the packaged build folder on this node")
     a = ap.parse_args(argv)
     if a.command == "uninstall":
         return uninstall()
@@ -593,6 +733,10 @@ def main(argv=None) -> int:
     cfg = load_config(a.config)
     if a.command == "install":
         return install(a.config)
+    if a.command == "upload":  # send a build packaged earlier (before builds were copied back) to the PC
+        where = upload_build(Coordinator(cfg), a.job, a.folder)
+        print(f"copied to {where} on the PC" if where else "not copied")
+        return 0 if where else 1
     if a.command == "check":
         print(json.dumps({"hello": hello(Coordinator(cfg), cfg), "stats": stats(cfg)}, indent=2))
         return 0

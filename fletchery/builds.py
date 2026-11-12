@@ -349,7 +349,8 @@ class Builds:
 
 
 def _out_from(summary: str) -> str:
-    m = re.match(r"Packaged to (.+?) on ", summary or "")
+    """Where to find the build: the copy on this PC when the node sent one back, else the node's folder."""
+    m = re.search(r"; copied to (.+?) on the PC", summary or "") or re.match(r"Packaged to (.+?) on ", summary or "")
     return m.group(1) if m else ""
 
 

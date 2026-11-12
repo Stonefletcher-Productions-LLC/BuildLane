@@ -115,9 +115,18 @@ half passed. A run with `--imports` is never split, because the content is impor
 free it is one job, as before.
 
 The Gaming PC can be the second node: run `node_worker.py` on the PC with its own `workRoot` (not a Fletchery
-worktree), its own machine key, and the same labels as SF-NODE-01. Its LifeShare scripts take the PC heavy lease
-(LaneGuard), so a node job and a PC round never run Unreal at the same time. Pause it from Machines (Tests, PR checks,
-Builds) when the PC is needed.
+worktree), its own machine key, and the same labels as SF-NODE-01. Set `heavyLeaseFile` in its config to the PC's
+heavy lease (`E:\\GitHubRunner\\ResourceLeases\\heavy.json`): the worker then holds that lease for each job and shows as
+paused (takes nothing) while a round, a build or a local editor run holds it, so a node job and other Unreal work on
+the PC never run at the same time. Pause it from Machines (Tests, PR checks, Builds) when the PC is needed.
+
+## Builds come back to the PC
+
+After a `package` job passes, the node zips the build and sends it to Fletchery in 4 MiB chunks over the worker API
+(`/v1/upload`, only for the node's own package job). Fletchery checks the SHA-256, keeps `<state>\\builds\\<Name>-<version>.zip`
+and unpacks it beside it, and the Builds card points at that folder. If the copy fails, the build stays on the node and
+the job still passes. `"uploadBuilds": false` in a node's config turns it off. For a build packaged before this existed:
+`python node_worker.py upload --config <file> --job <package job id> --folder <build folder>`.
 
 ## Pausing one machine from one kind of work
 

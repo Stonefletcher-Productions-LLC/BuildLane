@@ -212,6 +212,64 @@ class SplitRunTests(Harness):
         self.assertNotIn("split", out[0])
 
 
+class BuildCopyTests(Harness):
+    """Alex, 2026-11-12: a build the node packages comes back to the PC (the 0.4.0 zip there was empty)."""
+
+    def test_node_sends_the_build_and_the_pc_unpacks_it(self):
+        import base64
+        import node_worker
+        self.online(NODE + ["role:cook"])
+        job_id = self.m.enqueue("package", BASE, {"version": "0.4.0"}, requested_by="build 0.4.0")
+        self.m.claim("SF-NODE-01")
+        src = Path(self.tmp.name) / "node" / "LifeShare-0.4.0"
+        (src / "Windows").mkdir(parents=True)
+        (src / "Windows" / "LifeShare.exe").write_bytes(b"MZ" + bytes(range(256)) * 300)
+
+        class Coord:
+            def call(c, path, body, timeout=30):
+                return self.m.upload("SF-NODE-01", body["job_id"], body["name"], body["offset"],
+                                     base64.b64decode(body["data"]), body["done"], body["sha256"])
+        where = node_worker.upload_build(Coord(), job_id, src, log=lambda *_: None, chunk=10000)
+        self.assertTrue(where.endswith("LifeShare-0.4.0"))
+        self.assertEqual((Path(where) / "Windows" / "LifeShare.exe").read_bytes(), b"MZ" + bytes(range(256)) * 300)
+        self.assertTrue((Path(where).parent / "LifeShare-0.4.0.zip").exists())
+        self.assertFalse((src.parent / "LifeShare-0.4.0.zip").exists(), "the node's temporary zip is removed")
+        with self.assertRaises(PermissionError):
+            self.m.upload("OTHER", job_id, "x.zip", 0, b"", True)
+        with self.assertRaises(ValueError):
+            self.m.upload("SF-NODE-01", job_id, "../x.zip", 0, b"", True)
+
+    def test_summary_points_at_the_pc_copy(self):
+        import builds
+        s = "Packaged to E:\\n\\LifeShare-0.4.0 on SF-NODE-01; copied to E:\\pc\\LifeShare-0.4.0 on the PC"
+        self.assertEqual(builds._out_from(s), "E:\\pc\\LifeShare-0.4.0")
+        self.assertEqual(builds._out_from("Packaged to E:\\n\\B on SF-NODE-01"), "E:\\n\\B")
+
+
+class PcLeaseTests(unittest.TestCase):
+    """A node on the Gaming PC holds the PC's heavy lease per job and takes nothing while someone else holds it."""
+
+    def test_lease(self):
+        import node_worker
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        lease = Path(tmp.name) / "heavy.json"
+        cfg = {"heavyLeaseFile": str(lease), "workRoot": tmp.name}
+        self.assertFalse(node_worker.stats(cfg)["paused"])
+        token = node_worker.take_lease(cfg, {"id": 5, "recipe": "node-checks", "sha": BASE}, Path(tmp.name))
+        self.assertTrue(token and lease.exists())
+        self.assertFalse(node_worker.stats(cfg)["paused"], "its own hold does not pause it")
+        node_worker.drop_lease(cfg, token)
+        self.assertFalse(lease.exists())
+        lease.write_text('{"purpose": "merge round 140", "token": "x"}')
+        st = node_worker.stats(cfg)
+        self.assertTrue(st["paused"])
+        self.assertIn("merge round 140", st["lease"])
+        self.assertEqual(node_worker.take_lease(cfg, {"id": 6}, Path(tmp.name), wait=0, sleep=lambda _: None), "")
+        node_worker.drop_lease(cfg, "other")
+        self.assertTrue(lease.exists(), "never removes someone else's hold")
+
+
 class RoundPromptTests(unittest.TestCase):
     def test_round_tests_text_only_when_on(self):
         import rounds
