@@ -96,6 +96,16 @@ after a node pass on that exact commit. A batch with a `Lane-Imports:` PR, or a 
 `node-checks` (paused, offline, shadow), runs the old way on this PC. The merger agent itself still runs on this PC; it is
 a chat session and git, not Unreal.
 
+### Import rounds on a node
+
+A `Lane-Imports:` batch can run on a node too when `roundTests` has `"imports": true` and a node can push content. That
+node needs a second deploy key with write access (`gitPushKey` in its config; the read-only `gitSshKey` stays for
+fetching) and the label `role:imports`. The merger then adds `--imports <steps> --push-branch fletchery/round-N` to its
+`machines.py run`. The node builds the editor, runs `Tools/CI/RunImports.ps1`, which commits the content and pushes it
+with `PushWithLfs.ps1` to that branch only (the worker accepts no other branch, and PushWithLfs refuses main), then runs
+the build, BuildContent and checks on that commit. The merger fast-forwards to the pushed commit and lands it. Only an
+import job's steps get the write key.
+
 ## Pausing one machine from one kind of work
 
 Building → Machines shows a "Takes:" row of switches under each machine. Click one to stop that machine from that kind

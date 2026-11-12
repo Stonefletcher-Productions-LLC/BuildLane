@@ -350,3 +350,51 @@ class NodeRoundTests(unittest.TestCase):
         text = rounds.node_tests_text(SimpleNamespace(machines={"roundTests": {"labels": []}}, state_dir="E:/s"), 7, "Test-Staging", whole=True)
         self.assertIn("no Unreal on this PC", text)
         self.assertIn("fletchery/round-7", text)
+
+
+class NodeImportTests(unittest.TestCase):
+    """Alex, 2026-11-12: let SF-NODE-01 push imported content so import rounds leave the PC."""
+
+    def _coord(self, names, seen):
+        def eligible(labels, ram, recipe):
+            seen.append(list(labels))
+            return list(names)
+        return SimpleNamespace(machines=SimpleNamespace(eligible=eligible, shadow=False))
+
+    def test_import_round_goes_to_a_node_with_a_write_key_only_when_allowed(self):
+        import rounds
+        cfg = SimpleNamespace(machines={"roundTests": {"labels": ["unreal:5.8.4"], "whole": True}}, state_dir="E:/s")
+        prs = [SimpleNamespace(number=3, body="Lane-Imports: ImportFurniture")]
+        seen = []
+        self.assertEqual(rounds.node_round(cfg, prs, self._coord(["N"], seen)), "")   # not allowed: stays on the PC
+        cfg.machines["roundTests"]["imports"] = True
+        self.assertIn("N", rounds.node_round(cfg, prs, self._coord(["N"], seen)))
+        self.assertEqual(seen[-1], ["unreal:5.8.4", "role:imports"])
+        text = rounds.node_tests_text(cfg, 9, "Test-Staging", whole=True)
+        self.assertIn("--push-branch fletchery/round-9", text)
+        self.assertIn("git merge --ff-only FETCH_HEAD", text)
+
+    def test_params_accept_imports_only_with_a_round_branch(self):
+        from machines import check_params
+        ok = check_params("node-checks", {"imports": "ImportFurniture, BuildTown:Lakeview", "push_branch": "fletchery/round-9"})
+        self.assertEqual(ok["imports"], "ImportFurniture,BuildTown:Lakeview")
+        for bad in ({"imports": "x;rm", "push_branch": "fletchery/round-9"},
+                    {"imports": "ImportFurniture", "push_branch": "main"},
+                    {"imports": "ImportFurniture"}):
+            with self.assertRaises(ValueError):
+                check_params("node-checks", bad)
+        self.assertNotIn("imports", check_params("node-checks", {"only": "RunSpecs"}))
+
+    def test_worker_runs_imports_before_tests_and_needs_a_push_key(self):
+        ws = Path("ws")
+        params = {"only": "RunSpecs", "imports": "ImportFurniture", "push_branch": "fletchery/round-9"}
+        names = [s[0] for s in node_worker.recipe_steps("node-checks", params, ws, {"gitPushKey": "k"}, Path("r"))]
+        self.assertLess(names.index(node_worker.IMPORT_STEP), names.index("Build, BuildContent and tests"))
+        step = dict((s[0], s[1]) for s in node_worker.recipe_steps("node-checks", params, ws, {"gitPushKey": "k"}, Path("r")))
+        self.assertIn("fletchery/round-9", step[node_worker.IMPORT_STEP])
+        with self.assertRaises(ValueError):
+            node_worker.recipe_steps("node-checks", params, ws, {}, Path("r"))                     # no write key
+        with self.assertRaises(ValueError):
+            node_worker.recipe_steps("node-checks", dict(params, push_branch="main"), ws, {"gitPushKey": "k"}, Path("r"))
+        plain = [s[0] for s in node_worker.recipe_steps("node-checks", {"only": "RunSpecs"}, ws, {}, Path("r"))]
+        self.assertNotIn(node_worker.IMPORT_STEP, plain)

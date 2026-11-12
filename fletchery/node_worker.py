@@ -13,6 +13,8 @@ Config (JSON, e.g. C:\\StoneNode\\fletchery-worker.json):
      "workRoot": "E:\\\\buildlane-node\\\\_work",                          # the checkout is <workRoot>\\fletchery\\LifeShare
      "repoUrl": "git@github.com:Stonefletcher-Productions-LLC/LifeShare.git",
      "gitSshKey": "C:\\\\StoneNode\\\\keys\\\\lifeshare_deploy",           # read-only deploy key
+     "gitPushKey": "C:\\\\StoneNode\\\\keys\\\\lifeshare_push",            # optional write deploy key: lets merge rounds import
+                                                                         # content here and push it to fletchery/round-N only
      "engine": "E:\\\\UE_5.8",
      "pauseFile": "E:\\\\GitHubRunner\\\\PAUSED-NODE",                    # while it exists, take no new job
      "buildsDir": "E:\\\\fletchery-builds",                            # optional: where `package` writes (default <workRoot>\\builds)
@@ -44,6 +46,9 @@ HEARTBEAT_SECONDS = 30
 LOG_FLUSH_SECONDS = 5
 SHA = re.compile(r"^[0-9a-f]{40}$")
 ONLY = re.compile(r"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$")
+# Content import steps a merge round names (Tools/<Name>.ps1 [-Map <map>]) and the only branches imports may push to.
+IMPORT_LIST = re.compile(r"^[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?(,[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?)*$")
+ROUND_BRANCH = re.compile(r"^fletchery/round-[0-9]{1,6}$")
 BUILD_VERSION = re.compile(r"^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$")
 WINDOWS = os.name == "nt"
 BELOW_NORMAL = 0x00004000
@@ -88,6 +93,7 @@ def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Pa
     if recipe not in ("node-checks", "nightly-full"):
         raise ValueError(f"unknown recipe {recipe!r}")
     tests = ["-Engine", engine, "-ResultJson", str(result_json)]
+    imports: list[tuple[str, object, bool]] = []
     if recipe == "node-checks":
         only = str(params.get("only") or "")
         if only and not ONLY.match(only):
@@ -96,13 +102,39 @@ def recipe_steps(recipe: str, params: dict, ws: Path, cfg: dict, result_json: Pa
             tests += ["-Only", only]
         if params.get("strict_slots") is True:
             tests.append("-StrictSlots")
+        imports = import_steps(params, ws, engine, cfg)
     return [
         ("Clear stale processes from this checkout", lambda: _stop_processes(ws), False),
         ("Reset generated Content from prior jobs", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), False),
+        *imports,
         ("Build, BuildContent and tests", _ps("Tools/CI/NodeTests.ps1", ws, tests), False),
         ("Stop what this job left running", lambda: _stop_processes(ws), True),
         ("Reset Content after the run", ["git", "checkout", "--", "Content/Sim"], True),
         ("Reset Content workspace", _ps("Tools/CI/ResetContentWorkspace.ps1", ws, []), True),
+    ]
+
+
+IMPORT_STEP = "Content imports"
+
+
+def import_steps(params: dict, ws: Path, engine: str, cfg: dict) -> list[tuple[str, object, bool]]:
+    """A merge round with Lane-Imports PRs (Alex, 2026-11-12: let the node push imported content): build the editor,
+    run the named imports with the project's Tools/CI/RunImports.ps1, which commits the content and pushes it with
+    PushWithLfs.ps1 to the round's own throwaway branch. The push uses the node's write key (`gitPushKey`); without
+    one the node refuses import jobs. Only fletchery/round-N is accepted, and PushWithLfs itself refuses main."""
+    imports = str(params.get("imports") or "")
+    if not imports:
+        return []
+    branch = str(params.get("push_branch") or "")
+    if not IMPORT_LIST.match(imports):
+        raise ValueError("bad `imports`")
+    if not ROUND_BRANCH.match(branch):
+        raise ValueError("imports push only to fletchery/round-N")
+    if not cfg.get("gitPushKey"):
+        raise ValueError("this node has no gitPushKey, so it cannot push imported content")
+    return [
+        ("Build the editor for the imports", _ps("Tools/Build.ps1", ws, ["-Engine", engine, "-AllowLaneRunning"]), False),
+        (IMPORT_STEP, _ps("Tools/CI/RunImports.ps1", ws, ["-Imports", imports, "-Branch", branch]), False),
     ]
 
 
@@ -401,6 +433,8 @@ class Job:
                 job_env = dict(env)
                 job_env["FLETCHERY_JOB"] = str(job["id"])
                 params = dict(job.get("params") or {})
+                if params.get("imports") and cfg.get("gitPushKey"):  # only an import job's steps get the write key
+                    job_env["GIT_SSH_COMMAND"] = (f'ssh -i "{cfg["gitPushKey"]}" -o IdentitiesOnly=yes -o BatchMode=yes')
                 if job["recipe"] == "package":  # the node picks the folder; the coordinator never names a path
                     params["out_dir"] = str(package_out(cfg.get("buildsDir") or Path(cfg["workRoot"]) / "builds",
                                                         "LifeShare", str(params.get("version") or ""), job["sha"]))

@@ -559,12 +559,16 @@ def node_round(cfg, batch, coord) -> str:
     conf = (getattr(cfg, "machines", None) or {}).get("roundTests")
     if not isinstance(conf, dict) or not conf.get("whole") or coord is None:
         return ""
+    labels = [str(x) for x in conf.get("labels") or []]
     if any(IMPORTS.search(getattr(p, "body", "") or "") for p in batch):
-        return ""
+        # Imports run on a node only when the profile allows it (roundTests.imports) and a node has a write key
+        # (label role:imports); otherwise they stay on this PC (Alex, 2026-11-12: let the node push imported content).
+        if not conf.get("imports"):
+            return ""
+        labels.append("role:imports")
     try:
         import machines
-        names = coord.machines.eligible([str(x) for x in conf.get("labels") or []],
-                                        machines.RECIPES["node-checks"]["min_ram_gb"], "node-checks")
+        names = coord.machines.eligible(labels, machines.RECIPES["node-checks"]["min_ram_gb"], "node-checks")
     except Exception:
         return ""
     return f"the Unreal work runs on {', '.join(names)}" if names and not coord.machines.shadow else ""
@@ -604,6 +608,11 @@ def node_tests_text(cfg, round_no, base: str, whole: bool = False) -> str:
                 "scope, or defer the PR that causes it), commit, push the branch again and rerun step 3.\n"
                 "   - Exit 2: no result (no node free, node lost or out of memory): run step 3 once more. If it gives "
                 "2 again, stop and return `waiting` with the reason; do not run the checks on this PC.\n"
+                "   - Content imports: when a PR in the batch has a `Lane-Imports:` line, add `--imports <the steps, comma "
+                f"separated, in the PR's order> --push-branch {branch}` to step 3. The node builds the editor, runs those "
+                "imports, commits the content and pushes it to that branch, then tests that commit. On exit 0, "
+                f"`git fetch origin {branch}` and `git merge --ff-only FETCH_HEAD`: that commit, with the imported content, "
+                "is the candidate you land. Do not run the imports on this PC.\n"
                 "4. A check the plan says must run on this PC (packaged checks, a second player) is left for the "
                 "playtest list or the nightly; say so in the summary instead of running it here.\n"
                 "5. Land only after a node pass on the exact commit you land.\n"

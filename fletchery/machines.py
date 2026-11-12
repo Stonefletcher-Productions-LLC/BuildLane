@@ -57,6 +57,9 @@ NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 LABEL = re.compile(r"^[A-Za-z0-9_.:+-]{1,64}$")
 ONLY = re.compile(r"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$")
+IMPORT_LIST = re.compile(r"^[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?(,[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?)*$")
+ROUND_BRANCH = re.compile(r"^fletchery/round-[0-9]{1,6}$")
+IMPORT_LABEL = "role:imports"   # a node that has a write key (gitPushKey) and so can import and push round content
 
 # What Fletchery can ask a node to run. The node has the same list and refuses anything else. `context` is the GitHub
 # commit status the job reports under: the names the Buildlane runner used, so ci.yml and lane.yml read them unchanged.
@@ -634,6 +637,14 @@ def check_params(recipe: str, params: dict) -> dict:
         if only and not ONLY.match(only):
             raise ValueError("`only` is a comma list of check names (letters, digits, _)")
         out = {"only": only, "strict_slots": bool(params.get("strict_slots"))}
+        imports = ",".join(x.strip() for x in str(params.get("imports") or "").split(",") if x.strip())
+        if imports:
+            branch = str(params.get("push_branch") or "")
+            if not IMPORT_LIST.match(imports):
+                raise ValueError("`imports` is a comma list of import steps (Name or Name:map)")
+            if not ROUND_BRANCH.match(branch):
+                raise ValueError("A job with imports pushes them only to fletchery/round-N (`push_branch`)")
+            out.update(imports=imports, push_branch=branch)
     elif recipe == "pr-check":
         try:
             pr = int(params.get("pr") or 0)
@@ -885,6 +896,8 @@ def main(argv=None) -> int:
     r.add_argument("--sha", required=True)
     r.add_argument("--only", default="")
     r.add_argument("--strict-slots", action="store_true")
+    r.add_argument("--imports", default="", help="Lane-Imports steps to run and push first (needs --push-branch)")
+    r.add_argument("--push-branch", default="", help="fletchery/round-N: where the node pushes the imported content")
     r.add_argument("--label", action="append", default=[])
     r.add_argument("--requested-by", default="command line")
     r.add_argument("--timeout-minutes", type=float, default=0)
@@ -903,7 +916,11 @@ def main(argv=None) -> int:
     elif a.cmd == "cancel":
         print(m.cancel(a.id))
     elif a.cmd == "run":
-        return run_job(m, a.recipe, a.sha, {"only": a.only, "strict_slots": a.strict_slots}, a.requested_by[:100],
+        params = {"only": a.only, "strict_slots": a.strict_slots}
+        if a.imports:
+            params.update(imports=a.imports, push_branch=a.push_branch)
+            a.label = list(a.label) + ([IMPORT_LABEL] if IMPORT_LABEL not in a.label else [])
+        return run_job(m, a.recipe, a.sha, params, a.requested_by[:100],
                        a.label, a.timeout_minutes)
     return 0
 
