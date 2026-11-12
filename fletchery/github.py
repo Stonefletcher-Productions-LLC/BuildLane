@@ -282,6 +282,14 @@ class GitHub:
                                    labels, p.get("body") or "", p.get("mergeable")))
         return out
 
+    def pr_conflicts(self, number: int) -> bool | None:
+        """True when GitHub says the PR conflicts with its base, False when it merges, None while GitHub is still working
+        it out. The PR list never carries `mergeable`, so this reads the PR itself."""
+        p = self.api(f"repos/{self.repo}/pulls/{number}", fresh=True) or {}
+        if p.get("mergeable") is False and p.get("mergeable_state") == "dirty":
+            return True
+        return False if p.get("mergeable") is True else None
+
     def pr_files(self, number: int) -> list[str]:
         items = self.api(f"repos/{self.repo}/pulls/{number}/files?per_page=100", paginate=True) or []
         return [f["filename"] for f in items]
@@ -463,6 +471,9 @@ class FakeGitHub:
 
     def labelled_prs(self, label, base):
         return [p for p in self.prs if p.base == base and label.lower() in [l.lower() for l in p.labels]]
+
+    def pr_conflicts(self, number):
+        return number in getattr(self, "conflicts", set())
 
     def pr_files(self, number):
         return list(getattr(self, "files", {}).get(number, []))

@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,7 @@ class State:
     node_pr_checks: dict = field(default_factory=dict)        # PR -> {head, passed, at, job, machine, summary}: nodecheck.py
     playtest_issue: int = 0                                  # the playtest checklist issue (mergePlaytest)
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
+    merge_split: dict = field(default_factory=dict)            # {from_round, why, groups: [[{pr, head}]]}: a failed batch tried in parts
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
@@ -882,6 +884,14 @@ class Engine:
                         self.ctx.log(f"PR #{p.number}: repair task creation deferred: {e}")
                 if old and old.get("head") != p.head_sha:
                     st.merge_excluded.pop(str(p.number), None)
+            for p in ([] if st.merge_resume else self._conflicting(ready)):
+                # Caught before the round, not inside it: the PR's fixer (or its repair task) merges the base in.
+                st.merge_excluded[str(p.number)] = {
+                    "head": p.head_sha, "round": 0, "at": now(), "disposition": "failed", "conflict": True,
+                    "why": (f"PR #{p.number} conflicts with {cfg.base_branch}: merge the latest {cfg.base_branch} into its "
+                            "branch and resolve the conflicts. Merge rounds leave it out until its head changes.")}
+                self.ctx.log(f"merge rounds: #{p.number} conflicts with {cfg.base_branch}; left out until its head changes")
+                st.save(self.state_dir / "state.json")
             declarations = [*self._tasks.values(), *(Task(p.number, p.title, p.body) for p in ready)]
             verify = getattr(self, "_verify_repository_dependencies", None)
             repository_closed = verify(declarations) if verify else set()
@@ -928,10 +938,16 @@ class Engine:
             return
         limit = len(ready) if resume else max(1, int(cfg.merge_round_max or 12))
         batch = []
-        for offset in range(0, len(ready), limit):
+        split = []
+        if not resume and st.merge_split.get("groups"):
+            # A failed batch is being tried in parts: its next part goes before anything else (rounds.after_round).
+            split = rounds.split_batch(st.merge_split, ready)
+            st.save(self.state_dir / "state.json")
+        for offset in range(0, 0 if split else len(ready), limit):
             batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
             if batch:
                 break
+        batch = split or batch
         if not batch:
             self.merge_why = "ready PRs wait for prerequisite PRs to become eligible"
             return
@@ -976,17 +992,22 @@ class Engine:
         st.save(self.state_dir / "state.json")
         request_id = self.plans.started(n)
         self.round_info = {"request_id": request_id, "round": n, "agent": agent or "claude", "prs": [p.number for p in batch], "started": now()}
+        if split:
+            self.round_info["split"] = st.merge_split.get("from_round")
         self.merge_why = "a round is running"
         self.live_round = n
-        self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file, request_id))
+        self.round_job = asyncio.ensure_future(self._run_round(n, batch, agent, rounds.key_of(ready), round_file, request_id,
+                                                               in_split=bool(split)))
         def _ended(_f, n=n):
             self.ended_rounds.add(n)
             if self.live_round == n:
                 self.live_round = None
         self.round_job.add_done_callback(_ended)
-        self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch))
+        self.ctx.log(f"merge round {n} started on {agent or 'claude'}: " + ", ".join(f"#{p.number}" for p in batch)
+                     + (f" (part of round {st.merge_split.get('from_round')}'s failed batch)" if split else ""))
 
-    async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str, request_id: str = "") -> dict:
+    async def _run_round(self, n: int, batch: list, agent: str, key: str, round_file: str, request_id: str = "",
+                         in_split: bool = False) -> dict:
         import clis
         import rounds
         import rules as rules_mod
@@ -1041,6 +1062,8 @@ class Engine:
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
             prompt += rounds.playtest_text(cfg)
             prompt += rounds.node_tests_text(cfg, n, cfg.base_branch, whole=bool(node_why))
+            if in_split:
+                prompt += rounds.split_text(self.state.merge_split, batch, cfg.base_branch)
             if resume:
                 prompt += ("\n\n## Explicitly authorized interrupted-round recovery\n"
                            "The user authorized continuing final acceptance after the PC reservation clears. "
@@ -1129,6 +1152,7 @@ class Engine:
             p = next((p for p in batch if str(p.number) == str(item.get("pr"))), None)
             if p is not None:
                 self.state.merge_excluded[str(p.number)] = {"head": p.head_sha, "why": str(item.get("why", ""))[:4000], "round": n, "at": now()}
+        self._after_split(n, batch, res, in_split)
         if res["result"] == "landed":
             self._storage_after_round = True  # finished tasks and the old merge checkout are now cleanable
         if res["result"] == "landed" and res.get("playtest"):
@@ -1160,6 +1184,54 @@ class Engine:
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")
                      + (f" ({res['summary'][:200]})" if res["summary"] else ""))
         return res
+
+    def _after_split(self, n: int, batch: list, res: dict, in_split: bool) -> None:
+        """A failed round of several PRs that named no culprit is tried again in halves; a PR that fails on its own is
+        left out (rounds.after_round). The next part starts at once, without the failed-round wait."""
+        import rounds
+        known = getattr(self, "_known_closed_dependencies", set())
+        split, culprits = rounds.after_round(self.state.merge_split, batch, res, in_split,
+                                             lambda prs: rounds.split_halves(prs, self._tasks, known))
+        heads = {p.number: p.head_sha for p in batch}
+        for number, why in culprits:
+            self.state.merge_excluded[str(number)] = {"head": heads[number], "why": why[:4000], "round": n, "at": now(),
+                                                      "disposition": "failed"}
+            res.setdefault("left_out", []).append({"pr": number, "why": why[:4000], "disposition": "failed"})
+        if culprits:
+            self.ctx.log(f"merge round {n}: left out " + ", ".join(f"#{x}" for x, _ in culprits)
+                         + " (failed on its own after the batch was split)")
+        started = split.get("groups") and split != self.state.merge_split
+        self.state.merge_split = split
+        if split.get("groups"):
+            res["key"] = ""  # the next part is a different candidate: no failed-round wait
+            if started:
+                parts = " then ".join("+".join(f"#{x['pr']}" for x in g) for g in split["groups"])
+                self.ctx.log(f"merge round {n}: {res['result']} with no PR named; trying the batch in parts: {parts}")
+            self.wake()
+
+    def _conflicting(self, ready: list) -> list:
+        """Ready PRs that GitHub says conflict with the base branch (the PR list never says; one PR read each, cached
+        per head for 10 minutes). A failed lookup counts as no conflict: the round still resolves what it can."""
+        lookup = getattr(self.ctx.gh, "pr_conflicts", None)
+        if lookup is None or self.dry_run:
+            return []
+        cache = self.__dict__.setdefault("_conflict_cache", {})
+        out, clock = [], time.monotonic()
+        excluded = self.state.merge_excluded
+        for p in ready:
+            if (excluded.get(str(p.number)) or {}).get("head") == p.head_sha:
+                continue  # already left out at this head: no lookup, and no fresh "at" that would re-send its feedback
+            hit = cache.get((p.number, p.head_sha))
+            if hit is None or hit[0] < clock:
+                try:
+                    hit = (clock + 600, lookup(p.number))
+                except Exception as e:
+                    self.ctx.log(f"PR #{p.number}: conflict check deferred: {type(e).__name__}: {e}")
+                    continue
+                cache[(p.number, p.head_sha)] = hit
+            if hit[1] is True:
+                out.append(p)
+        return out
 
     def _spend(self, agent: str, usd: float) -> None:
         if not usd:

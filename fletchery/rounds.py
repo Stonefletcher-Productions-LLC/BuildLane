@@ -795,3 +795,109 @@ def not_parked(ready: list, parked: dict, now: datetime | None = None) -> list:
         out.append(p)
     return out
 
+
+
+# ---- a failed round splits itself: Fletchery finds the PR that broke it (Alex, 2026-11-12) ----
+# Rounds 136-140 landed nothing: one bad PR (or one cancelled test) failed the whole batch and the merger named no
+# culprit, so every healthy PR waited for the next full round. Now, when a round of several PRs fails without naming
+# the PR at fault, the next rounds take that batch in halves: a half that passes lands, a half that fails is halved
+# again, and a PR that fails on its own is left out (merge_excluded) and goes to its fixer. At most log2(n) extra
+# rounds, each smaller and quicker than the one before.
+
+# A stop reason that is no verdict on the PRs (a test cancelled or never started, a node lost, a timeout). A PR that
+# fails alone with one of these is not left out; it goes back to normal rounds.
+NO_VERDICT = re.compile(r"\bcancel(?:l?ed)?\b|\btimed?[- ]?out\b|\btimeout\b|without a result|\bno result\b|"
+                        r"(?:had )?not (?:yet )?started|node (?:was )?(?:lost|offline|went away)|out of memory|"
+                        r"no node|\bexit 2\b|control request timeout|econnreset|socket hang up|\bbase is red\b", re.I)
+
+
+def split_halves(prs: list, tasks: dict, known_closed: set | None = None) -> list[list]:
+    """Two groups from a failed batch, in its order. A PR whose prerequisite PR falls in the second half moves there
+    too, so each half can land on its own. A batch of one, or one that can't be split, comes back whole."""
+    if len(prs) < 2:
+        return [list(prs)]
+    half = (len(prs) + 1) // 2
+    first = without_failed_dependencies(list(prs[:half]), {}, tasks, known_closed)
+    keep = {p.number for p in first}
+    second = [p for p in prs if p.number not in keep]
+    if not first or not second:
+        return [list(prs)]
+    return [first, second]
+
+
+def split_group(prs: list) -> list[dict]:
+    return [{"pr": p.number, "head": p.head_sha} for p in prs]
+
+
+def split_batch(split: dict, ready: list) -> list:
+    """The PRs of the split's first group that are still ready at the same head. Groups whose PRs all changed or went
+    away are dropped (a new head is a new candidate and goes back to normal rounds). [] when the split is done."""
+    groups = split.get("groups") or []
+    while groups:
+        wanted = {(int(x["pr"]), str(x["head"])) for x in groups[0] if isinstance(x, dict) and str(x.get("pr", "")).isdigit()}
+        members = [p for p in ready if (p.number, p.head_sha) in wanted]
+        if members:
+            groups[0] = split_group(members)
+            return members
+        groups.pop(0)
+    split.clear()
+    return []
+
+
+def after_round(split: dict, batch: list, res: dict, in_split: bool, halves) -> tuple[dict, list[tuple[int, str]]]:
+    """The split queue after a round, and the PRs to leave out [(pr, why)]. `halves(prs)` splits a batch in two.
+
+    - A round of several PRs that failed, landed none and named no culprit: its batch is halved (a new split, or this
+      group replaced by its halves).
+    - A round of one PR that failed and named no culprit: that PR is left out, unless the reason is no verdict on it.
+    - Any other result of a split round that ran (landed, nothing, failed with a culprit named): its group is done.
+    - Not the PRs' fault (a limit, an unreachable model, a busy checkout, an interruption): the split is unchanged.
+    """
+    split = dict(split or {})
+    groups = [g for g in split.get("groups") or []]
+    result = str(res.get("result", ""))
+    why = str(res.get("stop_reason") or res.get("summary") or "")
+    named = bool(res.get("left_out")) or bool(res.get("merged"))
+    culprits: list[tuple[int, str]] = []
+    if result not in ("landed", "nothing", "failed"):
+        return (split if groups else {}), culprits
+    if in_split and groups:
+        groups.pop(0)
+    if result == "failed" and not named and batch:
+        if len(batch) > 1:
+            parts = [g for g in halves(batch) if g]
+            if len(parts) > 1:
+                groups = [split_group(g) for g in parts] + groups
+            elif in_split and not NO_VERDICT.search(why):
+                # Prerequisites tie the batch together: it fails as one, and its PRs wait for a change.
+                culprits = [(p.number, f"Round {res.get('round')} failed with this PR and the PRs it depends on, which "
+                                       f"cannot be tried apart: {why}") for p in batch]
+        elif in_split and not NO_VERDICT.search(why):
+            # Only inside a split: a lone round outside one names its culprit itself (left_out) or blames none.
+            p = batch[0]
+            culprits = [(p.number, f"Round {res.get('round')} tried this PR on its own and it failed: {why}")]
+    if not groups:
+        return {}, culprits
+    split["groups"] = groups
+    if result == "failed" and not named:  # the latest failure is the one the next part checks first
+        split["from_round"], split["why"] = res.get("round"), why[:2000]
+    return split, culprits
+
+
+def split_text(split: dict, batch: list, base: str = "") -> str:
+    """The merger's instruction in a round that tries part of a failed batch."""
+    if not split:
+        return ""
+    return ("\n\n# This round tries part of a failed batch\n\n"
+            f"Round {split.get('from_round')} failed with a larger batch and named no PR at fault. Fletchery is now "
+            "trying that batch in parts to find the PR that broke it; this round has "
+            + ", ".join(f"#{p.number}" for p in batch) + ". The failure was:\n\n"
+            f"```text\n{str(split.get('why', ''))[:1500]}\n```\n\n"
+            "Run the check that failed first, straight after the build (and content steps it needs), before any other "
+            "check. If it fails again here, stop and return `failed` with that reason at once: do not repair and do not "
+            "bisect, Fletchery splits this group again itself. If you can see which PR causes it, name it in `left_out`. "
+            "If it passes, carry on with the rest of the validation plan and land this group as usual.\n"
+            + ("This round has one PR, so a failure here leaves it out of rounds. Before you return `failed`, run that "
+               f"same check once on `origin/{base or 'the base branch'}` alone, without the PR. If it fails "
+               "there too, the PR is not at fault: start `stop_reason` with \"Base is red:\" and the failure.\n"
+               if len(batch) == 1 else ""))
