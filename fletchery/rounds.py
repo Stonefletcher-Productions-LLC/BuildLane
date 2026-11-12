@@ -721,15 +721,21 @@ PARK_HOURS = 72         # a parked PR is tried again after this long even with n
 _UNTRIED = re.compile(r"\bnot\s+(?:yet\s+)?(?:attempted|reached|run)\b|\bunattempted\b|\binterrupt", re.I)
 
 
+PRIORITY_LABEL = "merge-next"   # a person (or a thread) wants this PR in the next round, ahead of the queue
+
+
 def by_value(ready: list, tasks: dict) -> list:
-    """Most queued work unblocked first, then oldest: a PR that sets 14 tasks moving goes before one that sets none."""
+    """PRs labelled `merge-next` first, then most queued work unblocked, then oldest: a PR that sets 14 tasks moving goes
+    before one that sets none."""
     import graph
 
     def value(p) -> int:
         linked = [t for t in tasks.values() if t.pr_number == p.number or p.head == t.branch
                   or re.search(r"\bcloses\s+#" + str(t.number) + r"\b", p.body or "", re.I)]
         return max((len(graph.unblocks(tasks, t.number)) for t in linked), default=0)
-    return sorted(ready, key=lambda p: (-value(p), p.number))
+    def first(p) -> int:
+        return 0 if PRIORITY_LABEL in [str(x).lower() for x in (getattr(p, "labels", None) or [])] else 1
+    return sorted(ready, key=lambda p: (first(p), -value(p), p.number))
 
 
 def record_deferrals(parked: dict, batch: list, deferred: list, round_no, at: str) -> list[int]:
