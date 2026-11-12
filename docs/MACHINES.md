@@ -106,6 +106,19 @@ with `PushWithLfs.ps1` to that branch only (the worker accepts no other branch, 
 the build, BuildContent and checks on that commit. The merger fast-forwards to the pushed commit and lands it. Only an
 import job's steps get the write key.
 
+### Two nodes share a round
+
+When `run` finds two or more nodes free for `node-checks` and the merger passes a list of checks (`--only`), it splits
+the list across the nodes (round-robin) and queues one job per node. Each node builds the candidate and runs its half
+at the same time, and `run` waits for all of them: exit 1 if any half failed, 2 if any gave no result, 0 when every
+half passed. A run with `--imports` is never split, because the content is imported and pushed once. With one node
+free it is one job, as before.
+
+The Gaming PC can be the second node: run `node_worker.py` on the PC with its own `workRoot` (not a Fletchery
+worktree), its own machine key, and the same labels as SF-NODE-01. Its LifeShare scripts take the PC heavy lease
+(LaneGuard), so a node job and a PC round never run Unreal at the same time. Pause it from Machines (Tests, PR checks,
+Builds) when the PC is needed.
+
 ## Pausing one machine from one kind of work
 
 Building → Machines shows a "Takes:" row of switches under each machine. Click one to stop that machine from that kind

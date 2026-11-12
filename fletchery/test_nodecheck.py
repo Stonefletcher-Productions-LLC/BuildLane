@@ -173,6 +173,45 @@ class RunJobTests(Harness):
         self.assertEqual(self.m.active("node-checks"), [])
 
 
+class SplitRunTests(Harness):
+    """Alex, 2026-11-12: two nodes share one round's checks and run them at the same time."""
+
+    def test_two_nodes_split_the_checks(self):
+        import machines
+        self.online()
+        self.m.add_machine("GAMING-PC")
+        self.m.seen("GAMING-PC", "100.1.1.2", NODE, 32, "1", {})
+        out, t = [], [0.0]
+
+        def sleep(_):
+            t[0] += 60
+            for name in ("SF-NODE-01", "GAMING-PC"):
+                job = self.m.claim(name)
+                if job:
+                    prm = job["params"] if isinstance(job["params"], dict) else __import__("json").loads(job["params"])
+                    code = 1 if "RunFlowTest" in prm["only"] and name == "GAMING-PC" else 0
+                    self.m.finish(name, job["id"], code, "done")
+        code = machines.run_job(self.m, "node-checks", BASE, {"only": "RunSpecs,RunFlowTest,RunSmokeTest"}, "round 9",
+                                [], out=out.append, clock=lambda: t[0], sleep=sleep)
+        text = "\n".join(out)
+        self.assertIn("split across 2 nodes (RunSpecs,RunSmokeTest | RunFlowTest)", text)
+        self.assertEqual(code, 1, "one half failed, so the run failed")
+        self.assertEqual(machines.split_checks("A,B,C", 5), ["A", "B", "C"])
+        self.assertEqual(machines.split_checks("", 2), [""])
+
+    def test_imports_never_split(self):
+        import machines
+        self.online()
+        self.m.add_machine("GAMING-PC")
+        self.m.seen("GAMING-PC", "100.1.1.2", NODE, 32, "1", {})
+        out, t = [], [0.0]
+        machines.run_job(self.m, "node-checks", BASE, {"only": "A,B", "imports": "ImportFurniture",
+                                                       "push_branch": "fletchery/round-9"}, "round 9", [],
+                         out=out.append, clock=lambda: t[0], sleep=lambda _: t.__setitem__(0, t[0] + 600))
+        self.assertIn("Job ", out[0])
+        self.assertNotIn("split", out[0])
+
+
 class RoundPromptTests(unittest.TestCase):
     def test_round_tests_text_only_when_on(self):
         import rounds

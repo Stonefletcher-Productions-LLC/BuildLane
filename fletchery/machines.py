@@ -835,43 +835,69 @@ class Coordinator:
 NO_NODE_MINUTES = 10   # `run`: give up (no result) when no node has taken the job by then
 
 
+def split_checks(only: str, parts: int) -> list[str]:
+    """The round's check names dealt round-robin into `parts` lists (largest first), so two nodes share one run."""
+    names = [x.strip() for x in str(only or "").split(",") if x.strip()]
+    parts = max(1, min(parts, len(names)))
+    return [",".join(names[i::parts]) for i in range(parts)] if names else [""]
+
+
 def run_job(m: "Machines", recipe: str, sha: str, params: dict | None = None, requested_by: str = "", labels=None,
             timeout_minutes: float = 0, poll: float = 15, out=print, clock=None, sleep=None) -> int:
-    """Queue one job, wait for it, print its result and the end of its log. 0 passed, 1 failed (the tests failed),
+    """Queue the job, wait for it, print its result and the end of its log. 0 passed, 1 failed (the tests failed),
     2 no result: no node can take it, nobody took it within NO_NODE_MINUTES, it was lost or cancelled, or the job
-    itself reported "no result" (exit 2). A merge round runs its long tests this way (rounds.node_tests_text)."""
+    itself reported "no result" (exit 2). A merge round runs its long tests this way (rounds.node_tests_text).
+    With two or more nodes free for it and a list of checks (`only`), the checks are split across the nodes and run at
+    the same time (Alex, 2026-11-12: "Can both machines run in parallel and speed things up?"); a run that imports
+    content is never split, because the imports must happen once."""
     import time
     clock, sleep = clock or time.monotonic, sleep or time.sleep
+    params = dict(params or {})
     need = list(RECIPES[recipe]["labels"]) + [x for x in (labels or []) if x not in RECIPES[recipe]["labels"]]
-    if not m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe):
+    names = m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe)
+    if not names:
         out(f"No result: no online node takes {recipe} with labels {' '.join(need)} (offline, paused or busy elsewhere).")
         return 2
-    job_id = m.enqueue(recipe, sha, params, requested_by=requested_by, labels=labels)
-    out(f"Job {job_id} queued: {recipe} at {sha[:10]}. Waiting for a node...")
+    chunks = [params.get("only", "")] if params.get("imports") else split_checks(params.get("only", ""), len(names))
+    ids = []
+    for chunk in chunks:
+        ids.append(m.enqueue(recipe, sha, {**params, "only": chunk} if len(chunks) > 1 else params,
+                             requested_by=requested_by, labels=labels))
+    if len(ids) > 1:
+        out(f"Jobs {', '.join(map(str, ids))} queued: {recipe} at {sha[:10]}, the checks split across {len(ids)} nodes "
+            f"({' | '.join(chunks)}). Waiting for the nodes...")
+    else:
+        out(f"Job {ids[0]} queued: {recipe} at {sha[:10]}. Waiting for a node...")
     start, limit = clock(), (timeout_minutes or RECIPES[recipe]["timeout_minutes"] + NO_NODE_MINUTES) * 60
-    seen_running = False
+    seen_running: set = set()
+    jobs: dict = {}
     while True:
-        job = m.job(job_id)
-        if job["state"] == "running" and not seen_running:
-            seen_running = True
-            out(f"Job {job_id} running on {job['machine']}.")
-        if job["state"] in DONE:
+        jobs = {i: m.job(i) for i in ids}
+        for i, job in jobs.items():
+            if job["state"] == "running" and i not in seen_running:
+                seen_running.add(i)
+                out(f"Job {i} running on {job['machine']}.")
+        if all(j["state"] in DONE for j in jobs.values()):
             break
         waited = clock() - start
-        if (job["state"] == "queued" and waited > NO_NODE_MINUTES * 60) or waited > limit:
-            m.cancel(job_id)
-            out(f"No result: job {job_id} {'was not taken by any node' if job['state'] == 'queued' else 'ran too long'}; cancelled.")
+        # A split job still queued behind its sibling is waiting for a node to free up, not abandoned.
+        nobody = waited > NO_NODE_MINUTES * 60 and all(j["state"] == "queued" for j in jobs.values() if j["state"] not in DONE)
+        if nobody and not any(j["state"] == "running" for j in jobs.values()) or waited > limit:
+            for i, job in jobs.items():
+                if job["state"] not in DONE:
+                    m.cancel(i)
+            out(f"No result: job {', '.join(str(i) for i, j in jobs.items() if j['state'] not in DONE)} "
+                f"{'was not taken by any node' if nobody else 'ran too long'}; cancelled.")
             return 2
         sleep(poll)
-    tail = "\n".join(m.log_text(job_id, 256 * 1024).replace("\r\n", "\n").rstrip().split("\n")[-60:])
-    if tail:
-        out(tail)
-    out(f"Job {job_id} on {job['machine']}: {job['state']}: {job['summary']}")
-    if job["state"] == "passed":
-        return 0
-    if job["state"] == "failed" and job.get("exit_code") != 2:
-        return 1
-    return 2
+    codes = []
+    for i, job in jobs.items():
+        tail = "\n".join(m.log_text(i, 256 * 1024).replace("\r\n", "\n").rstrip().split("\n")[-60:])
+        if tail:
+            out(tail)
+        out(f"Job {i} on {job['machine']}: {job['state']}: {job['summary']}")
+        codes.append(0 if job["state"] == "passed" else 1 if job["state"] == "failed" and job.get("exit_code") != 2 else 2)
+    return 1 if 1 in codes else max(codes)
 
 
 def main(argv=None) -> int:
