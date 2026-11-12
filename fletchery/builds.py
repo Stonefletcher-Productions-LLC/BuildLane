@@ -300,6 +300,9 @@ class Builds:
         try:
             repo.git("fetch", repo.remote, row["sha"], cwd=path)
             repo.git("checkout", "--no-overwrite-ignore", "-B", f"fletchery/build-{row['version']}", row["sha"], cwd=path)
+            # The merge checkout may hold LFS pointer text for assets a round never needed: 0.4.0 failed to cook on
+            # 60 "Package is unloadable" Silhouette meshes (2026-11-12). Fetch the real files before building.
+            repo.git("lfs", "pull", cwd=path)
         except RuntimeError as e:
             self.update(row, state="failed", finished=iso(utc()), reason=f"Could not check out {row['sha'][:10]}: {e}"[:300])
             return
