@@ -1534,7 +1534,9 @@ class Engine:
                                  and (excluded.get(str(p.number)) or {}).get("head") != p.head_sha
                                  # nor does a parked one: it waits for a new commit or a person, not for a round
                                  and not rounds.is_parked(self.state.merge_parked, p.number, p.head_sha))
-        if not self.cfg.merge_rounds:
+        # Off when merge rounds are off (nothing would drain it) or mergeBacklogHigh is -1 (Alex, 2026-11-12: "we can
+        # still make new features, but merging is high prio"): rounds still take the PC first, features keep starting.
+        if not self.cfg.merge_rounds or int(self.cfg.merge_backlog_high or 0) < 0:
             self.backlog_paused = False
             return False
         high, low = self._backlog_marks()

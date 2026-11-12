@@ -39,6 +39,18 @@ class RegistryTests(Base):
         self.assertFalse(self.m.authenticate("other", key))
         self.assertNotIn(key.encode(), Path(self.m.path).read_bytes())
 
+    def test_round_jobs_go_first_then_builds_then_pr_checks(self):
+        self.node()
+        check = self.m.enqueue("checkout-only", SHA, requested_by="PR check")
+        build = self.m.enqueue("checkout-only", SHA, requested_by="build 0.4.0")
+        round_job = self.m.enqueue("node-checks", SHA, requested_by="round 133")
+        order = []
+        for _ in range(3):
+            job = self.m.claim("SF-NODE-01")
+            order.append(job["id"])
+            self.m.finish("SF-NODE-01", job["id"], 0, "")
+        self.assertEqual(order, [round_job, build, check])
+
     def test_revoke_stops_the_key_and_requeues_its_job(self):
         key = self.node()
         job = self.m.enqueue("node-checks", SHA)
