@@ -453,8 +453,8 @@ const server = http.createServer(async (req, res) => {
     delete data.emergency_workers;
     data.max_parallel = normalMax;
     data.live = [
-      {task: 891, title: 'Shower interactions', agent: 'sonnet', stage: 'Reviewing', since: now, actions: 12},
-      {task: 899, title: 'Preview reactions', agent: 'codex-sol', stage: 'Writing', since: now, actions: 4},
+      {task: 891, title: 'Shower interactions', agent: 'sonnet', stage: 'Reviewing', since: now, actions: 12, last_at: now},
+      {task: 899, title: 'Preview reactions', agent: 'codex-sol', stage: 'Writing', since: now, actions: 4, last_at: new Date(Date.now() - 25 * 60000).toISOString()},
     ];
     data.merge_view = originalMergeView;
     data.merge_auto = originalMergeAuto;
@@ -521,6 +521,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#nowh').innerText(), 'Workers');
     assert.equal(await page.locator('[data-rank]').count(), 3);
     assert.equal(await page.locator('[data-worker="891"] .worker-rank-badge').textContent(), 'Strong');
+    assert.match(await page.locator('[data-worker="891"] .worker-meta').innerText(), /last step \d+s ago/);
+    assert.match(await page.locator('[data-worker="899"] .worker-quiet').innerText(), /quiet for 25 min/);
     const scroll = await page.evaluate(() => {
       document.body.style.minHeight = '4000px';
       window.scrollTo(0, 1200);

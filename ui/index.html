@@ -586,6 +586,7 @@
   .slot summary::-webkit-details-marker { display: none; }
   .worker-title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
   .worker-meta { grid-row: 2; color: var(--muted); font-size: 12px; }
+  .worker-quiet { color: var(--hold); font-weight: 600; }
   .worker-stage { grid-column: 2; grid-row: 1 / 3; color: var(--accent); background: var(--accent-bg); padding: 3px 7px;
     border-radius: 5px; font-size: 11px; max-width: 140px; overflow-wrap: anywhere; }
   .worker-stage::after { content: " ⌄"; }
@@ -1624,6 +1625,14 @@ function workerRankBadge(rank) {
   return Object.hasOwn(RANK_NAMES, rank) ? ` <span class="worker-rank-badge" title="Model strength used for this task">${RANK_NAMES[rank]}</span>` : "";
 }
 
+// How long since the session's last tool call. Quiet for 20+ min is shown in amber: it may be thinking or waiting on a
+// long render/test, or it may be hung (the stall watchdog stops it after stallMinutes with no tool call).
+function workerPulse(a) {
+  if (!a.last_at) return "";
+  const quiet = (Date.now() - Date.parse(a.last_at)) / 60000;
+  return quiet >= 20 ? ` · <span class="worker-quiet">quiet for ${esc(ago(a.last_at))}</span>`
+    : ` · last step ${esc(ago(a.last_at))} ago`;
+}
 function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   const idx = STAGES.indexOf((a.stage || "").replace(/ \(.*\)$/, ""));
   const fixing = a.kind === "fix";
@@ -1634,7 +1643,7 @@ function workerSessionHtml(a, d, expanded, attribute = "data-worker") {
   lastActions[a.task] = a.actions;
   const row = d.tasks.find(t => t.number === a.task);
   return `<details class="slot" ${attribute}="${a.task}"${expanded.has(String(a.task)) ? " open" : ""}>
-    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Choosing an agent")} · ${ago(a.since)} elapsed</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
+    <summary><span class="worker-title">#${a.task} ${esc(a.title)}${workerRankBadge(row?.worker_rank || d.worker_ranks?.assignments?.[a.task])}</span><span class="worker-meta">${esc(a.agent || "Choosing an agent")} · ${ago(a.since)} elapsed${workerPulse(a)}</span><span class="worker-stage">${esc(a.stage || "Working")}</span></summary>
     <div class="worker-detail"><a href="${esc(d.repo_url)}/issues/${a.task}" target="_blank" rel="noopener">Open issue #${a.task} ↗</a>
     ${track}<div class="what">${esc(explain(a))}</div>
     <div class="doing-label">Latest step${row && row.branch ? ` <span class="branch">on ${esc(row.branch)}</span>` : ""}</div>
