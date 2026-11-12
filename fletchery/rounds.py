@@ -549,7 +549,28 @@ def validation_plan(files: list[str], base: str = "Test-Staging") -> str:
 
 # ---- the round's long tests on a test node (workers.machines.roundTests) ----
 
-def node_tests_text(cfg, round_no, base: str) -> str:
+IMPORTS = re.compile(r"^\s*lane-imports\s*:\s*\S", re.IGNORECASE | re.MULTILINE)
+
+
+def node_round(cfg, batch, coord) -> str:
+    """Why this round can run all its Unreal work on a test node and leave this PC alone, or "" when it can't.
+    workers.machines.roundTests {"whole": true} turns it on (Alex, 2026-11-12: "Why is Node still not merging?"). A batch
+    with a "Lane-Imports:" PR still imports on this PC, and so does a round when no node can take the tests now."""
+    conf = (getattr(cfg, "machines", None) or {}).get("roundTests")
+    if not isinstance(conf, dict) or not conf.get("whole") or coord is None:
+        return ""
+    if any(IMPORTS.search(getattr(p, "body", "") or "") for p in batch):
+        return ""
+    try:
+        import machines
+        names = coord.machines.eligible([str(x) for x in conf.get("labels") or []],
+                                        machines.RECIPES["node-checks"]["min_ram_gb"], "node-checks")
+    except Exception:
+        return ""
+    return f"the Unreal work runs on {', '.join(names)}" if names and not coord.machines.shadow else ""
+
+
+def node_tests_text(cfg, round_no, base: str, whole: bool = False) -> str:
     """With workers.machines.roundTests set, the merger runs the round's long test suites on a test node, so the PC is
     free while they run (Alex, 2026-11-11: "give me usage back to my PC"). The build, content imports and any check the
     plan says to run here stay on this PC. Without a node (exit 2) the tests run here as before."""
@@ -563,6 +584,30 @@ def node_tests_text(cfg, round_no, base: str) -> str:
     tool = Path(__file__).resolve().with_name("machines.py")
     cmd = (f'& "{sys.executable}" "{tool}" --state-dir "{cfg.state_dir}" run --recipe node-checks --sha <full SHA> '
            f'--only <Name1,Name2,...> --requested-by "round {round_no}"' + "".join(f" --label {x}" for x in labels))
+    if whole:
+        return ("\n\n# This round runs on the test node: no Unreal on this PC\n\n"
+                "This overrides where every build and test runs; what to test is unchanged. The PC is kept free for "
+                "coding: on this PC do only git (merging, conflict fixes, commits, pushes) and reading. Do not run "
+                "Tools/Build.ps1, BuildContent, imports, RunAllTests (except -PlanOnly), NavCheck, packaging, the "
+                "editor or the game here, and do not take the PC heavy lease.\n"
+                f"1. Merge the PRs and commit the candidate, then push it to the throwaway branch `{branch}` only: "
+                f"`git push --force origin HEAD:refs/heads/{branch}`. Never push the candidate anywhere else before it "
+                "lands.\n"
+                f"2. Work out the checks the plan needs: `Tools/RunAllTests.ps1 -Set Auto -BaseRef origin/{base} "
+                "-PlanOnly` (it lists them and whether strict navigation is needed; it launches nothing).\n"
+                f"3. Run, from the worktree: `{cmd}`, adding `--strict-slots` when the plan wants strict navigation. "
+                "The node builds the editor, runs BuildContent and the checks, then prints the result and the failing "
+                "output. It can take an hour; wait for it.\n"
+                "   - Exit 0: the build and those checks passed on the node; record them as passed for this "
+                "candidate.\n"
+                "   - Exit 1: the build or a check failed on the node; treat it exactly as a failure here (fix within "
+                "scope, or defer the PR that causes it), commit, push the branch again and rerun step 3.\n"
+                "   - Exit 2: no result (no node free, node lost or out of memory): run step 3 once more. If it gives "
+                "2 again, stop and return `waiting` with the reason; do not run the checks on this PC.\n"
+                "4. A check the plan says must run on this PC (packaged checks, a second player) is left for the "
+                "playtest list or the nightly; say so in the summary instead of running it here.\n"
+                "5. Land only after a node pass on the exact commit you land.\n"
+                f"6. When the round ends, landed or not, delete the branch: `git push origin --delete {branch}`.\n")
     return ("\n\n# Run the long tests on the test node\n\n"
             "This overrides where the test suites run; what to test is unchanged. Build the editor and import content on "
             "this PC as usual. Then, for the RunAllTests suites (specs, editor and game tests, Flow, smoke), do not run "

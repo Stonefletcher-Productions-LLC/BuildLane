@@ -953,7 +953,9 @@ class Engine:
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
         if wt_root and not self.dry_run:
             try:
-                rounds.checkout_guard(Path(resume["checkpoint"]["worktree"]) if resume else rounds.checkout_path(self.ctx.repo), cfg.heavy_lease_file)
+                node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None))
+                rounds.checkout_guard(Path(resume["checkpoint"]["worktree"]) if resume else rounds.checkout_path(self.ctx.repo),
+                                      "" if node_why else cfg.heavy_lease_file)  # a node round never needs this PC's lease
             except RuntimeError as e:
                 self.merge_why = str(e)
                 self._note_checkout_stall(str(e))
@@ -996,6 +998,11 @@ class Engine:
         started = now()
         res = {"round": n, "result": "failed", "at": started, "started": started,
                "key": key, "summary": "", "pr": 0, "agent": agent}
+        node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None))
+        if node_why:
+            self.ctx.log(f"merge round {n}: {node_why}; this PC only merges")
+            if isinstance(self.round_info, dict):
+                self.round_info["node"] = node_why
         if pool is not None and agent:
             pool.acquire(agent)
         try:
@@ -1009,7 +1016,7 @@ class Engine:
                 rounds.write_file(round_file, progress)
             else:
                 rounds.start_file(round_file, n, branch, str(rounds.checkout_path(self.ctx.repo)), agent or "claude", batch, cfg.base_branch)
-                wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch, cfg.heavy_lease_file)
+                wt = await asyncio.to_thread(rounds.prepare_worktree, self.ctx.repo, branch, "" if node_why else cfg.heavy_lease_file)
                 rounds.start_file(round_file, n, branch, str(wt), agent or "claude", batch, cfg.base_branch)
             res["worktree"] = str(wt)
             rules = rules_mod.load(wt, cfg.project_root)
@@ -1033,7 +1040,7 @@ class Engine:
                                  "repository's own docs to find how it builds and tests)",
                                  freeze="# Code freeze\n\nThe project is in a code freeze: merge fixes only." if cfg.code_freeze else "")
             prompt += rounds.playtest_text(cfg)
-            prompt += rounds.node_tests_text(cfg, n, cfg.base_branch)
+            prompt += rounds.node_tests_text(cfg, n, cfg.base_branch, whole=bool(node_why))
             if resume:
                 prompt += ("\n\n## Explicitly authorized interrupted-round recovery\n"
                            "The user authorized continuing final acceptance after the PC reservation clears. "
