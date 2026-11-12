@@ -329,3 +329,24 @@ class JobStepsTests(unittest.TestCase):
         steps = machines.parse_steps(marks)
         self.assertEqual(steps[0]["sections"][0]["state"], "failed")
         self.assertEqual(steps[0]["sections"][0]["detail"], "exit 1")
+
+
+class NodeRoundTests(unittest.TestCase):
+    def _coord(self, names, shadow=False):
+        m = SimpleNamespace(eligible=lambda labels, ram, recipe: list(names), shadow=shadow)
+        return SimpleNamespace(machines=m)
+
+    def test_whole_round_on_node(self):
+        import rounds
+        cfg = SimpleNamespace(machines={"roundTests": {"labels": ["unreal:5.8.4"], "whole": True}}, state_dir="E:/s")
+        prs = [SimpleNamespace(number=1, body="Closes #5"), SimpleNamespace(number=2, body="")]
+        self.assertIn("SF-NODE-01", rounds.node_round(cfg, prs, self._coord(["SF-NODE-01"])))
+        self.assertEqual(rounds.node_round(cfg, prs, self._coord([])), "")                       # no node free
+        self.assertEqual(rounds.node_round(cfg, prs, self._coord(["N"], shadow=True)), "")      # shadow mode
+        imp = prs + [SimpleNamespace(number=3, body="Lane-Imports: furniture")]
+        self.assertEqual(rounds.node_round(cfg, imp, self._coord(["N"])), "")                   # imports stay on the PC
+        cfg.machines["roundTests"]["whole"] = False
+        self.assertEqual(rounds.node_round(cfg, prs, self._coord(["N"])), "")
+        text = rounds.node_tests_text(SimpleNamespace(machines={"roundTests": {"labels": []}}, state_dir="E:/s"), 7, "Test-Staging", whole=True)
+        self.assertIn("no Unreal on this PC", text)
+        self.assertIn("fletchery/round-7", text)

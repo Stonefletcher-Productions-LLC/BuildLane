@@ -87,6 +87,15 @@ which queues a `node-checks` job, waits, prints the result and the failing outpu
 result. On 2 (no node free, node paused from Tests, lost, out of memory) the merger runs the tests on this PC as before.
 The labels pick a node whose engine matches this PC. The job shows on the Merging card as the round's.
 
+### Whole rounds on a node
+
+Add `"whole": true` to `roundTests` and a round leaves this PC's Unreal alone: it doesn't wait for or take the PC heavy
+lease, and the merger only does git here (merging, conflict fixes, pushes). The node builds the editor, runs
+BuildContent and the checks the plan names (strict navigation too) in one `node-checks` job, and the merger lands only
+after a node pass on that exact commit. A batch with a `Lane-Imports:` PR, or a round when no node can take
+`node-checks` (paused, offline, shadow), runs the old way on this PC. The merger agent itself still runs on this PC; it is
+a chat session and git, not Unreal.
+
 ## Pausing one machine from one kind of work
 
 Building → Machines shows a "Takes:" row of switches under each machine. Click one to stop that machine from that kind
