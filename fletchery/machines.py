@@ -20,6 +20,8 @@ The worker API (all POST, JSON, `Authorization: Bearer <key>` and `X-Fletchery-M
     /v1/heartbeat  {job_id, stats}                                  -> {cancel}
     /v1/log        {job_id, text}                                   -> {ok}
     /v1/result     {job_id, exit_code, summary, result}             -> {ok}
+    /v1/upload     {job_id, name, offset, data (base64), done, sha256} -> {ok, path}: a node copies a packaged
+                   build back to this PC (<state>/builds), in chunks; the last call checks the hash and unpacks it
 
 Command line (on the PC, against the same state folder as the backend):
     python machines.py --state-dir <dir> add <name>        print a new node's key (once)
@@ -45,6 +47,8 @@ ONLINE_SECONDS = 90          # a node that has not called for this long shows as
 LOST_SECONDS = 180           # a running job without a heartbeat for this long is lost (the node stopped or rebooted)
 MAX_ATTEMPTS = 2             # a lost job is queued again once, then fails
 MAX_BODY = 1024 * 1024
+MAX_UPLOAD_BODY = 8 * 1024 * 1024   # /v1/upload chunks (base64 of up to 4 MiB)
+UPLOAD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.zip$")
 LOG_MAX_BYTES = 50 * 1024 * 1024
 # The lines of a job's log that mark its progress (Testing tab): the worker's own steps, the project script's sections
 # ("== Build LifeShareEditor") and each check's result ("PASS  RunSpecs (200s)"). Each is kept with the time it arrived.
@@ -237,6 +241,53 @@ class Machines:
                               spec["timeout_minutes"], spec["context"] if context is None else context, now(),
                               requested_by[:100], max(0, int(pr or 0))))
             return int(cur.lastrowid)
+
+    # ---- builds copied back from a node (Alex, 2026-11-12: the 0.4.0 zip on the PC was empty) ----
+    def upload_dir(self) -> Path:
+        return Path(getattr(self, "builds_dir", "") or self.dir / "builds")
+
+    def upload(self, machine: str, job_id: int, name: str, offset: int, chunk: bytes, done: bool,
+               sha256: str = "") -> dict:
+        """Write one chunk of a packaged build that `machine` made in job `job_id`. On the last chunk check the size
+        and SHA-256, keep <name> and unpack it beside it (<name without .zip>, or with the job id when that folder
+        already has files)."""
+        import hashlib
+        import zipfile
+        if not UPLOAD_NAME.match(name or ""):
+            raise ValueError("bad build name")
+        job = self.job(job_id)
+        if not job or job["machine"] != machine or job["recipe"] != "package":
+            raise PermissionError("only the node that packaged a build can send it")
+        root = self.upload_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        part = root / (name + f".part-{job_id}")
+        with self._lock:
+            size = part.stat().st_size if part.exists() else 0
+            if offset != size:
+                return {"ok": False, "offset": size}  # the node resends from here
+            with open(part, "ab") as f:
+                f.write(chunk)
+        if not done:
+            return {"ok": True, "offset": size + len(chunk)}
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        if sha256 and h.hexdigest() != sha256.lower():
+            part.unlink(missing_ok=True)
+            raise ValueError("the copy does not match the node's file; send it again")
+        final = root / name
+        final.unlink(missing_ok=True)
+        part.replace(final)
+        folder = root / name[:-4]
+        if folder.exists() and any(folder.iterdir()):
+            folder = root / f"{name[:-4]}-job{job_id}"
+        with zipfile.ZipFile(final) as z:
+            for member in z.namelist():  # no absolute paths or .. in a build zip
+                if member.startswith(("/", "\\")) or ".." in Path(member).parts:
+                    raise ValueError(f"unsafe path in the zip: {member}")
+            z.extractall(folder)
+        return {"ok": True, "path": str(folder), "zip": str(final)}
 
     def cancel(self, job_id: int) -> str:
         with self._lock, self._db() as db:
@@ -706,6 +757,11 @@ class WorkerApi:
                     return 400, {"error": "text"}
                 m.append_log(machine, job_id, text)
                 return 200, {"ok": True}
+            if path == "/v1/upload":
+                import base64
+                return 200, m.upload(machine, job_id, str(data.get("name") or ""), int(data.get("offset") or 0),
+                                     base64.b64decode(str(data.get("data") or "")), bool(data.get("done")),
+                                     str(data.get("sha256") or ""))
             if path == "/v1/result":
                 m.seen(machine, ip, stats=stats)
                 m.finish(machine, job_id, int(data.get("exit_code", 1)), str(data.get("summary") or ""), data.get("result"))
@@ -739,7 +795,7 @@ class WorkerApi:
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length") or 0)
-                if length > MAX_BODY:
+                if length > (MAX_UPLOAD_BODY if self.path == "/v1/upload" else MAX_BODY):
                     return self._json(413, {"error": "request too large"})
                 try:
                     data = json.loads(self.rfile.read(length) or b"{}") if length else {}
