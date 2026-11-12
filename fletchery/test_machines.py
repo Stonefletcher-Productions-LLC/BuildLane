@@ -51,6 +51,36 @@ class RegistryTests(Base):
             self.m.finish("SF-NODE-01", job["id"], 0, "")
         self.assertEqual(order, [round_job, build, check])
 
+    def test_waiting_round_job_stops_the_running_pr_check(self):
+        self.node()
+        check = self.m.enqueue("checkout-only", SHA, requested_by="PR check")
+        self.assertEqual(self.m.claim("SF-NODE-01")["id"], check)
+        self.assertEqual(self.m.preempt_for_rounds(), [], "nothing waits for the node yet")
+        round_job = self.m.enqueue("node-checks", SHA, requested_by="round 141")
+        self.assertEqual(self.m.preempt_for_rounds(), [(check, "SF-NODE-01", round_job)])
+        self.assertTrue(self.m.heartbeat("SF-NODE-01", check)["cancel"])
+        self.assertEqual(self.m.preempt_for_rounds(), [], "one stop per round job; the node is already stopping")
+
+    def test_preempt_leaves_builds_idle_nodes_and_other_round_jobs_alone(self):
+        self.node()
+        self.node("GAMING-PC")
+        build = self.m.enqueue("checkout-only", SHA, requested_by="build 0.4.0")
+        self.assertEqual(self.m.claim("SF-NODE-01")["id"], build)
+        self.m.enqueue("node-checks", SHA, requested_by="round 141")
+        self.assertEqual(self.m.preempt_for_rounds(), [], "GAMING-PC is idle and takes it")
+        first = self.m.claim("GAMING-PC")["id"]
+        self.m.enqueue("node-checks", SHA, requested_by="round 141 split")
+        self.assertEqual(self.m.preempt_for_rounds(), [], "a build or another round job is never stopped")
+        self.assertFalse(self.m.heartbeat("SF-NODE-01", build)["cancel"])
+        self.assertFalse(self.m.heartbeat("GAMING-PC", first)["cancel"])
+
+    def test_preempt_only_where_the_round_job_could_run(self):
+        self.node(labels=["os:windows", "role:checks"])
+        check = self.m.enqueue("checkout-only", SHA, requested_by="PR check", labels=[])
+        self.assertEqual(self.m.claim("SF-NODE-01")["id"], check)
+        self.m.enqueue("node-checks", SHA, requested_by="round 141")
+        self.assertEqual(self.m.preempt_for_rounds(), [], "this node lacks the round job's labels")
+
     def test_revoke_stops_the_key_and_requeues_its_job(self):
         key = self.node()
         job = self.m.enqueue("node-checks", SHA)
