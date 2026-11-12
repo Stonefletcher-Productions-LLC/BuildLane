@@ -431,6 +431,13 @@ def _git_env(cfg: dict) -> dict:
     if key:
         env["GIT_SSH_COMMAND"] = f'ssh -i "{key}" -o IdentitiesOnly=yes -o BatchMode=yes'
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # On the Gaming PC the worker holds the PC's heavy lease for the job. LifeShare's LaneGuard lets a guarded script
+    # run under a hold whose token is in LS_LANE_HOLD, so the job's own Build/Test steps don't refuse with "the PC is
+    # in use by Fletchery node job N" (exit 2 on every job).
+    if cfg.get("_lease_token"):
+        env["LS_LANE_HOLD"] = cfg["_lease_token"]
+        if cfg.get("heavyLeaseFile"):
+            env["LS_HEAVY_LEASE"] = str(cfg["heavyLeaseFile"])
     return env
 
 
