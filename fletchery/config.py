@@ -137,7 +137,8 @@ class Config:
     # the round agent's own account (its plan's limits) starts at most this many new sessions. -1 = stop all new work.
     round_shared_sessions: int = 2
     # backpressure: new feature tasks pause once this many of the workers' PRs wait labelled for merging, and resume
-    # at the low mark. 0 = two rounds' worth (high) and one round's worth (low). Fixers and repairs always run.
+    # at the low mark. 0 = two rounds' worth (high) and one round's worth (low); high -1 = never pause. Fixers and
+    # repairs always run.
     merge_backlog_high: int = 0
     merge_backlog_low: int = 0
     # the coding agents (agents.py): [{"name", "kind": claude|codex|opencode, "model", "tier", "vendor", "enabled",

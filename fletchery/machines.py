@@ -135,6 +135,12 @@ def check_listen(listen: str) -> tuple[str, int]:
     return host, int(port)
 
 
+
+def claim_rank(requested_by: str) -> int:
+    """Node queue priority: 0 for a merge round's jobs, 1 for builds, 2 for everything else."""
+    who = (requested_by or "").lower()
+    return 0 if who.startswith("round ") else 1 if who.startswith("build ") else 2
+
 class Machines:
     """The registry and the job queue, in <state_dir>/machines.db. Safe to use from several threads and from the
     command line while the backend runs (SQLite with a busy timeout; every change is one short transaction)."""
@@ -244,8 +250,9 @@ class Machines:
             return row["state"]
 
     def claim(self, machine: str) -> dict | None:
-        """The oldest queued job this node can run: every label it needs is one of the node's, and the node has the
-        RAM. A node runs one job at a time."""
+        """The first queued job this node can run: every label it needs is one of the node's, and the node has the
+        RAM. Merge-round jobs go first (a round waits on them), then builds, then PR checks and the rest, oldest first
+        within each (Alex, 2026-11-12: "nodes merge with crit prio"). A node runs one job at a time."""
         with self._lock, self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -256,7 +263,8 @@ class Machines:
                     return None
                 have = set(json.loads(m["labels"] or "[]"))
                 off = set(self._paused(db, machine))
-                for row in db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY id").fetchall():
+                rows = db.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY id").fetchall()
+                for row in sorted(rows, key=lambda r: (claim_rank(r["requested_by"]), r["id"])):
                     if KIND.get(row["recipe"]) in off:
                         continue
                     if set(json.loads(row["labels"])) <= have and float(row["min_ram_gb"] or 0) <= float(m["ram_gb"] or 0):

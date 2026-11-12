@@ -136,9 +136,9 @@ FIELDS = [
     {"group": "Merging", "key": "merge_agent", "label": "Agent for rounds", "type": "select", "options_from": "agents",
      "help": "Best active worker picks the strongest agent that is on, signed in and not at a usage limit, each round. "
              "Pick one to always use it while it is available."},
-    {"group": "Merging", "key": "merge_backlog_high", "label": "Pause new tasks at this many PRs waiting", "type": "int", "min": 0,
+    {"group": "Merging", "key": "merge_backlog_high", "label": "Pause new tasks at this many PRs waiting", "type": "int", "min": -1,
      "help": "New feature tasks wait while this many workers' PRs are labelled for merging, until the low mark. "
-             "0: two rounds' worth. Fixes always run."},
+             "0: two rounds' worth. -1: never pause new tasks (merge rounds still go first). Fixes always run."},
     {"group": "Merging", "key": "merge_backlog_low", "label": "Start new tasks again at", "type": "int", "min": 0,
      "advanced": True, "help": "0: one round's worth."},
     {"group": "Merging", "key": "round_shared_sessions", "label": "New sessions on the round's account during a round",

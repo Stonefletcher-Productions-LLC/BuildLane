@@ -100,6 +100,15 @@ class BalanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(engine.jobs), 1)
         await engine._wait_for_jobs(None)
 
+    async def test_backlog_mark_minus_one_never_pauses_new_tasks(self):
+        engine, gh, rt = self.engine({1: Task(1, "New feature")}, merge_rounds=True, merge_backlog_high=-1)
+        engine.state.merge_held = True
+        gh.prs = [self.ready_pr(n) for n in range(11, 41)]
+        engine.dispatch()
+        self.assertFalse(engine.backlog_paused)
+        self.assertEqual(len(engine.jobs), 1)
+        await engine._wait_for_jobs(None)
+
     async def test_failed_heads_do_not_count_toward_the_backlog(self):
         engine, gh, rt = self.engine({1: Task(1, "New feature")}, merge_rounds=True, merge_backlog_high=2)
         engine.state.merge_held = True
