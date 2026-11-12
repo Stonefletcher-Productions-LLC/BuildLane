@@ -549,10 +549,23 @@ def validation_plan(files: list[str], base: str = "Test-Staging") -> str:
 
 # ---- the round's long tests on a test node (workers.machines.roundTests) ----
 
-IMPORTS = re.compile(r"^\s*lane-imports\s*:\s*\S", re.IGNORECASE | re.MULTILINE)
+IMPORTS = re.compile(r"^[ \t>*_`-]*lane-imports[*_`]*\s*:[*_`]*\s*\S", re.IGNORECASE | re.MULTILINE)
 
 
-def node_round(cfg, batch, coord) -> str:
+def _needs_imports(pr, tasks) -> bool:
+    """A PR imports content when its body, or its task's issue body, has a `Lane-Imports:` line (a list bullet or bold
+    counts). Round 138 went to the node with #1679, whose `- Lane-Imports: ImportEnvironment` was only in issue #974."""
+    if IMPORTS.search(getattr(pr, "body", "") or ""):
+        return True
+    num, body = getattr(pr, "number", None), getattr(pr, "body", "") or ""
+    for t in (tasks or {}).values():
+        if getattr(t, "pr_number", None) == num or re.search(r"\bcloses\s+#" + str(getattr(t, "number", "")) + r"\b", body, re.I):
+            if IMPORTS.search(getattr(t, "body", "") or ""):
+                return True
+    return False
+
+
+def node_round(cfg, batch, coord, tasks=None) -> str:
     """Why this round can run all its Unreal work on a test node and leave this PC alone, or "" when it can't.
     workers.machines.roundTests {"whole": true} turns it on (Alex, 2026-11-12: "Why is Node still not merging?"). A batch
     with a "Lane-Imports:" PR still imports on this PC, and so does a round when no node can take the tests now."""
@@ -560,7 +573,7 @@ def node_round(cfg, batch, coord) -> str:
     if not isinstance(conf, dict) or not conf.get("whole") or coord is None:
         return ""
     labels = [str(x) for x in conf.get("labels") or []]
-    if any(IMPORTS.search(getattr(p, "body", "") or "") for p in batch):
+    if any(_needs_imports(p, tasks) for p in batch):
         # Imports run on a node only when the profile allows it (roundTests.imports) and a node has a write key
         # (label role:imports); otherwise they stay on this PC (Alex, 2026-11-12: let the node push imported content).
         if not conf.get("imports"):
@@ -612,7 +625,10 @@ def node_tests_text(cfg, round_no, base: str, whole: bool = False) -> str:
                 f"separated, in the PR's order> --push-branch {branch}` to step 3. The node builds the editor, runs those "
                 "imports, commits the content and pushes it to that branch, then tests that commit. On exit 0, "
                 f"`git fetch origin {branch}` and `git merge --ff-only FETCH_HEAD`: that commit, with the imported content, "
-                "is the candidate you land. Do not run the imports on this PC.\n"
+                "is the candidate you land. Do not run the imports on this PC, with one exception: if that run gives exit 2 "
+                "because no node has the `role:imports` label, run the PR's imports on this PC as a normal round would "
+                "(build the editor, run the imports, commit the content), push the branch again and rerun step 3 without "
+                "`--imports`. Never stop the round only because no node can import.\n"
                 "4. A check the plan says must run on this PC (packaged checks, a second player) is left for the "
                 "playtest list or the nightly; say so in the summary instead of running it here.\n"
                 "5. Land only after a node pass on the exact commit you land.\n"
