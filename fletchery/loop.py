@@ -953,7 +953,7 @@ class Engine:
         wt_root = getattr(self.ctx.repo, "worktree_root", None)
         if wt_root and not self.dry_run:
             try:
-                node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None))
+                node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None), self._tasks)
                 rounds.checkout_guard(Path(resume["checkpoint"]["worktree"]) if resume else rounds.checkout_path(self.ctx.repo),
                                       "" if node_why else cfg.heavy_lease_file)  # a node round never needs this PC's lease
             except RuntimeError as e:
@@ -998,7 +998,7 @@ class Engine:
         started = now()
         res = {"round": n, "result": "failed", "at": started, "started": started,
                "key": key, "summary": "", "pr": 0, "agent": agent}
-        node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None))
+        node_why = "" if resume else rounds.node_round(cfg, batch, getattr(self, "machines", None), self._tasks)
         if node_why:
             self.ctx.log(f"merge round {n}: {node_why}; this PC only merges")
             if isinstance(self.round_info, dict):

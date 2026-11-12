@@ -345,6 +345,15 @@ class NodeRoundTests(unittest.TestCase):
         self.assertEqual(rounds.node_round(cfg, prs, self._coord(["N"], shadow=True)), "")      # shadow mode
         imp = prs + [SimpleNamespace(number=3, body="Lane-Imports: furniture")]
         self.assertEqual(rounds.node_round(cfg, imp, self._coord(["N"])), "")                   # imports stay on the PC
+        bullet = prs + [SimpleNamespace(number=4, body="Checks: - **Lane-Imports:** ImportEnvironment")]
+        self.assertIn("N", rounds.node_round(cfg, bullet, self._coord(["N"])))                 # mid-line mention is not a line
+        bullet[-1].body = "Notes\n- **Lane-Imports:** ImportEnvironment"
+        self.assertEqual(rounds.node_round(cfg, bullet, self._coord(["N"])), "")                # a bullet line counts
+        task = SimpleNamespace(number=974, pr_number=1679, body="## Proof\n- Lane-Imports: ImportEnvironment")
+        woods = prs + [SimpleNamespace(number=1679, body="Closes #974\nLane-Imports: ImportEnvironment acceptance not rerun")]
+        woods[-1].body = "Closes #974\n- Prior Lane-Imports: ImportEnvironment acceptance was not rerun."
+        self.assertIn("N", rounds.node_round(cfg, woods, self._coord(["N"])))
+        self.assertEqual(rounds.node_round(cfg, woods, self._coord(["N"]), {974: task}), "")  # the issue asks for imports
         cfg.machines["roundTests"]["whole"] = False
         self.assertEqual(rounds.node_round(cfg, prs, self._coord(["N"])), "")
         text = rounds.node_tests_text(SimpleNamespace(machines={"roundTests": {"labels": []}}, state_dir="E:/s"), 7, "Test-Staging", whole=True)
@@ -373,6 +382,7 @@ class NodeImportTests(unittest.TestCase):
         text = rounds.node_tests_text(cfg, 9, "Test-Staging", whole=True)
         self.assertIn("--push-branch fletchery/round-9", text)
         self.assertIn("git merge --ff-only FETCH_HEAD", text)
+        self.assertIn("no node has the `role:imports` label", text)
 
     def test_params_accept_imports_only_with_a_round_branch(self):
         from machines import check_params
