@@ -579,6 +579,9 @@ def node_round(cfg, batch, coord, tasks=None) -> str:
         if not conf.get("imports"):
             return ""
         labels.append("role:imports")
+        if (getattr(cfg, "machines", None) or {}).get("assetRoots"):
+            # The node mirrors the PC's asset folders first; an older worker that can't would import from nothing.
+            labels.append("cap:asset-sync")
     try:
         import machines
         names = coord.machines.eligible(labels, machines.RECIPES["node-checks"]["min_ram_gb"], "node-checks")

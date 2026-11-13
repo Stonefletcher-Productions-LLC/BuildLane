@@ -358,7 +358,7 @@ class EndToEndTests(Base):
         self.assertIn("##[step] Show the commit: exit 0", log)
         node = self.m.view()["machines"][0]
         self.assertTrue(node["online"])
-        self.assertEqual(node["labels"], ["os:linux"])
+        self.assertEqual(node["labels"], ["cap:asset-sync", "os:linux"])
 
     def test_the_worker_refuses_a_recipe_it_does_not_run(self):
         root = Path(self.tmp.name)

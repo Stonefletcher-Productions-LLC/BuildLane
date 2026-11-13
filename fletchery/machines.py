@@ -12,7 +12,8 @@ names one of the node's own recipes (node_worker.RECIPES) plus checked parameter
 Profile (workers.machines):
     {"listen": "100.83.43.111:8771",            # the worker API: the coordinator's Tailscale address, never 0.0.0.0
      "shadow": true,                            # commit statuses go out as "shadow/<context>" until cutover
-     "nightly": {"at": "07:00", "branch": "main", "recipe": "nightly-full"}}   # optional; UTC
+     "nightly": {"at": "07:00", "branch": "main", "recipe": "nightly-full"},   # optional; UTC
+     "assetRoots": ["E:\\lifeshare-scratch\\meshy_export"]}   # PC folders every node mirrors (same path) before imports
 
 The worker API (all POST, JSON, `Authorization: Bearer <key>` and `X-Fletchery-Machine: <name>`):
     /v1/hello      {labels, ram_gb, disk_free_gb, version}          -> {poll_seconds}
@@ -22,6 +23,9 @@ The worker API (all POST, JSON, `Authorization: Bearer <key>` and `X-Fletchery-M
     /v1/result     {job_id, exit_code, summary, result}             -> {ok}
     /v1/upload     {job_id, name, offset, data (base64), done, sha256} -> {ok, path}: a node copies a packaged
                    build back to this PC (<state>/builds), in chunks; the last call checks the hash and unpacks it
+    /v1/assets/list {}                                              -> {host, roots: [{root, files: [[path, size,
+                   sha256]]}], missing}: the PC folders nodes mirror before imports (workers.machines.assetRoots)
+    /v1/assets/read {root, path, offset}                            -> {data (base64), size}: one chunk of one file
 
 Command line (on the PC, against the same state folder as the backend):
     python machines.py --state-dir <dir> add <name>        print a new node's key (once)
@@ -64,6 +68,13 @@ ONLY = re.compile(r"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$")
 IMPORT_LIST = re.compile(r"^[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?(,[A-Za-z0-9_]+(:[A-Za-z0-9_./-]+)?)*$")
 ROUND_BRANCH = re.compile(r"^fletchery/round-[0-9]{1,6}$")
 IMPORT_LABEL = "role:imports"   # a node that has a write key (gitPushKey) and so can import and push round content
+# A worker that mirrors the PC's asset folders before an import (node_worker.sync_assets) says so with this label. When
+# the profile shares asset folders, an import job only goes to a node that carries it (Alex, 2026-11-13: "Ensure that
+# this is always going to be used"; #1681 failed because the node had no meshy_export).
+ASSET_SYNC_LABEL = "cap:asset-sync"
+ASSET_ROOTS_FILE = "asset_roots.json"   # in the state folder, so `machines.py run` (a round's command) sees the profile
+ASSET_CHUNK = 4 * 1024 * 1024
+ASSET_SKIP = (".fletchery-assets.json", ".fletchery-part")   # a mirror's own bookkeeping, never shared back
 
 # What Fletchery can ask a node to run. The node has the same list and refuses anything else. `context` is the GitHub
 # commit status the job reports under: the names the Buildlane runner used, so ci.yml and lane.yml read them unchanged.
@@ -288,6 +299,87 @@ class Machines:
                     raise ValueError(f"unsafe path in the zip: {member}")
             z.extractall(folder)
         return {"ok": True, "path": str(folder), "zip": str(final)}
+
+    # ---- asset folders nodes mirror from this PC (Alex, 2026-11-13: a permanent way to share files with nodes) ----
+    def set_asset_roots(self, roots) -> list[str]:
+        """Keep the profile's workers.machines.assetRoots in the state folder: the worker API serves them and a round's
+        `machines.py run` checks them before it queues an import."""
+        clean = []
+        for r in roots or []:
+            r = str(r or "").strip()
+            if r and Path(r).is_absolute() and r not in clean:
+                clean.append(r)
+        path = self.dir / ASSET_ROOTS_FILE
+        text = json.dumps(clean, indent=2)
+        if not path.exists() or path.read_text(encoding="utf-8") != text:
+            path.write_text(text, encoding="utf-8")
+        return clean
+
+    def asset_roots(self) -> list[str]:
+        try:
+            roots = json.loads((self.dir / ASSET_ROOTS_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return [str(r) for r in roots if isinstance(r, str) and r] if isinstance(roots, list) else []
+
+    def missing_asset_roots(self) -> list[str]:
+        """Shared asset folders that are not on this PC, or are empty: an import would fail on every node."""
+        out = []
+        for r in self.asset_roots():
+            p = Path(r)
+            try:
+                if not p.is_dir() or not any(p.iterdir()):
+                    out.append(r)
+            except OSError:
+                out.append(r)
+        return out
+
+    def _hash(self, path: Path, size: int, mtime: int) -> str:
+        cache = self.__dict__.setdefault("_asset_hashes", {})
+        key = str(path)
+        hit = cache.get(key)
+        if hit and hit[0] == size and hit[1] == mtime:
+            return hit[2]
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        cache[key] = (size, mtime, h.hexdigest())
+        return cache[key][2]
+
+    def asset_list(self) -> dict:
+        """Every file under each shared folder with its size and SHA-256 (cached by size and modified time, so only
+        new or changed files are hashed again)."""
+        import socket
+        roots, missing = [], self.missing_asset_roots()
+        for r in self.asset_roots():
+            if r in missing:
+                continue
+            base, files = Path(r), []
+            for p in sorted(base.rglob("*")):
+                if not p.is_file() or p.is_symlink() or p.name.endswith(ASSET_SKIP):
+                    continue
+                st = p.stat()
+                files.append([p.relative_to(base).as_posix(), st.st_size, self._hash(p, st.st_size, st.st_mtime_ns)])
+            roots.append({"root": r, "files": files})
+        return {"host": socket.gethostname(), "roots": roots, "missing": missing}
+
+    def asset_read(self, root: str, rel: str, offset: int) -> dict:
+        import base64
+        if root not in self.asset_roots():
+            raise PermissionError("that folder is not shared with nodes")
+        base = Path(root).resolve()
+        parts = Path(str(rel or "")).parts
+        if not rel or Path(rel).is_absolute() or ".." in parts or str(rel).startswith(("/", "\\")):
+            raise ValueError("bad path")
+        p = (base / rel).resolve()
+        if base not in p.parents or not p.is_file() or p.name.endswith(ASSET_SKIP):
+            raise ValueError("no such file")
+        size = p.stat().st_size
+        with open(p, "rb") as f:
+            f.seek(max(0, int(offset)))
+            data = f.read(ASSET_CHUNK)
+        return {"data": base64.b64encode(data).decode("ascii"), "size": size}
 
     def cancel(self, job_id: int) -> str:
         with self._lock, self._db() as db:
@@ -801,6 +893,11 @@ class WorkerApi:
                 return 200, m.upload(machine, job_id, str(data.get("name") or ""), int(data.get("offset") or 0),
                                      base64.b64decode(str(data.get("data") or "")), bool(data.get("done")),
                                      str(data.get("sha256") or ""))
+            if path == "/v1/assets/list":
+                return 200, m.asset_list()
+            if path == "/v1/assets/read":
+                return 200, m.asset_read(str(data.get("root") or ""), str(data.get("path") or ""),
+                                         int(data.get("offset") or 0))
             if path == "/v1/result":
                 m.seen(machine, ip, stats=stats)
                 m.finish(machine, job_id, int(data.get("exit_code", 1)), str(data.get("summary") or ""), data.get("result"))
@@ -868,6 +965,11 @@ class Coordinator:
         self.gh = gh
         self.log = log
         self.machines = Machines(cfg.state_dir, cfg.repo, shadow=conf.get("shadow", True) is not False)
+        roots = self.machines.set_asset_roots(conf.get("assetRoots") or [])
+        for r in self.machines.missing_asset_roots():
+            log(f"machines: shared asset folder {r} is missing or empty on this PC; node imports will refuse to start")
+        if roots:
+            log(f"machines: nodes mirror {', '.join(roots)} before imports")
         self.api = WorkerApi(self.machines, conf["listen"], log) if conf.get("listen") else None
         self._stop = threading.Event()
         self.error = ""
@@ -951,7 +1053,16 @@ def run_job(m: "Machines", recipe: str, sha: str, params: dict | None = None, re
     import time
     clock, sleep = clock or time.monotonic, sleep or time.sleep
     params = dict(params or {})
-    need = list(RECIPES[recipe]["labels"]) + [x for x in (labels or []) if x not in RECIPES[recipe]["labels"]]
+    labels = list(labels or [])
+    if params.get("imports") and m.asset_roots():
+        missing = m.missing_asset_roots()
+        if missing:
+            out(f"No result: the shared asset folder {', '.join(missing)} is missing or empty on this PC, so the "
+                f"imports cannot run anywhere. Restore it (or fix workers.machines.assetRoots) and run the round again.")
+            return 2
+        if ASSET_SYNC_LABEL not in labels:   # only a worker that mirrors the asset folders first may import
+            labels.append(ASSET_SYNC_LABEL)
+    need = list(RECIPES[recipe]["labels"]) + [x for x in labels if x not in RECIPES[recipe]["labels"]]
     names = m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe)
     if not names:
         out(f"No result: no online node takes {recipe} with labels {' '.join(need)} (offline, paused or busy elsewhere).")
