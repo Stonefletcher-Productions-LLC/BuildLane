@@ -37,7 +37,7 @@ import threading
 import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 VERSION = re.compile(r"^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$")
 REF = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
@@ -303,6 +303,13 @@ class Builds:
     def publish(self, row: dict, p: dict) -> None:
         import publish
         folder = Path(row.get("output") or "")
+        coord = getattr(self.engine, "machines", None)
+        if row.get("output") and not folder.is_dir() and coord is not None:
+            # A node build whose summary named the node's folder: the copy it sent back has the same name here.
+            try:
+                folder = Path(coord.machines.upload_dir()) / PureWindowsPath(row["output"]).name
+            except Exception:
+                pass
         if not row.get("output") or not folder.is_dir():
             self.update(row, publish="skipped", publish_reason=f"The package folder is not on this PC ({row.get('output') or 'none'}).")
             return

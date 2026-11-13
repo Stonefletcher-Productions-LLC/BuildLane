@@ -146,6 +146,17 @@ class HookTests(Base):
         self.assertEqual(row["publish"], "failed")
         self.assertIn("422", row["publish_reason"])
 
+    def test_a_node_build_is_found_where_the_node_sent_it(self):
+        self.engine.cfg.builds = {"publish": {"to": "github", "keep": 3}}
+        self.engine.ctx.gh = FakeGitHub()
+        package(Path(self.m.upload_dir()))
+        row = self.done_row("0.4.0", "2026-11-12T04:00:00+00:00", "E:\\buildlane-node\\_work\\builds\\LifeShare-0.4.0")
+        with mock.patch("publish.subprocess.run", return_value=mock.Mock(returncode=0)) as run:
+            self.b._publish_next()
+            self.wait()
+        self.assertEqual(row["publish"], "published", row.get("publish_reason"))
+        self.assertTrue(run.call_args[0][0][4].endswith("LifeShare-0.4.0-" + SHA[:10] + ".zip"))
+
 
 if __name__ == "__main__":
     unittest.main()
