@@ -20,12 +20,20 @@ Config (JSON, e.g. C:\\StoneNode\\fletchery-worker.json):
      "buildsDir": "E:\\\\fletchery-builds",
      "heavyLeaseFile": "E:\\\\GitHubRunner\\\\ResourceLeases\\\\heavy.json",  # optional, for a node on a PC that also
                                                                          # runs Unreal itself: hold the PC's heavy lease per job                            # optional: where `package` writes (default <workRoot>\\builds)
-     "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check", "package"]}   # what this node agrees to run
+     "recipes": ["node-checks", "nightly-full", "checkout-only", "pr-check", "package"],  # what this node agrees to run
+     "assetMap": {"E:\\\\lifeshare-scratch\\\\meshy_export": "D:\\\\assets\\\\meshy_export"}}  # optional: mirror a
+                                                     # shared PC folder somewhere else (default: the same path here)
+
+Asset folders: the PC shares workers.machines.assetRoots (e.g. E:\\lifeshare-scratch\\meshy_export, which LifeShare's
+imports read by absolute path). The worker mirrors them to the same path here before every import job, and also when it
+starts and every ASSET_IDLE_SECONDS while idle, so a new node fills itself. Only new or changed files are copied (size +
+SHA-256), each one checked before it replaces the old copy; nothing here is ever deleted.
 
     python node_worker.py check   --config <file>     sign in to the coordinator once and print what it sees
     python node_worker.py run     --config <file>     the worker loop (what the logon task runs)
     python node_worker.py install --config <file>     a Windows logon task that starts `run` (current user, limited)
     python node_worker.py uninstall
+    python node_worker.py sync    --config <file>     mirror the PC's shared asset folders now
 """
 from __future__ import annotations
 
@@ -42,7 +50,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1"
+VERSION = "2"   # 2: mirrors the PC's asset folders (label cap:asset-sync)
+ASSET_SYNC_LABEL = "cap:asset-sync"
+ASSET_IDLE_SECONDS = 15 * 60
+ASSET_INDEX = ".fletchery-assets.json"
+ASSET_PART = ".fletchery-part"
+ASSET_MIN_FREE_GB = 10
 TASK_NAME = "Fletchery node worker"
 HEARTBEAT_SECONDS = 30
 LOG_FLUSH_SECONDS = 5
@@ -424,6 +437,110 @@ def upload_build(coord, job_id: int, folder, log=print, chunk: int = UPLOAD_CHUN
             pass
 
 
+# ---- mirroring the PC's asset folders (Alex, 2026-11-13: a permanent way to share files with every node) ----
+class AssetSyncError(RuntimeError):
+    pass
+
+
+def _file_sha(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _safe_rel(rel: str) -> bool:
+    parts = Path(rel).parts
+    return bool(rel) and not Path(rel).is_absolute() and ".." not in parts and not rel.startswith(("/", "\\")) \
+        and ":" not in rel
+
+
+def sync_assets(coord, cfg: dict, log=print) -> dict:
+    """Mirror every folder the PC shares (workers.machines.assetRoots) to the same path on this node (or cfg assetMap).
+    Copies only files that are missing or differ, into <name>.fletchery-part, checks the SHA-256, then swaps it in.
+    Raises AssetSyncError when the PC is missing a folder or a copy fails, so an import job stops before it imports.
+    Returns {"roots": n, "copied": n, "bytes": n}."""
+    import base64
+    import socket
+    try:
+        listing = coord.call("/v1/assets/list", {}, timeout=900)
+    except RuntimeError as e:
+        if "HTTP 404" in str(e):   # an older Fletchery on the PC: it shares nothing yet
+            log("assets: the PC's Fletchery does not share asset folders yet; nothing to mirror")
+            return {"roots": 0, "copied": 0, "bytes": 0}
+        raise AssetSyncError(f"could not list the PC's asset folders: {e}") from None
+    if listing.get("missing"):
+        raise AssetSyncError("the PC is missing shared asset folder(s): " + ", ".join(map(str, listing["missing"])))
+    same_host = str(listing.get("host") or "").lower() == socket.gethostname().lower()
+    amap = {str(k).lower(): str(v) for k, v in (cfg.get("assetMap") or {}).items()}
+    copied = total = 0
+    roots = listing.get("roots") or []
+    for entry in roots:
+        root = str(entry.get("root") or "")
+        dest = Path(amap.get(root.lower()) or root)
+        if same_host and str(dest).lower() == root.lower():
+            continue   # the worker on the PC itself: the folder is already here
+        files = entry.get("files") or []
+        need = []
+        dest.mkdir(parents=True, exist_ok=True)
+        index_path = dest / ASSET_INDEX
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            index = {}
+        for rel, size, sha in files:
+            rel = str(rel)
+            if not _safe_rel(rel):
+                raise AssetSyncError(f"refused an unsafe path from the PC: {rel}")
+            local = dest / rel
+            if local.is_file():
+                st = local.stat()
+                if st.st_size == size:
+                    known = index.get(rel)
+                    if known and known[0] == size and known[1] == st.st_mtime_ns and known[2] == sha:
+                        continue
+                    if _file_sha(local) == sha:
+                        index[rel] = [size, st.st_mtime_ns, sha]
+                        continue
+            need.append((rel, int(size), str(sha)))
+        want = sum(n[1] for n in need)
+        if need:
+            free = shutil.disk_usage(dest).free
+            if free - want < ASSET_MIN_FREE_GB * 2**30:
+                raise AssetSyncError(f"{dest} needs {want / 2**30:.1f} GB but its drive has {free / 2**30:.1f} GB free")
+            log(f"assets: {root}: copying {len(need)} file(s), {want / 2**20:.0f} MB, to {dest}")
+        for rel, size, sha in need:
+            local = dest / rel
+            local.parent.mkdir(parents=True, exist_ok=True)
+            part = local.with_name(local.name + ASSET_PART)
+            try:
+                with open(part, "wb") as f:
+                    offset = 0
+                    while offset < size:
+                        answer = coord.call("/v1/assets/read", {"root": root, "path": rel, "offset": offset}, timeout=120)
+                        data = base64.b64decode(answer.get("data") or "")
+                        if not data:
+                            break
+                        f.write(data)
+                        offset += len(data)
+                if part.stat().st_size != size or _file_sha(part) != sha:
+                    raise AssetSyncError(f"{rel}: the copy does not match the PC's file (it changed while copying?)")
+                os.replace(part, local)
+            except AssetSyncError:
+                part.unlink(missing_ok=True)
+                raise
+            except Exception as e:
+                part.unlink(missing_ok=True)
+                raise AssetSyncError(f"{rel}: {type(e).__name__}: {e}") from None
+            index[rel] = [size, local.stat().st_mtime_ns, sha]
+            copied += 1
+            total += size
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+    return {"roots": len(roots), "copied": copied, "bytes": total}
+
+
 # ---- running a job ----
 def _git_env(cfg: dict) -> dict:
     env = dict(os.environ)
@@ -572,6 +689,17 @@ class Job:
                     params["out_dir"] = str(package_out(cfg.get("buildsDir") or Path(cfg["workRoot"]) / "builds",
                                                         "LifeShare", str(params.get("version") or ""), job["sha"]))
                     out_dir = params["out_dir"]
+                if params.get("imports"):   # an import reads the PC's asset folders: mirror them first, or stop here
+                    self.out("\n##[step] Mirror the PC's asset folders")
+                    try:
+                        got = sync_assets(self.coord, cfg, self.out)
+                        self.out(f"{got['roots']} shared folder(s) up to date; copied {got['copied']} file(s), "
+                                 f"{got['bytes'] / 2**20:.0f} MB")
+                        self.out("##[step] Mirror the PC's asset folders: exit 0")
+                    except AssetSyncError as e:
+                        self.out(f"##[error] {e}")
+                        self.out("##[step] Mirror the PC's asset folders: exit 1")
+                        code, summary = 1, f"Asset folders not mirrored, imports not started: {e}"
                 for name, step, always in recipe_steps(job["recipe"], params, ws, cfg, result_json, job["sha"]):
                     if (code or self.cancelled) and not always:
                         continue
@@ -649,7 +777,10 @@ def _logger(cfg: dict):
 
 def hello(coord: Coordinator, cfg: dict) -> dict:
     total, _ = _memory()
-    return coord.call("/v1/hello", {"labels": cfg.get("labels") or [], "ram_gb": round(total / 2**30, 1),
+    labels = list(cfg.get("labels") or [])
+    if ASSET_SYNC_LABEL not in labels:
+        labels.append(ASSET_SYNC_LABEL)
+    return coord.call("/v1/hello", {"labels": labels, "ram_gb": round(total / 2**30, 1),
                                     "version": VERSION, "stats": stats(cfg)})
 
 
@@ -660,6 +791,7 @@ def run(cfg: dict, once: bool = False) -> int:
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
     coord = Coordinator(cfg)
     poll, said = 15, ""
+    next_sync = 0.0   # mirror the asset folders as soon as the worker starts: a new node fills itself
     while True:
         try:
             poll = int(hello(coord, cfg).get("poll_seconds") or 15)
@@ -693,6 +825,15 @@ def run(cfg: dict, once: bool = False) -> int:
                     continue
                 if once:
                     return 0
+                if not st.get("paused") and time.monotonic() >= next_sync:
+                    next_sync = time.monotonic() + ASSET_IDLE_SECONDS
+                    try:
+                        got = sync_assets(coord, cfg, log)
+                        if got["copied"]:
+                            log(f"assets: copied {got['copied']} file(s), {got['bytes'] / 2**20:.0f} MB")
+                    except Exception as e:   # an import job will try again and fail clearly if it still can't
+                        log(f"assets: {e}")
+                    continue
                 time.sleep(poll)
         except Exception as e:
             msg = f"coordinator unreachable: {e}"
@@ -728,7 +869,7 @@ def uninstall() -> int:
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Fletchery node worker")
-    ap.add_argument("command", choices=["check", "run", "once", "install", "uninstall", "upload"])
+    ap.add_argument("command", choices=["check", "run", "once", "install", "uninstall", "upload", "sync"])
     ap.add_argument("--config", default="")
     ap.add_argument("--job", type=int, default=0, help="upload: the package job that made the build")
     ap.add_argument("--folder", default="", help="upload: the packaged build folder on this node")
@@ -744,6 +885,14 @@ def main(argv=None) -> int:
         where = upload_build(Coordinator(cfg), a.job, a.folder)
         print(f"copied to {where} on the PC" if where else "not copied")
         return 0 if where else 1
+    if a.command == "sync":
+        try:
+            got = sync_assets(Coordinator(cfg), cfg)
+        except AssetSyncError as e:
+            print(f"not mirrored: {e}")
+            return 1
+        print(f"{got['roots']} shared folder(s) up to date; copied {got['copied']} file(s), {got['bytes'] / 2**20:.0f} MB")
+        return 0
     if a.command == "check":
         print(json.dumps({"hello": hello(Coordinator(cfg), cfg), "stats": stats(cfg)}, indent=2))
         return 0

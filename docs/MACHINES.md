@@ -125,6 +125,32 @@ heavy lease (`E:\\GitHubRunner\\ResourceLeases\\heavy.json`): the worker then ho
 paused (takes nothing) while a round, a build or a local editor run holds it, so a node job and other Unreal work on
 the PC never run at the same time. Pause it from Machines (Tests, PR checks, Builds) when the PC is needed.
 
+## Asset folders every node mirrors
+
+Some project imports read files that are not in git: LifeShare's character and wardrobe imports read
+`E:\\lifeshare-scratch\\meshy_export\\<delivery>` by absolute path (Tools/CI/V8CharacterDelivery.json). A node that does
+not have them fails mid-import (LifeShare #1681). So the PC shares those folders with every node through the worker
+API, on the same Tailscale address and with the same per-node keys. There is no SMB share or firewall rule.
+
+- **Profile:** `"assetRoots": ["E:\\lifeshare-scratch\\meshy_export"]` inside `workers.machines`. Fletchery copies the
+  list to `<state>\\asset_roots.json` so a round's `machines.py run` sees it, and logs a line at start for any folder
+  that is missing or empty.
+- **API:** `/v1/assets/list` gives each folder's files with their size and SHA-256 (hashes are cached by size and
+  modified time). `/v1/assets/read` gives one 4 MiB chunk of one file. It only serves files inside a shared folder,
+  with no `..` and no other paths.
+- **Worker:** `node_worker.py` (version 2) mirrors each shared folder to the **same path** on the node, or to a path set
+  with `assetMap` in its config. It runs first in every import job, as the step "Mirror the PC's asset folders". It
+  also runs when the worker starts and every 15 minutes while it is idle, so a newly added node fills itself before
+  its first import. Only missing or changed files are copied. Each file goes to `<name>.fletchery-part`, has its SHA-256
+  checked, and then replaces the old copy. Nothing on the node is deleted. A worker running on the PC itself skips this.
+  `python node_worker.py sync --config <file>` mirrors on demand.
+- **Always used:** the worker reports the label `cap:asset-sync`. When `assetRoots` is set, every import job needs that
+  label, so an older worker never gets an import. `machines.py run --imports ...` refuses before it queues anything if a
+  shared folder is missing or empty on the PC (exit 2, "missing or empty on this PC"). If the mirror fails, the job
+  fails before importing, with "Asset folders not mirrored, imports not started: <reason>".
+- **New asset folder:** add it to `assetRoots` (with Alex's OK for the live profile). Nodes pick it up within 15
+  minutes, or at their next import.
+
 ## Builds come back to the PC
 
 After a `package` job passes, the node zips the build and sends it to Fletchery in 4 MiB chunks over the worker API
