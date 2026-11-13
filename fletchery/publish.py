@@ -7,7 +7,9 @@ people with access to the repository: sign in to GitHub on any computer and down
 Turned on in the profile, in `workers.builds`:
     "publish": {"to": "github", "keep": 3}
 optional: "repo" (default: the project repository), "partGb" (largest zip, default 1.9: GitHub refuses release files
-of 2 GiB or more).
+of 2 GiB or more), "driveDir" (a folder that a sync app such as Google Drive for desktop uploads, e.g.
+"G:\\My Drive\\LifeShare Builds": the zips are moved there instead of deleted, and only the newest `keep` builds' zips
+stay in it; share that folder once by link and every build in it can be downloaded without a GitHub account).
 
 What happens to a finished build (`publish` on its row):
     zipping    the package folder is zipped without debug symbols (*.pdb) or Saved folders (logs, saves and settings
@@ -141,3 +143,26 @@ class Publisher:
                 self.log(f"tag {r['tag_name']} not deleted: {e}")
             gone.append(r["tag_name"])
         return gone
+
+
+def to_drive(zips: list[Path], drive_dir: Path, prefix: str, keep: int) -> list[str]:
+    """Move this build's zips into the synced folder, then delete zips of older builds (same name prefix, grouped by
+    build) beyond the newest `keep`. Returns the names removed."""
+    import shutil
+    drive_dir.mkdir(parents=True, exist_ok=True)
+    for z in zips:
+        target = drive_dir / z.name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(z), str(target))
+    builds: dict[str, float] = {}
+    for f in drive_dir.glob(f"{prefix}-*.zip"):
+        key = f.name[:-4].rsplit("-part", 1)[0] if "-part" in f.name else f.name[:-4]
+        builds[key] = max(builds.get(key, 0.0), f.stat().st_mtime)
+    removed = []
+    for key in sorted(builds, key=builds.get, reverse=True)[max(1, keep):]:
+        for f in drive_dir.glob(f"{key}*.zip"):
+            if f.name == f"{key}.zip" or f.name.startswith(f"{key}-part"):
+                f.unlink()
+                removed.append(f.name)
+    return removed

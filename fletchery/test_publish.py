@@ -97,6 +97,21 @@ class ZipTests(unittest.TestCase):
         self.assertEqual(url, f"https://github.com/o/r/releases/tag/build-0.4.0-{SHA[:10]}")
         self.assertIn("--clobber", run.call_args[0][0])
 
+    def test_drive_copy_keeps_the_newest_builds(self):
+        drive = self.root / "drive"
+        for i, name in enumerate(["LifeShare-0.3.9-a.zip", "LifeShare-0.4.0-b-part1.zip", "LifeShare-0.4.0-b-part2.zip"]):
+            drive.mkdir(exist_ok=True)
+            (drive / name).write_bytes(b"x")
+            os.utime(drive / name, (1000 + i, 1000 + i))
+        (drive / "notes.txt").write_text("mine")
+        new = self.root / "LifeShare-0.4.1-c.zip"
+        new.write_bytes(b"y")
+        removed = publish.to_drive([new], drive, "LifeShare", 2)
+        self.assertEqual(removed, ["LifeShare-0.3.9-a.zip"])
+        self.assertEqual(sorted(f.name for f in drive.iterdir()),
+                         ["LifeShare-0.4.0-b-part1.zip", "LifeShare-0.4.0-b-part2.zip", "LifeShare-0.4.1-c.zip", "notes.txt"])
+        self.assertFalse(new.exists())
+
 
 class HookTests(Base):
     def done_row(self, version, finished, output):
@@ -125,6 +140,7 @@ class HookTests(Base):
             self.b._publish_next()
             self.wait()
         self.assertEqual(new["publish"], "published")
+        self.assertNotIn("Copied", new["publish_reason"])
         self.assertTrue(new["download"].startswith("https://github.com/o/r/releases/tag/build-0.4.0-"))
         self.assertNotIn("publish", old)
         self.assertEqual(list((self.engine.state_dir / "builds" / "_downloads").glob("*.zip")), [])
