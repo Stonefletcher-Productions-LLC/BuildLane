@@ -481,3 +481,236 @@ def maintain(repo, gh, state_dir, protected_paths=(), open_tasks=(), lease_file=
     except Exception as exc:
         summary["error"] = str(exc)[:1000]
     return summary
+
+
+# ---- task checkouts no task will use again (2026-11-13: 478 of them held 154 GB of E:) ----
+
+TASK_DIR = re.compile(r"([0-9]+)-[a-z0-9][a-z0-9-]*")
+LOG_BACKUP_BYTES = 50 * 1024 ** 2
+
+
+def _shallow_newest(path: Path, depth: int = 2) -> float:
+    """Latest change near the top of a checkout, ignoring .git (git status rewrites its index). Cheap enough for
+    hundreds of checkouts; a running worker is caught by the process check, not by this."""
+    newest, stack = path.stat().st_mtime, [(path, 0)]
+    while stack:
+        directory, level = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if entry.name == ".git":
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    newest = max(newest, info.st_mtime)
+                    if level + 1 < depth and entry.is_dir(follow_symlinks=False) and not entry.is_symlink():
+                        stack.append((Path(entry.path), level + 1))
+        except OSError:
+            continue
+    return newest
+
+
+def _quick_size(path: Path) -> int:
+    total, stack = 0, [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+    return total
+
+
+def _changed_bytes(repo, path: Path) -> tuple[bool, int]:
+    status = repo.git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=path)
+    total, entries, i = 0, status.split("\0"), 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if not entry:
+            continue
+        if entry[0] in "RC":
+            i += 1
+        target = path / entry[3:]
+        if target.is_file() and not target.is_symlink():
+            total += target.stat().st_size
+    return bool(status), total
+
+
+def _backup_logs(path: Path, dest: Path) -> int:
+    """Small logs survive the checkout (Saved/Logs, newest first, up to LOG_BACKUP_BYTES)."""
+    import shutil
+    logs = path / "Saved" / "Logs"
+    if not logs.is_dir() or _reparse(logs):
+        return 0
+    files = sorted((f for f in logs.iterdir() if f.is_file() and not f.is_symlink()), key=lambda f: f.stat().st_mtime, reverse=True)
+    copied, used = 0, 0
+    for f in files:
+        size = f.stat().st_size
+        if used + size > LOG_BACKUP_BYTES:
+            continue
+        (dest / "logs").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_long(f), _long(dest / "logs" / f.name))
+        used += size
+        copied += 1
+    return copied
+
+
+def _mark_preserved_retired(root: Path, path: Path, backup: str) -> None:
+    """Keep the failed-attempt record (its branch and head are the history) but say the folder is gone."""
+    from repo import _TASK_CHECKOUT_LOCK
+    registry = root / ".task-checkouts.json"
+    with _TASK_CHECKOUT_LOCK:
+        if not registry.exists():
+            return
+        data = json.loads(registry.read_text(encoding="utf-8-sig"))
+        changed = False
+        for entry in data.get("preserved") or []:
+            if isinstance(entry, dict) and Path(str(entry.get("path", ""))).resolve() == path and not entry.get("retired_at"):
+                entry["retired_at"] = rounds.now_iso()
+                entry["backup"] = backup
+                changed = True
+        if changed:
+            rounds.write_file(str(registry), data)
+
+
+def prune_backups(backup_dir: str, days: float = 14) -> int:
+    """Task backups (changed files + logs) are kept `days`, then removed."""
+    if not backup_dir or days <= 0:
+        return 0
+    root = Path(backup_dir)
+    if not root.is_dir() or _reparse(root):
+        return 0
+    removed, cutoff = 0, time.time() - days * 86400
+    for child in root.iterdir():
+        if child.is_dir() and not _reparse(child) and child.stat().st_mtime < cutoff:
+            _remove_tree(child)
+            removed += 1
+    return removed
+
+
+def retire_task_checkouts(repo, open_tasks=(), protected_paths=(), backup_dir="", closed_hours=1.0,
+                          attempt_hours=24.0, limit=200, max_backup_bytes=2 * 1024 ** 3, dry_run=False,
+                          running_tasks=()) -> dict:
+    """Remove task checkouts no task will use again, with `git worktree remove --force` (never prune):
+      * every checkout of a closed task (issue closed: its PR merged, was closed, or the task was dropped), idle
+        `closed_hours`;
+      * old attempt, repair and superseded checkouts of an open task, idle `attempt_hours`. The task's active
+        checkout is never touched.
+    Commits stay on their branches. Uncommitted/untracked files and a binary patch are copied to `backup_dir` first,
+    with the newest Saved/Logs; a checkout with more than `max_backup_bytes` of uncommitted files, a detached HEAD,
+    a running process, or a link anywhere on its path is left for a person. Ignored build output is dropped."""
+    summary = {"checked_at": rounds.now_iso(), "dry_run": bool(dry_run), "freed_bytes": 0, "retired": [],
+               "skipped": [], "error": ""}
+    try:
+        root = Path(repo.worktree_root).absolute()
+        if not root.is_dir() or limit <= 0:
+            return summary
+        if any(_reparse(part) for part in (root, *root.parents)):
+            raise RuntimeError("Worktree root is linked; cleanup deferred")
+        root = root.resolve()
+        if not backup_dir:
+            raise RuntimeError("No task backup folder configured")
+        backup_root = Path(backup_dir).absolute()
+        if backup_root == root or root in backup_root.parents:
+            raise RuntimeError("Task backup folder is inside the worktree root")
+        opened = {int(n) for n in open_tasks}
+        running = {int(n) for n in running_tasks}
+        active = _active_tasks(root)
+        if not opened and active:
+            raise RuntimeError("No open tasks reported while task checkouts are active; cleanup deferred")
+        protected = {Path(p).resolve() for p in protected_paths}
+        merge_registry = root / ".merge-checkouts.json"
+        if merge_registry.exists():
+            data = json.loads(merge_registry.read_text(encoding="utf-8-sig"))
+            protected.update(Path(e["path"]).resolve() for e in ([{"path": data["active"]}] if data.get("active") else [])
+                             + list(data.get("quarantined") or []) if isinstance(e, dict) and isinstance(e.get("path"), str))
+        # An open task's active checkout is its live work: always kept.
+        protected.update(path for path in active if int(path.name.split("-", 1)[0]) in opened)
+        registered = rounds._registered_checkouts(repo)
+        now_ts = time.time()
+        for path in sorted(root.iterdir(), key=lambda p: p.name):
+            if len(summary["retired"]) >= limit:
+                break
+            match = TASK_DIR.fullmatch(path.name)
+            if not match or not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+                if _reparse(path) or resolved in protected:
+                    raise RuntimeError("Active, protected or linked checkout")
+                issue = int(match[1])
+                if issue in running:
+                    raise RuntimeError("A worker or fixer is running for this task")
+                closed = issue not in opened
+                idle_hours = (now_ts - _shallow_newest(path)) / 3600
+                needed = closed_hours if closed else attempt_hours
+                if idle_hours < needed:
+                    raise RuntimeError(f"Used {idle_hours:.1f} h ago; kept for {needed:g} h")
+                if resolved not in registered or not (path / ".git").is_file():
+                    raise RuntimeError("Not a registered checkout of this repository")
+                busy = rounds.worktree_busy(path)
+                if busy:
+                    raise RuntimeError("In use: " + ", ".join(busy[:3]))
+                branch = repo.git("branch", "--show-current", cwd=path)
+                if not branch:
+                    raise RuntimeError("Detached HEAD; its commits would lose their branch")
+                dirty, changed = _changed_bytes(repo, path)
+                if changed > max_backup_bytes:
+                    raise RuntimeError(f"{changed / 1024 ** 3:.1f} GB of uncommitted files; left for a person")
+                size = _quick_size(path)
+                entry = {"path": str(path), "issue": issue, "closed": closed, "branch": branch,
+                         "logical_bytes": size, "backup": ""}
+                if dry_run:
+                    summary["retired"].append(entry)
+                    continue
+                dest = backup_root / f"{path.name}-{time.strftime('%Y%m%d-%H%M%S')}"
+                if dirty:
+                    entry["files"] = _backup_changes(repo, path, dest)
+                logs = _backup_logs(path, dest)
+                if dirty or logs:
+                    entry["backup"] = str(dest)
+                if rounds.worktree_busy(path):  # a worker may have started meanwhile
+                    raise RuntimeError("Became busy during cleanup; kept")
+                repo.git("worktree", "remove", "--force", str(path))
+                if path.exists():
+                    raise RuntimeError("Git did not remove the checkout")
+                if active.get(resolved):
+                    _forget_active(root, resolved)
+                _mark_preserved_retired(root, resolved, entry["backup"])
+                summary["retired"].append(entry)
+                summary["freed_bytes"] += size
+            except Exception as exc:
+                summary["skipped"].append({"path": str(path), "reason": str(exc)[:300]})
+    except Exception as exc:
+        summary["error"] = str(exc)[:1000]
+    return summary
+
+
+def disk_report(drive_path: str, scan_root: str = "", top: int = 10) -> dict:
+    """Free space on the work drive and the largest folders directly under `scan_root` (for the dashboard)."""
+    import shutil
+    report: dict = {"checked_at": rounds.now_iso(), "free_gb": None, "total_gb": None, "top": [], "scan_root": scan_root}
+    try:
+        usage = shutil.disk_usage(drive_path)
+        report["free_gb"], report["total_gb"] = round(usage.free / 1024 ** 3, 1), round(usage.total / 1024 ** 3, 1)
+    except OSError as exc:
+        report["error"] = str(exc)[:200]
+        return report
+    root = Path(scan_root) if scan_root else None
+    if root and root.is_dir() and not _reparse(root):
+        sizes = []
+        for child in root.iterdir():
+            try:
+                if child.is_dir() and not _reparse(child):
+                    sizes.append((_quick_size(child), child))
+            except OSError:
+                continue
+        sizes.sort(key=lambda s: s[0], reverse=True)
+        report["top"] = [{"path": str(p), "gb": round(b / 1024 ** 3, 1)} for b, p in sizes[:top]]
+    return report

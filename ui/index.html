@@ -1715,7 +1715,15 @@ function renderStatus(d) {
     const lastCleanup = storage.last || {};
     const count = (lastCleanup.retired || []).length;
     const freed = Number(lastCleanup.freed_bytes || 0) / (1024 ** 3);
-    $("storageStatus").innerHTML = `Storage: ${storage.running ? "checking completed task copies…" : storage.requested ? "cleanup queued for a safe idle opportunity" : count ? `${count} completed copies retired · ${freed.toFixed(1)} GiB removed` : storage.enabled ? "automatic cleanup on" : "automatic cleanup off"}. <button type="button" class="linkbtn" onclick="cleanStorage()">Clean eligible copies</button>${lastCleanup.error ? `<br>${esc(lastCleanup.error)}` : ""}`;
+    const taskRun = storage.tasks || {};
+    const taskCount = Number(taskRun.retired_count || 0), taskFreed = Number(taskRun.freed_bytes || 0) / (1024 ** 3);
+    const report = storage.report || {};
+    const free = storage.free_gb != null ? storage.free_gb : report.free_gb;
+    const diskLine = free == null ? "" : `<br><span class="${storage.disk_why ? "lane-warn bad" : ""}">Work drive: ${Number(free).toFixed(0)} GB free${report.total_gb ? ` of ${Number(report.total_gb).toFixed(0)} GB` : ""}${storage.min_free_gb ? ` · new work holds below ${storage.min_free_gb} GB` : ""}</span>`;
+    const why = storage.disk_why ? `<br>${esc(storage.disk_why)}` : "";
+    const topRows = (report.top || []).map(t => `<li>${esc(String(t.gb))} GB · ${esc(t.path)}</li>`).join("");
+    const top = topRows ? `<details><summary>Largest folders${report.scan_root ? ` in ${esc(report.scan_root)}` : ""}</summary><ol>${topRows}</ol></details>` : "";
+    $("storageStatus").innerHTML = `Storage: ${storage.running ? "checking completed task copies…" : storage.requested ? "cleanup queued for a safe idle opportunity" : count ? `${count} completed copies retired · ${freed.toFixed(1)} GiB removed` : storage.enabled ? "automatic cleanup on" : "automatic cleanup off"}${taskCount ? ` · ${taskCount} finished or old attempt copies removed (${taskFreed.toFixed(1)} GiB)` : ""}. <button type="button" class="linkbtn" onclick="cleanStorage()">Clean eligible copies</button>${lastCleanup.error ? `<br>${esc(lastCleanup.error)}` : ""}${taskRun.error ? `<br>${esc(taskRun.error)}` : ""}${diskLine}${why}${top}`;
   }
   const running = ordinary.length;
   const mergeWait = workerMergeWait(d);

@@ -34,6 +34,8 @@ def default_state_dir(name: str) -> str:
 WORKER_KEYS = {
     "autoCleanup": "auto_cleanup", "cleanupRetentionHours": "cleanup_retention_hours", "thinTextWorkers": "thin_text_workers",
     "mergeBackupDir": "merge_backup_dir", "keepMergeCheckouts": "keep_merge_checkouts",
+    "workMinimumFreeGB": "work_min_free_gb", "attemptRetentionHours": "attempt_retention_hours",
+    "taskBackupDir": "task_backup_dir", "taskBackupDays": "task_backup_days", "diskReportRoot": "disk_report_root",
     "emergencyWorkers": "emergency_workers", "workerRankLimits": "worker_rank_limits",
     "assetTasks": "asset_tasks", "workerAllowedTools": "worker_allowed_tools", "workerDirs": "worker_dirs",
     "autoPrerequisites": "auto_prerequisites",
@@ -79,6 +81,14 @@ class Config:
     # drive). With no backup folder only clean ones are retired. Their branches, and so their commits, stay.
     merge_backup_dir: str = ""
     keep_merge_checkouts: int = 2
+    # Disk guard (2026-11-13: E: fell to 27 GB of 931 as task checkouts piled up). Below `work_min_free_gb` on the
+    # worktree drive no new task, fixer, round or build starts and finished copies are cleaned at once. 0 = off
+    # (the default, so small test and CI disks are unaffected); the LifeShare profile sets 100.
+    work_min_free_gb: float = 0.0
+    attempt_retention_hours: float = 24      # old attempt/repair copies of an open task are removed after this idle time
+    task_backup_dir: str = ""                # "" = <state_dir>/task-backups: changed files + logs of removed copies
+    task_backup_days: float = 14
+    disk_report_root: str = ""               # "" = the folder holding state_dir; its 10 largest folders are shown
     thin_text_workers: bool = True            # omit binary Art/Content only in newly created text task checkouts
     asset_tasks: dict = None                 # explicit per-task paths/mode; default remains text-only
     # Claude sessions load no settings.json (runtime.py: setting_sources=[]), so an allow rule in

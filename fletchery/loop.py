@@ -219,6 +219,13 @@ class Engine:
         self._aloop: asyncio.AbstractEventLoop | None = None
         self.watcher = None
         self._storage_job = None
+        self.disk_why, self.disk_free_gb, self._disk_cleanup_at = "", None, 0.0
+        self.task_retire_last: dict = {}
+        self.disk_report: dict = {}
+        try:
+            self.disk_report = json.loads((Path(state_dir) / "disk-report.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
         self._storage_after_round = False  # a round just landed: clean now, even while workers run
         self.round_job = None           # the merge round running now (rounds.py), an asyncio task
         self.live_round = None          # that round's number while it runs; a round file naming another is left over
@@ -466,6 +473,7 @@ class Engine:
         self._known_closed_dependencies = closed_deps
         self._dependency_lookup = is_closed
         self._verify_repository_dependencies = verify_repository_dependencies
+        self.disk_why = self._disk_guard()
         if st.storage_requested:
             resume = st.merge_resume
             wait_for = resume.get("wait_for") if resume else None
@@ -481,13 +489,14 @@ class Engine:
             if (self._builds_job is None or self._builds_job.done()) and time.monotonic() >= self._builds_at:
                 self._builds_at = time.monotonic() + 30
                 self._builds_job = asyncio.ensure_future(asyncio.to_thread(self.builds.tick))
-        self._merge_round(draining)
-        self._maybe_node_pr_checks(draining)
+        hold_new = draining or bool(self.disk_why)  # a running round finishes; no new round, build or check starts
+        self._merge_round(hold_new)
+        self._maybe_node_pr_checks(hold_new)
         if self.plans.active_merge and self.plans.active_merge["state"] == "draining" and not self.merge_priority:
             self.plans.update(self.plans.active_merge, state="queued", reason=self.merge_why)
         plan_draining = bool(self.merge_priority and self.plans.active_merge and self.plans.active_merge["state"] == "draining")
         coding_off = "coding" in st.pc_paused  # Building -> Machines: coding paused on this PC; running sessions finish
-        paused = paused or plan_draining or coding_off
+        paused = paused or plan_draining or coding_off or bool(self.disk_why)
         # A running round reserves its own account, not the whole PC: other accounts keep writing and fixing, and the
         # round's account starts at most `round_shared_sessions` new ones. Without an agent pool (one Claude for
         # everything) or with -1, the round still holds every new session, as before.
@@ -497,6 +506,7 @@ class Engine:
         budget_left = st.spent.get(today(), 0.0) < cfg.daily_budget_usd
         emergency_numbers = self.repair_numbers(tasks)
         self.emergency_why = ("Emergency workers are set to 0; running repairs finish." if not cfg.emergency_workers else
+                              self.disk_why if self.disk_why else
                               "Coding is paused on this PC." if coding_off else
                               "Fletchery is paused or restarting." if paused else
                               "Daily budget spent." if not budget_left else "No build or merge repairs waiting.")
@@ -713,15 +723,41 @@ class Engine:
     def storage_view(self) -> dict:
         return {"enabled": self.cfg.auto_cleanup, "retention_hours": self.cfg.cleanup_retention_hours,
                 "running": bool(self._storage_job and not self._storage_job.done()),
-                "requested": self.state.storage_requested, "last": dict(self.state.storage_last)}
+                "requested": self.state.storage_requested, "last": dict(self.state.storage_last),
+                "free_gb": self.disk_free_gb, "min_free_gb": self.cfg.work_min_free_gb, "disk_why": self.disk_why,
+                "tasks": dict(self.task_retire_last), "report": dict(self.disk_report)}
+
+    def _disk_guard(self) -> str:
+        """Below `work_min_free_gb` on the worktree drive: hold new work and clean finished task copies now
+        (at most every 10 minutes). Returns the reason shown on the dashboard, or ""."""
+        import shutil
+        import time as _time
+        limit = float(self.cfg.work_min_free_gb or 0)
+        root = Path(self.cfg.worktree_root)
+        try:
+            free = shutil.disk_usage(root if root.exists() else (root.anchor or root)).free / 1024 ** 3
+        except OSError:
+            return ""
+        self.disk_free_gb = round(free, 1)
+        if limit <= 0 or self.dry_run or free >= limit:
+            return ""
+        running = bool(self._storage_job and not self._storage_job.done())
+        if not running and not self.state.storage_requested and _time.monotonic() >= self._disk_cleanup_at:
+            self._disk_cleanup_at = _time.monotonic() + 600
+            self.state.storage_requested = True
+            self.ctx.log(f"Disk guard: {free:.0f} GB free on the worktree drive, under {limit:g} GB; "
+                         "new work waits while finished task copies are cleaned")
+        return (f"Only {free:.0f} GB free on the worktree drive (under {limit:g} GB): new tasks, merge rounds and builds "
+                "wait while finished task copies are cleaned. Running work finishes.")
 
     def _maybe_storage(self, tasks: dict, draining: bool = False) -> None:
         # The PC is almost never fully idle, so waiting for zero workers meant cleanup last ran a day before E: filled
         # (2026-11-07). After a landed round it runs alongside workers: every checkout it touches is proven idle,
         # finished and published, and open tasks' checkouts are never candidates.
         after_round = self._storage_after_round and self.cfg.auto_cleanup
-        if (self.dry_run or draining or self.state.held or not hasattr(self.ctx.repo, "git") or (self.jobs and not after_round)
-                or self.round_job is not None
+        urgent = bool(self.disk_why)  # low disk: clean beside running work; every removal proves its checkout idle
+        if (self.dry_run or draining or self.state.held or not hasattr(self.ctx.repo, "git") or (self.jobs and not after_round and not urgent)
+                or (self.round_job is not None and not urgent)
                 or (self._storage_job and not self._storage_job.done()) or (not self.cfg.auto_cleanup and not self.state.storage_requested)):
             return
         last = self.state.storage_last
@@ -776,6 +812,30 @@ class Engine:
                     self.ctx.log(f"Storage: retired {len(result['retired'])} verified completed task copies ({result['freed_bytes'] / 1024**3:.2f} GiB logical)")
             except Exception as exc:
                 self.state.storage_last = {"checked_at": now(), "error": str(exc)[:500], "freed_bytes": 0}
+            try:   # every copy of a closed task, and old attempt/repair copies of open ones (backed up first)
+                backup = self.cfg.task_backup_dir or str(self.state_dir / "task-backups")
+                tasks_result = await asyncio.to_thread(storage.retire_task_checkouts, self.ctx.repo,
+                    open_tasks=list(tasks), protected_paths=protected, backup_dir=backup,
+                    closed_hours=0 if immediate else 1, attempt_hours=self.cfg.attempt_retention_hours,
+                    running_tasks=set(self.active))
+                __import__("rounds").write_file(str(self.state_dir / "task-retire.json"), tasks_result)
+                self.task_retire_last = {**tasks_result, "retired": tasks_result.get("retired", [])[:10],
+                                         "retired_count": len(tasks_result.get("retired", [])),
+                                         "skipped": tasks_result.get("skipped", [])[:20]}
+                if tasks_result.get("retired"):
+                    self.ctx.log(f"Storage: removed {len(tasks_result['retired'])} finished or superseded task copies "
+                                 f"({tasks_result['freed_bytes'] / 1024**3:.1f} GiB); branches kept, changes backed up")
+                await asyncio.to_thread(storage.prune_backups, backup, self.cfg.task_backup_days)
+            except Exception as exc:
+                self.task_retire_last = {"checked_at": now(), "error": f"{type(exc).__name__}: {exc}"[:500]}
+            try:   # dashboard: free space and the largest folders, refreshed at most every 6 hours (or when low)
+                due = urgent or not self.disk_report or _report_age(self.disk_report) > 6 * 3600
+                if due:
+                    scan = self.cfg.disk_report_root or str(Path(self.state_dir).parent)
+                    self.disk_report = await asyncio.to_thread(storage.disk_report, self.cfg.worktree_root, scan)
+                    __import__("rounds").write_file(str(self.state_dir / "disk-report.json"), self.disk_report)
+            except Exception as exc:
+                self.ctx.log(f"Storage: disk report failed: {type(exc).__name__}: {exc}")
             try:   # a retired task checkout leaves its private Blender bridge behind: stop those, and only those
                 reaped = await asyncio.to_thread(__import__("blender_bridge").reap)
                 if reaped.get("stopped"):
@@ -2200,6 +2260,13 @@ class Engine:
             self.ctx.gh.comment(self.ctx.gh.status_issue(), f"Fletchery plan for: {goal}\n\n{draft}\n\n"
                                                              f"Run `foreman.py plan --apply` to create these.")
         return issues
+
+
+def _report_age(report: dict) -> float:
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(str(report.get("checked_at", "")).replace("Z", "+00:00"))).total_seconds()
+    except ValueError:
+        return float("inf")
 
 
 def _tasks_by_pr(tasks: dict[int, Task], prs: dict[int, PullRequest]) -> dict[int, Task]:
