@@ -2580,11 +2580,14 @@ function renderBuilds(d) {
     const cancel = !finished(b) && !(b.state === "running" && b.route === "pc")
       ? `<button type="button" data-build-cancel="${esc(b.id)}" data-build-label="${label} build ${esc(b.version)}">${label}</button>` : "";
     const log = b.job ? `<a href="/api/jobs/log?id=${esc(b.job)}" target="_blank" rel="noopener">Log</a>` : "";
+    const dl = b.download && /^https:\/\/github\.com\//.test(b.download) ? `<a href="${esc(b.download)}" target="_blank" rel="noopener">Download</a>` : "";
+    const pub = {zipping: "Zipping for download…", uploading: "Uploading for download…", failed: "Download upload failed", skipped: "Not uploaded"}[b.publish];
+    const pubNote = pub ? `<div class="meta">${esc(pub)}${b.publish_reason && b.publish !== "zipping" ? ": " + esc(b.publish_reason) : ""}</div>` : "";
     const note = b.state === "done" && b.output ? "Package: " + b.output : b.reason;
     return `<li class="build-row ${esc(b.state)}"><div><b>${esc(b.version)}</b> <span class="chip">${esc(b.repeat ? "Repeats daily" : BUILD_STATE[b.state] || b.state)}</span></div>
-      <div class="acts">${log} ${cancel}</div>
+      <div class="acts">${dl} ${log} ${cancel}</div>
       <div class="meta">${what} · ${when}</div>
-      ${note ? `<div class="meta">${esc(note)}</div>` : ""}</li>`;
+      ${note ? `<div class="meta">${esc(note)}</div>` : ""}${pubNote}</li>`;
   };
   const html = (live.length ? `<ul class="build-list">${live.map(row).join("")}</ul>` : '<p class="muted">No builds scheduled.</p>')
     + (old.length ? `<details class="build-history"><summary>Finished · ${old.length}</summary><ul class="build-list">${old.map(row).join("")}</ul></details>` : "");

@@ -145,7 +145,7 @@ class Config:
     # "maxParallel", "keyEnv"}]; None = Claude only. `routing` says which agent takes which difficulty.
     agents: list = None
     routing: dict = None
-    builds: dict = None                      # builds.py: {"outDir", "engine", "timeoutMinutes", "nodeLabels"}; None = defaults
+    builds: dict = None                      # builds.py: {"outDir", "engine", "timeoutMinutes", "nodeLabels", "publish"}; None = defaults
     machines: dict = None                    # machines.py: {"listen": "<Tailscale IP>:8771", "shadow": true, "nightly": {...}}; None = off
     escalate: bool = True                    # a failed attempt goes to a stronger agent before the task is blocked
     # the Build Lane, from the profile; "" hides the panel

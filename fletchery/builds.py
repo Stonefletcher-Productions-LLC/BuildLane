@@ -24,6 +24,8 @@ Profile (all optional), in `workers`:
     "builds": {"outDir": "E:\\\\lifeshare-scratch\\\\LifeShare-builds", "engine": "E:\\\\UE_5.8", "timeoutMinutes": 300,
                "nodeLabels": ["unreal:5.8.3"]}
 `nodeLabels` are extra labels a node needs to take a build (for example a matching engine version).
+`"publish": {"to": "github", "keep": 3}` also uploads each finished build to a private pre-release on the project
+repository and keeps the newest three, so it can be downloaded from any computer (publish.py).
 """
 from __future__ import annotations
 
@@ -66,11 +68,14 @@ class Builds:
     def __init__(self, engine):
         self.engine = engine
         self.lock = threading.RLock()
+        self._publishing: threading.Thread | None = None
         # A PC build that was running when Fletchery stopped did not finish: say so instead of showing it running.
         for row in self.rows:
             if row["state"] == "running" and row.get("route") == "pc":
                 row.update(state="failed", finished=iso(utc()),
                            reason="Fletchery restarted while this build ran on this PC. Queue it again.")
+            if row.get("publish") in ("zipping", "uploading", "failed"):  # cut off by a restart, or failed: try again
+                row["publish"] = ""
 
     # ---- state ----
     @property
@@ -192,6 +197,7 @@ class Builds:
             except Exception as e:  # one bad row never stops the others
                 self.update(row, reason=f"{type(e).__name__}: {e}"[:300])
         self._trim()
+        self._publish_next()
 
     def _due(self, row: dict, at: datetime) -> None:
         if row.get("repeat"):
@@ -275,6 +281,51 @@ class Builds:
                 drop = {id(r) for r in sorted(done, key=lambda r: r.get("finished") or r["created"])[:len(done) - KEEP_FINISHED]}
                 self.rows[:] = [r for r in self.rows if id(r) not in drop]
                 self.save()
+
+    # ---- downloads (publish.py) ----
+    def _publish_next(self) -> None:
+        """Start publishing the newest finished build that has not been published, one at a time, in its own thread
+        (an upload can take an hour; the scheduler keeps ticking)."""
+        import publish
+        p = publish.conf(self.conf)
+        if p is None or self.engine.dry_run or (self._publishing is not None and self._publishing.is_alive()):
+            return
+        keep = max(1, int(p.get("keep") or 3))
+        with self.lock:
+            done = sorted((r for r in self.rows if r["state"] == "done"), key=lambda r: r.get("finished") or "", reverse=True)[:keep]
+            row = next((r for r in done if not r.get("publish")), None)
+        if row is None:
+            return
+        self.update(row, publish="zipping", publish_reason="")
+        self._publishing = threading.Thread(target=self.publish, args=(row, p), name=f"publish-{row['version']}", daemon=True)
+        self._publishing.start()
+
+    def publish(self, row: dict, p: dict) -> None:
+        import publish
+        folder = Path(row.get("output") or "")
+        if not row.get("output") or not folder.is_dir():
+            self.update(row, publish="skipped", publish_reason=f"The package folder is not on this PC ({row.get('output') or 'none'}).")
+            return
+        gh = self.engine.ctx.gh
+        pub = publish.Publisher(gh, str(p.get("repo") or self.engine.cfg.repo), getattr(gh, "gh", "gh"), self._log)
+        try:
+            part = int(float(p.get("partGb") or 1.9) * 2**30)
+            stem = f"{self.engine.cfg.name or 'Build'}-{row['version']}-{row['sha'][:10]}"
+            dest = self.out_dir() / "_downloads"
+            zips = publish.make_zips(folder, dest, stem, min(part, 2**31 - 2**20))
+            self.update(row, publish="uploading",
+                        publish_reason=f"Uploading {len(zips)} zip{'s' if len(zips) > 1 else ''} ({sum(z.stat().st_size for z in zips) / 2**30:.2f} GiB).")
+            self._log(f"{row['version']}: uploading {', '.join(z.name for z in zips)}")
+            url = pub.release({**row, "name": self.engine.cfg.name}, zips)
+            gone = pub.prune(max(1, int(p.get("keep") or 3)))
+            for z in zips:
+                z.unlink(missing_ok=True)
+            self.update(row, publish="published", download=url,
+                        publish_reason=f"Download: {url}" + (f" (removed {', '.join(gone)})" if gone else ""))
+            self._log(f"{row['version']}: download ready at {url}" + (f"; removed {', '.join(gone)}" if gone else ""))
+        except Exception as e:
+            self.update(row, publish="failed", publish_reason=f"{type(e).__name__}: {e}"[:400])
+            self._log(f"{row['version']}: publish failed: {e}")
 
     # ---- this PC ----
     def next_pc(self) -> dict | None:
