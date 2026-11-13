@@ -101,6 +101,9 @@ and `summary` (what you merged, fixed and ran, in a few sentences). If stopped e
 Put healthy but unattempted PRs, interrupted acceptance and incomplete acceptance in the optional `deferred` array,
 each `{"pr": N, "why": "remaining verification", "disposition": "deferred"}`. An interrupted or incomplete check
 is not evidence that its PR is broken. Preserve genuine compile/test failures separately even in an interrupted round.
+When a check fails or crashes and you find it fails the same way on `origin/{base}` alone, the base is red: no PR is at
+fault, so leave none out for it, start `stop_reason` with "Base is red:" and the failure, and start each deferred PR's
+`why` with "Base is red:" too. Fletchery does not count those deferrals toward parking.
 When preserving a candidate, include optional `checkpoint`: `{"worktree": "actual absolute saved path", "branch":
 "actual branch", "head": "full actual HEAD"}`. Preserve existing generated assets, reports and progress. Do not
 invent checkpoint paths or claim validation can be reused before checking its source/content fingerprints.

@@ -51,6 +51,7 @@ class State:
     playtest_issue: int = 0                                  # the playtest checklist issue (mergePlaytest)
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     merge_split: dict = field(default_factory=dict)            # {from_round, why, groups: [[{pr, head}]]}: a failed batch tried in parts
+    merge_base_red: dict = field(default_factory=dict)         # {round, why, at}: the base branch itself fails; only fixes go in
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
@@ -913,6 +914,18 @@ class Engine:
                                  + " (their remaining checks need people and go on the playtest checklist)")
                     st.save(self.state_dir / "state.json")
             ready = rounds.by_value(rounds.not_parked(ready, st.merge_parked), self._tasks)
+            if st.merge_base_red and not st.merge_split.get("groups"):
+                # The base branch itself fails (rounds 160 and 162 on 2026-11-13): testing feature PRs on it only fails
+                # them all. Rounds take the PRs labelled merge-next (the fix) until a round lands or the hold expires.
+                gate, why = rounds.base_red_gate(st.merge_base_red, ready, cfg.base_branch)
+                if why:
+                    if not gate:
+                        self.merge_why = why
+                        return
+                else:
+                    st.merge_base_red = {}
+                    st.save(self.state_dir / "state.json")
+                ready = gate
         if resume:
             resume = self._reconcile_resume(resume, ready)
         if resume:
@@ -1160,7 +1173,15 @@ class Engine:
                 self._record_playtest(n, res)
             except Exception as e:
                 self.ctx.log(f"merge round {n}: could not update the playtest checklist: {type(e).__name__}: {e}")
-        parked = rounds.record_deferrals(self.state.merge_parked, batch, res.get("deferred", []), n, res["at"])
+        base_red = rounds.base_is_red(res)
+        parked = rounds.record_deferrals(self.state.merge_parked, batch, res.get("deferred", []), n, res["at"],
+                                         base_red=base_red)
+        if base_red:
+            self.state.merge_base_red = {"round": n, "why": str(res.get("stop_reason") or "")[:2000], "at": res["at"]}
+            self.ctx.log(f"merge round {n}: {self.cfg.base_branch} itself fails; rounds now take only PRs labelled "
+                         f"{rounds.PRIORITY_LABEL} until one lands")
+        elif res["result"] == "landed":
+            self.state.merge_base_red = {}
         if parked:
             self.ctx.log(f"merge round {n}: parked " + ", ".join(f"#{x}" for x in parked)
                          + f" (deferred {rounds.PARK_AFTER} times at the same head; a new commit or {rounds.PARK_HOURS} h unparks)")
@@ -1179,6 +1200,13 @@ class Engine:
                 self.state.save(self.state_dir / "state.json")
             except Exception as e:
                 self.ctx.log(f"merge round {n}: could not file repair issue: {type(e).__name__}: {e}")
+        try:  # a round that lands nothing, a red base or a failure seen before: say so where people look
+            alert = rounds.round_alert(res, batch, self.cfg.base_branch)
+            if alert:
+                rounds.raise_alert(self.ctx.gh, self.state_dir, res, alert)
+                self.ctx.log(f"merge round {n}: alert: {alert}")
+        except Exception as e:
+            self.ctx.log(f"merge round {n}: could not raise the alert: {type(e).__name__}: {e}")
         if request_id:
             self.plans.finish_merge(request_id, res)
         self.ctx.log(f"merge round {n}: {res['result']}" + (f", landed as PR #{res['pr']}" if res["pr"] else "")

@@ -476,6 +476,7 @@ def report_failure(gh, cfg, result: dict, worktree: str = "") -> int:
     found = gh.marked_issues(marker)
     if found:
         number = found[0]["number"]
+        result["failure_repeated"] = True  # the same failure as an earlier round: round_alert says so
         thread = gh.issue_thread(number)
         if occurrence not in thread.get("body", "") and not any(occurrence in c.get("body", "") for c in thread.get("comments", [])):
             gh.comment(number, "Fletchery: merge failure repeated\n\n" + evidence)
@@ -620,8 +621,12 @@ def node_tests_text(cfg, round_no, base: str, whole: bool = False) -> str:
                 "output. It can take an hour; wait for it.\n"
                 "   - Exit 0: the build and those checks passed on the node; record them as passed for this "
                 "candidate.\n"
-                "   - Exit 1: the build or a check failed on the node; treat it exactly as a failure here (fix within "
-                "scope, or defer the PR that causes it), commit, push the branch again and rerun step 3.\n"
+                "   - Exit 1: the build or a check failed on the node. First find out whether the base already fails: run "
+                f"step 3 once at `git rev-parse origin/{base}` with `--only` set to just the failing checks (no `--imports`). "
+                "If they fail there too, the base is red and no PR is at fault: stop, start `stop_reason` with \"Base is "
+                "red:\" and the failure, and defer every PR with a `why` that starts \"Base is red:\". Otherwise treat it "
+                "exactly as a failure here (fix within scope, or defer the PR that causes it), commit, push the branch "
+                "again and rerun step 3.\n"
                 "   - Exit 2: no result (no node free, node lost or out of memory): run step 3 once more. If it gives "
                 "2 again, stop and return `waiting` with the reason; do not run the checks on this PC.\n"
                 "   - Content imports: when a PR in the batch has a `Lane-Imports:` line, add `--imports <the steps, comma "
@@ -646,8 +651,11 @@ def node_tests_text(cfg, round_no, base: str, whole: bool = False) -> str:
             f"origin/{base} -PlanOnly` lists them).\n"
             f"3. Run, from the worktree: `{cmd}`. It waits for the node and prints the result and the failing output.\n"
             "   - Exit 0: those tests passed on the node; record them as passed for this candidate.\n"
-            "   - Exit 1: they failed on the node; treat it exactly as a failure here (fix within scope, or defer the PR "
-            "that causes it), then push again and rerun.\n"
+            "   - Exit 1: they failed on the node. First rerun step 3 at `git rev-parse origin/" + base + "` with `--only` "
+            "set to just the failing tests. If they fail there too, the base is red: stop, start `stop_reason` with "
+            "\"Base is red:\" and the failure, and defer every PR with a `why` that starts \"Base is red:\". Otherwise "
+            "treat it exactly as a failure here (fix within scope, or defer the PR that causes it), then push again and "
+            "rerun.\n"
             "   - Exit 2: no result (no node free, node lost or out of memory): run the same tests on this PC as usual.\n"
             "4. Strict NavCheck, packaged checks and anything the project rules say must run on this PC still run here.\n"
             f"5. When the round ends, landed or not, delete the branch: `git push origin --delete {branch}`.\n")
@@ -738,6 +746,11 @@ def is_parked(parked: dict, number: int, head: str, now: datetime | None = None)
 PARK_AFTER = 2          # deferrals at one head before the PR stops taking a round slot
 PARK_HOURS = 72         # a parked PR is tried again after this long even with no new commits
 _UNTRIED = re.compile(r"\bnot\s+(?:yet\s+)?(?:attempted|reached|run)\b|\bunattempted\b|\binterrupt", re.I)
+# A deferral because the base branch itself fails (rounds 160 and 162 on 2026-11-13: Test-Staging crashed in RunSpecs, so
+# every PR was deferred and parked for a failure none of them caused). Not evidence against the PR either.
+BASE_RED = re.compile(r"\bbase (?:is|was|branch is) red\b|\bbaseline\b(?! run)|\b(?:fails?|failing|crash(?:es|ed)?) "
+                      r"(?:on|in) (?:the )?(?:base|test-staging|origin/[\w./-]+)\b|\bpre-?existing (?:failure|crash)|"
+                      r"\bon (?:the )?base (?:branch )?(?:alone|too|itself)\b|\balready (?:fails|failing|red) on\b", re.I)
 
 
 PRIORITY_LABEL = "merge-next"   # a person (or a thread) wants this PR in the next round, ahead of the queue
@@ -757,9 +770,12 @@ def by_value(ready: list, tasks: dict) -> list:
     return sorted(ready, key=lambda p: (first(p), -value(p), p.number))
 
 
-def record_deferrals(parked: dict, batch: list, deferred: list, round_no, at: str) -> list[int]:
+def record_deferrals(parked: dict, batch: list, deferred: list, round_no, at: str, base_red: bool = False) -> list[int]:
     """Count deferrals per PR head; returns the PRs that just became parked. A deferral because the round never got
-    to the PR (not attempted, interrupted) is not evidence that this PC cannot accept it, so it does not count."""
+    to the PR (not attempted, interrupted) or because the base branch itself fails (`base_red`, or a reason that says
+    so) is not evidence that this PC cannot accept it, so it does not count."""
+    if base_red:
+        return []
     heads = {p.number: p.head_sha for p in batch}
     newly = []
     for item in deferred or []:
@@ -767,7 +783,7 @@ def record_deferrals(parked: dict, batch: list, deferred: list, round_no, at: st
             continue
         number = int(item["pr"])
         why = str(item.get("why", ""))
-        if number not in heads or _UNTRIED.search(why):
+        if number not in heads or _UNTRIED.search(why) or BASE_RED.search(why):
             continue
         old = parked.get(str(number)) or {}
         count = old.get("count", 0) + 1 if old.get("head") == heads[number] else 1
@@ -812,6 +828,74 @@ def not_parked(ready: list, parked: dict, now: datetime | None = None) -> list:
 NO_VERDICT = re.compile(r"\bcancel(?:l?ed)?\b|\btimed?[- ]?out\b|\btimeout\b|without a result|\bno result\b|"
                         r"(?:had )?not (?:yet )?started|node (?:was )?(?:lost|offline|went away)|out of memory|"
                         r"no node|\bexit 2\b|control request timeout|econnreset|socket hang up|\bbase is red\b", re.I)
+
+
+def base_is_red(res: dict) -> bool:
+    """The round says the base branch itself fails (the merger starts `stop_reason` with "Base is red:")."""
+    text = str(res.get("stop_reason") or "") + " " + str(res.get("gave_up") or "")
+    return bool(re.search(r"\bbase is red\b", text, re.I))
+
+
+BASE_RED_HOURS = 6  # a red-base hold ends after this long even with no fix landed; the next round finds out again
+
+
+def base_red_gate(red: dict, ready: list, base: str, now: datetime | None = None) -> tuple[list, str]:
+    """While the base branch is red: (the ready PRs labelled merge-next, why rounds are held). ([], "") hands back
+    nothing to hold: the hold expired, so the caller clears it and uses every ready PR."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        since = datetime.fromisoformat(str(red.get("at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        since = now
+    if now - since >= timedelta(hours=BASE_RED_HOURS):
+        return [], ""
+    fixes = [p for p in ready if PRIORITY_LABEL in [str(x).lower() for x in (getattr(p, "labels", None) or [])]]
+    why = (f"{base} itself failed in round {red.get('round')} ({str(red.get('why', ''))[:200]}); rounds take only PRs "
+           f"labelled `{PRIORITY_LABEL}` (the fix) until one lands, or every ready PR again at "
+           f"{(since + timedelta(hours=BASE_RED_HOURS)).isoformat(timespec='minutes')[11:16]}Z")
+    return fixes, why
+
+
+def round_alert(res: dict, batch: list, base: str) -> str:
+    """Why people should look at this round now, or "". Rounds 160 and 162 (2026-11-13) landed nothing for a crash
+    already on the base and nobody heard until Alex asked."""
+    result = str(res.get("result", ""))
+    if result not in ("landed", "nothing", "failed", "crashed"):
+        return ""  # interrupted, limited, unreachable: not the code's doing
+    if base_is_red(res):
+        return f"{base} itself fails: " + str(res.get("stop_reason") or "")[:300]
+    if res.get("failure_repeated"):
+        return "the same failure as an earlier round, with different PRs: " + str(res.get("stop_reason") or res.get("summary") or "")[:300]
+    if result != "landed" and batch and len(batch) > 1 and not res.get("merged"):
+        return f"landed none of {len(batch)} PRs: " + str(res.get("stop_reason") or res.get("summary") or "")[:300]
+    return ""
+
+
+ALERT_MARKER = "<!-- fletchery-round-alerts -->"
+
+
+def raise_alert(gh, state_dir, res: dict, alert: str) -> int:
+    """Append the alert to <state>/alerts.jsonl (the dashboard and threads read it) and comment it on one open
+    "Fletchery round alerts" issue, so GitHub notifies people. Returns the issue number (0 when GitHub failed)."""
+    line = {"round": res.get("round"), "at": res.get("at"), "result": res.get("result"), "alert": alert,
+            "failure_issue": res.get("failure_issue", 0)}
+    try:
+        with open(Path(state_dir) / "alerts.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+    text = (f"Round {res.get('round')} ({res.get('result')}): {alert}"
+            + (f"\n\nRepair issue: #{res['failure_issue']}" if res.get("failure_issue") else ""))
+    try:
+        found = gh.marked_issues(ALERT_MARKER)
+        if found:
+            gh.comment(found[0]["number"], text)
+            return int(found[0]["number"])
+        return gh.create_issue("Fletchery round alerts", "Fletchery comments here when a merge round lands nothing, "
+                               "the base branch itself fails, or a failure repeats across rounds.\n\n" + text + "\n\n"
+                               + ALERT_MARKER, [])
+    except Exception:
+        return 0
 
 
 def split_halves(prs: list, tasks: dict, known_closed: set | None = None) -> list[list]:
