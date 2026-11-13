@@ -50,7 +50,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2"   # 2: mirrors the PC's asset folders (label cap:asset-sync)
+VERSION = "3"   # 2: mirrors the PC's asset folders (label cap:asset-sync); 3: clears stale git locks, backs off on failed checkouts
 ASSET_SYNC_LABEL = "cap:asset-sync"
 ASSET_IDLE_SECONDS = 15 * 60
 ASSET_INDEX = ".fletchery-assets.json"
@@ -284,6 +284,8 @@ def drop_lease(cfg: dict, token: str) -> None:
 # ---- machine stats ----
 def stats(cfg: dict) -> dict:
     out = {"paused": bool(cfg.get("pauseFile")) and Path(cfg["pauseFile"]).exists()}
+    if out["paused"]:
+        out["pause_file"] = True   # paused by a person: the coordinator never counts this node as free
     holder = lease_holder(cfg)
     if holder:  # the PC is busy with other Unreal work: show as paused and take no job until it is free
         out["paused"], out["lease"] = True, holder
@@ -558,6 +560,42 @@ def _git_env(cfg: dict) -> dict:
     return env
 
 
+STALE_LOCK_SECONDS = 120     # a git lock this old, before this worker's own checkout starts, is a leftover
+CHECKOUT_BACKOFF = (300, 900, 1800)   # after 2, 3, 4+ failed checkouts in a row: take no job for this long
+
+
+def clear_stale_git_locks(ws: Path, min_age: float = STALE_LOCK_SECONDS, now: float | None = None) -> list[str]:
+    """Remove git lock files a killed job left in this worker's own checkout. The worker runs one job at a time and
+    calls this before its first git command, so no git of its own can hold them. On 2026-11-13 a cancelled job left
+    .git/index.lock behind and every job on GAMING-PC failed its checkout for 5.5 hours (37 failures, one PR 35 times).
+    Locks younger than `min_age` are left alone in case someone else is working in the checkout by hand."""
+    git = ws / ".git"
+    if not git.is_dir():
+        return []
+    now = time.time() if now is None else now
+    found = [git / n for n in ("index.lock", "HEAD.lock", "shallow.lock", "packed-refs.lock", "config.lock",
+                                "FETCH_HEAD.lock", "ORIG_HEAD.lock")]
+    refs = git / "refs"
+    if refs.is_dir():
+        found += list(refs.rglob("*.lock"))
+    gone = []
+    for path in found:
+        try:
+            if path.is_file() and now - path.stat().st_mtime >= min_age:
+                path.unlink()
+                gone.append(str(path.relative_to(ws)))
+        except OSError:
+            pass
+    return gone
+
+
+def checkout_backoff(failures: int) -> int:
+    """Seconds to take no job after `failures` failed checkouts in a row (0 for none or one)."""
+    if failures < 2:
+        return 0
+    return CHECKOUT_BACKOFF[min(failures - 2, len(CHECKOUT_BACKOFF) - 1)]
+
+
 def _workspace(cfg: dict) -> Path:
     return Path(cfg["workRoot"]) / "fletchery" / "LifeShare"
 
@@ -644,6 +682,9 @@ class Job:
                 if self.run_step(" ".join(argv[:2]), argv, ws, env):
                     return 1
         else:
+            gone = clear_stale_git_locks(ws)
+            if gone:
+                self.out(f"Removed stale git lock(s) left by an earlier job: {', '.join(gone)}")
             subprocess.run(["git", "remote", "set-url", "origin", self.cfg["repoUrl"]], cwd=ws, env=env, capture_output=True)
         steps = [("Fetch the commit", ["git", "fetch", "--no-tags", "origin", sha]),
                  ("Check out the commit", ["git", "checkout", "--force", "--detach", sha]),
@@ -791,6 +832,7 @@ def run(cfg: dict, once: bool = False) -> int:
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
     coord = Coordinator(cfg)
     poll, said = 15, ""
+    bad_checkouts, rest_until = 0, 0.0   # failed checkouts in a row; take no job until rest_until (monotonic)
     next_sync = 0.0   # mirror the asset folders as soon as the worker starts: a new node fills itself
     while True:
         try:
@@ -800,6 +842,8 @@ def run(cfg: dict, once: bool = False) -> int:
             said = ""
             while True:
                 st = stats(cfg)
+                if time.monotonic() < rest_until:  # checkouts keep failing here: check in as paused, take no job
+                    st["paused"], st["checkout_failing"] = True, bad_checkouts
                 # While the pause file exists the node still checks in (it shows as paused) but takes no job.
                 job = coord.call("/v1/claim", {"stats": st, "paused": bool(st.get("paused"))}).get("job")
                 if job:
@@ -812,6 +856,11 @@ def run(cfg: dict, once: bool = False) -> int:
                     finally:
                         drop_lease(cfg, token)
                     log(f"job {job['id']}: exit {code}: {summary}")
+                    bad_checkouts = bad_checkouts + 1 if summary == "Checkout failed" else 0
+                    rest = checkout_backoff(bad_checkouts)
+                    if rest:
+                        rest_until = time.monotonic() + rest
+                        log(f"{bad_checkouts} checkouts in a row failed; taking no job for {rest // 60} min")
                     for attempt in range(10):
                         try:
                             coord.call("/v1/result", {"job_id": job["id"], "exit_code": code, "summary": summary,

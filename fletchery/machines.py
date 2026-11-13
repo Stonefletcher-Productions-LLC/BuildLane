@@ -442,7 +442,7 @@ class Machines:
                 return out
             nodes = []
             for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL").fetchall():
-                if _age(m["last_seen"], at) > ONLINE_SECONDS or json.loads(m["stats"] or "{}").get("paused"):
+                if _age(m["last_seen"], at) > ONLINE_SECONDS or self._held_off(db, m, json.loads(m["stats"] or "{}")):
                     continue
                 run = db.execute("SELECT * FROM jobs WHERE machine=? AND state='running'", (m["name"],)).fetchone()
                 nodes.append((m, set(json.loads(m["labels"] or "[]")), set(self._paused(db, m["name"])), run))
@@ -538,6 +538,17 @@ class Machines:
 
     # ---- pausing one machine from one kind of work ----
     @staticmethod
+    def _held_off(db, m, stats: dict) -> bool:
+        """Paused for new work. A node that shows paused only because the heavy lease is taken while it runs one of
+        Fletchery's own jobs is busy, not paused: its next job waits for it (2026-11-13: a busy SF-NODE-01 looked
+        paused, so `run` found no node and rounds fell back to the PC)."""
+        if not stats.get("paused"):
+            return False
+        if stats.get("lease") and not stats.get("checkout_failing") and not stats.get("pause_file"):
+            return db.execute("SELECT 1 FROM jobs WHERE machine=? AND state='running'", (m["name"],)).fetchone() is None
+        return True
+
+    @staticmethod
     def _paused(db, name: str) -> list[str]:
         row = db.execute("SELECT value FROM meta WHERE key=?", ("paused:" + name,)).fetchone()
         try:
@@ -573,7 +584,7 @@ class Machines:
                 stats = json.loads(m["stats"] or "{}")
                 if recipe and KIND.get(recipe) in self._paused(db, m["name"]):
                     continue
-                if (_age(m["last_seen"], at) <= ONLINE_SECONDS and not stats.get("paused")
+                if (_age(m["last_seen"], at) <= ONLINE_SECONDS and not self._held_off(db, m, stats)
                         and set(labels) <= set(json.loads(m["labels"] or "[]")) and float(m["ram_gb"] or 0) >= min_ram_gb):
                     out.append(m["name"])
         return out
