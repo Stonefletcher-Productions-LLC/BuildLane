@@ -78,11 +78,80 @@ def git_common_dir(cwd) -> str:
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
+# Variables a Codex Desktop session sets for the commands it runs. A backend started from inside such a session
+# inherits them, and any `codex exec` that sees CODEX_WINDOWS_REGISTERED_CORE=1 sends every command through the
+# app's packaged runner, which fails outside the app: "registered Core launch requires an installed app"
+# (2026-11-12 to 11-14: every Codex worker, reviewer and planner failed this way). Fletchery's own settings stay.
+HOST_SESSION_KEEP = {"CODEX_API_KEY", "CODEX_HOME", "CODEX_CLI_PATH"}
+HOST_SESSION_PREFIXES = ("CODEX_", "BROWSER_USE_ACCESS_")
+
+
+def scrub_host_session_env(env) -> dict:
+    """`env` without the variables an agent session that launched Fletchery left behind."""
+    return {k: v for k, v in env.items()
+            if not (k.upper().startswith(HOST_SESSION_PREFIXES) and k.upper() not in HOST_SESSION_KEEP)}
+
+
+def scrub_process_env() -> list[str]:
+    """Drop those variables from this process, so every child (agents, git, node jobs) starts clean. Returns the names
+    dropped."""
+    gone = [k for k in os.environ if k not in scrub_host_session_env({k: ""})]
+    for k in gone:
+        os.environ.pop(k, None)
+    return gone
+
+
+def _find_key(node, key: str) -> str:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == key and isinstance(v, str):
+                return v
+            hit = _find_key(v, key)
+            if hit:
+                return hit
+    return ""
+
+
+def _codex_config_cli() -> str:
+    """The CLI the Codex app itself uses: CODEX_CLI_PATH anywhere in its config.toml (CODEX_HOME or ~/.codex), which
+    the app rewrites when it updates."""
+    import tomllib
+    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    try:
+        with open(os.path.join(home, "config.toml"), "rb") as f:
+            conf = tomllib.load(f)
+    except (OSError, ValueError):
+        return ""
+    path = _find_key(conf, "CODEX_CLI_PATH")
+    return path if path and os.path.isfile(path) else ""
+
+
+def _codex_app_cli() -> str:
+    """codex.exe inside the newest installed Codex app package (WindowsApps\\OpenAI.Codex_<version>_x64__...)."""
+    best, best_ver = "", ()
+    for root in {os.environ.get("ProgramW6432", ""), os.environ.get("ProgramFiles", "")} - {""}:
+        for p in glob.glob(os.path.join(root, "WindowsApps", "OpenAI.Codex_*", "app", "resources", "codex.exe")):
+            m = re.search(r"OpenAI\.Codex_(\d+(?:\.\d+)*)_", p)
+            ver = tuple(int(x) for x in m.group(1).split(".")) if m else ()
+            if ver > best_ver:
+                best, best_ver = p, ver
+    return best
+
+
 def find_codex(explicit: str = "") -> str:
-    """The Codex CLI. On Windows the Codex app bundles it under %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<build>\\, a folder
-    that changes with every app update, so the newest one wins."""
+    """The Codex CLI. The Codex app updates itself and its CLI together, and a CLI older than the app's command runner
+    can't start any command (2026-11-14: Fletchery kept launching the 11-09 CLI after the 11-11 app update, and every
+    Codex session failed with "registered Core launch requires an installed app"). So follow the app: CODEX_CLI_PATH
+    (environment, then the app's config.toml), then the newest installed app package, then PATH, then the newest
+    %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<build>\\ copy."""
     if explicit:
         return explicit
+    env = os.environ.get("CODEX_CLI_PATH", "")
+    if env and os.path.isfile(env):
+        return env
+    for p in (_codex_config_cli(), _codex_app_cli()):
+        if p:
+            return p
     for name in ("codex.exe", "codex"):
         p = shutil.which(name)
         if p and not p.lower().endswith((".ps1", ".cmd")):
@@ -176,7 +245,7 @@ class CliRuntime(Runtime):
         argv, stdin_text, extra_env = self.command(role, prompt_file, Path(cwd), workdir)
         minutes = (self.spec.timeout_minutes or {}).get(role) or DEFAULT_TIMEOUT_MIN.get(role, 30)
         import keys
-        env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", **self.env, **keys.env_for(self.spec.key_env), **extra_env}
+        env = {**scrub_host_session_env(os.environ), "GIT_LFS_SKIP_SMUDGE": "1", **self.env, **keys.env_for(self.spec.key_env), **extra_env}
         if os.name == "nt":
             env.setdefault("PYTHONUTF8", "1")
         if self.spec.auth == "key":  # run on the stored API key instead of the CLI's plan sign-in
