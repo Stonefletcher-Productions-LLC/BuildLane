@@ -136,8 +136,7 @@ class Repo:
             state = self._task_checkout_state()
             path, local_branch = self._task_location(number, slug, branch, state)
             if not path.exists():
-                if branch in state["active"]:
-                    raise RuntimeError("Active task checkout is missing; cannot inspect its blocker evidence")
+                # Deleted outside Fletchery: nothing to inspect; the next worker run re-adds it from its branch.
                 return None
             if not (path / ".git").exists() or path.resolve() not in self._registered_worktrees():
                 raise RuntimeError("Task evidence is not in this repository's registered checkout")
@@ -156,9 +155,10 @@ class Repo:
                 if self.asset_tasks.get(str(number)) and self.git("config", "--bool", "core.sparseCheckout", cwd=path, check=False) == "true":
                     self.git("sparse-checkout", "disable", cwd=path)
                 return path
-            if branch in state["active"] or path.resolve() in self._registered_worktrees():
-                raise RuntimeError("Registered task checkout is missing; prior work and registration are preserved")
             self.worktree_root.mkdir(parents=True, exist_ok=True)
+            if branch in state["active"] or path.resolve() in self._registered_worktrees():
+                self._recreate_missing_checkout(number, path, local_branch, branch)
+                return path
             branches = self.git("branch", "--list", local_branch)
             if branches:
                 self._create_task_checkout(number, path, local_branch)
@@ -166,10 +166,38 @@ class Repo:
                 self._create_task_checkout(number, path, local_branch, f"{self.remote}/{self.base}")
             return path
 
-    def _create_task_checkout(self, number: int, path: Path, branch: str, start: str = "") -> None:
-        """Sparse materialization is allowed only in a brand-new, empty text checkout."""
+    def _branch_holders(self, local_branch: str) -> list[Path]:
+        """Worktrees git lists with `local_branch` checked out (folders may be missing)."""
+        holders, current = [], None
+        for field in self.git("worktree", "list", "--porcelain", "-z").split("\0"):
+            if field.startswith("worktree "):
+                current = Path(field[len("worktree "):])
+            elif field == f"branch refs/heads/{local_branch}" and current is not None:
+                holders.append(current)
+        return holders
+
+    def _recreate_missing_checkout(self, number: int, path: Path, local_branch: str, logical_branch: str) -> None:
+        """The task's registered folder was deleted outside Fletchery (LifeShare 2026-11-13: an E: drive cleanup
+        removed 93 of 112 active task checkouts, and every resumed task went to Needs you with "Registered task
+        checkout is missing"). Its commits live on the local branch, or on the pushed branch, so re-add the checkout
+        there. Never prunes: `worktree add -f` reuses only this one stale registration. A branch held by a folder that
+        still exists elsewhere is someone's live checkout and is refused, untouched."""
+        for holder in self._branch_holders(local_branch):
+            if holder.resolve() != path.resolve() and holder.exists():
+                raise RuntimeError(f"Task branch {local_branch} is checked out in another worktree ({holder}); "
+                                   "free that checkout (commit, then `git switch --detach` there) and re-queue")
+        if self.git("branch", "--list", local_branch):
+            self._create_task_checkout(number, path, local_branch, force=True)
+            return
+        pushed = f"refs/remotes/{self.remote}/{logical_branch}"
+        start = pushed if self.git("rev-parse", "--verify", "--quiet", pushed, check=False) else f"{self.remote}/{self.base}"
+        self._create_task_checkout(number, path, local_branch, start, force=True)
+
+    def _create_task_checkout(self, number: int, path: Path, branch: str, start: str = "", force: bool = False) -> None:
+        """Sparse materialization is allowed only in a brand-new, empty text checkout. `force` re-adds a checkout whose
+        folder is gone but whose registration (or branch) git still records."""
         small = self.thin_text_workers and not self.asset_tasks.get(str(number))
-        args = ["worktree", "add"] + (["--no-checkout"] if small else [])
+        args = ["worktree", "add"] + (["-f"] if force else []) + (["--no-checkout"] if small else [])
         args += ["-b", branch, str(path), start] if start else [str(path), branch]
         self.git(*args)
         if not small:
@@ -250,7 +278,15 @@ class Repo:
         else:
             self.worktree_root.mkdir(parents=True, exist_ok=True)
             local = f"fletchery/repair-{number}-{head_sha[:12]}"
-            self._create_task_checkout(number, path, local, head_sha)
+            if self.git("branch", "--list", local):
+                # Its folder was deleted outside Fletchery: re-add it at its own branch (repair commits kept).
+                if any(h.resolve() != path.resolve() and h.exists() for h in self._branch_holders(local)):
+                    raise RuntimeError(f"Repair branch {local} is checked out in another worktree; preserved")
+                self._create_task_checkout(number, path, local, force=True)
+                self.ensure_repair_checkout(path, branch, head_sha)
+            else:
+                self._create_task_checkout(number, path, local, head_sha,
+                                           force=path.resolve() in self._registered_worktrees())
         return path
 
     def ensure_repair_checkout(self, path: Path, branch: str, head_sha: str,

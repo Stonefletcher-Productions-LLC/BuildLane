@@ -123,6 +123,49 @@ class TaskPreservationTests(unittest.TestCase):
         self.assertIsNone(resumed.existing_task_worktree(99, "missing", "fletchery/99-missing"))
         self.assertFalse((self.repo.worktree_root / "99-missing").exists())
 
+    def delete_folder(self, path):
+        import shutil, stat, os
+        shutil.rmtree(path, onerror=lambda f, p, _e: (os.chmod(p, stat.S_IWRITE), f(p)))
+        self.assertFalse(path.exists())
+
+    def test_deleted_active_attempt_is_re_added_at_its_branch(self):
+        """LifeShare 2026-11-13: a disk cleanup deleted the folders; tasks went to Needs you instead of resuming."""
+        old = self.worker()
+        current = self.repo.restart_task_worktree(42, "assets", "fletchery/42-assets", old, "retry")
+        (current / "kept.txt").write_text("committed attempt work")
+        self.repo.commit_all(current, "attempt work")
+        head = self.repo.head(current)
+        self.delete_folder(current)
+        resumed = Repo(self.host, self.repo.worktree_root, "main")
+        self.assertIsNone(resumed.existing_task_worktree(42, "assets", "fletchery/42-assets"))
+        again = resumed.worktree(42, "assets", "fletchery/42-assets")
+        self.assertEqual(again.resolve(), current.resolve())
+        self.assertEqual(resumed.head(again), head)
+        self.assertEqual((again / "kept.txt").read_text(), "committed attempt work")
+        self.assertTrue(old.exists())
+
+    def test_deleted_checkout_with_lost_local_branch_starts_from_pushed_branch(self):
+        wt = self.worker()
+        (wt / "pushed.txt").write_text("pushed work")
+        self.repo.commit_all(wt, "pushed work")
+        self.repo.push(wt, "fletchery/42-assets")
+        self.git("fetch", "-q", "origin", cwd=self.host)
+        self.delete_folder(wt)
+        self.git("worktree", "add", "-q", "-f", "--detach", str(wt), "main", cwd=self.host)
+        self.delete_folder(wt)  # registration now holds no branch
+        self.git("branch", "-D", "fletchery/42-assets", cwd=self.host)
+        again = self.repo.worktree(42, "assets", "fletchery/42-assets")
+        self.assertEqual((again / "pushed.txt").read_text(), "pushed work")
+
+    def test_deleted_checkout_refuses_when_branch_is_live_elsewhere(self):
+        wt = self.worker()
+        self.delete_folder(wt)
+        other = self.root / "someone-else"
+        self.git("worktree", "add", "-q", "-f", str(other), "fletchery/42-assets", cwd=self.host)
+        with self.assertRaisesRegex(RuntimeError, "checked out in another worktree"):
+            self.worker()
+        self.assertTrue(other.exists())
+
     def test_planner_registry_cannot_redirect_to_foreign_checkout(self):
         self.repo.worktree_root.mkdir(parents=True, exist_ok=True)
         registry = self.repo.worktree_root / ".task-checkouts.json"
