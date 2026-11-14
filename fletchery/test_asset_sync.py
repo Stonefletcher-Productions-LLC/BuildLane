@@ -74,6 +74,15 @@ class AssetSyncTests(unittest.TestCase):
         self.assertEqual(third["copied"], 1)
         self.assertEqual((self.dest / "meshy_folk_v1_r9" / "Manny.fbx").read_bytes(), b"new" * 999)
 
+    def test_a_long_mirror_keeps_checking_in(self):
+        for i in range(5):
+            (self.src / f"part{i}.bin").write_bytes(b"p" * 100)
+        beats = []
+        clock = iter(range(0, 10**6, 20))   # each look at the clock is 20 s later
+        with mock.patch.object(node_worker.time, "monotonic", lambda: next(clock)):
+            node_worker.sync_assets(self.coord(), self.cfg, log=lambda *a: None, beat=lambda: beats.append(1))
+        self.assertGreaterEqual(len(beats), 2)
+
     def test_big_file_comes_in_chunks(self):
         (self.src / "big.zip").write_bytes(b"x" * (machines.ASSET_CHUNK * 2 + 5))
         c = self.coord()
