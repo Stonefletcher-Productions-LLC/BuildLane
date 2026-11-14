@@ -896,6 +896,11 @@ ctx.gh.merged = {"claude/foreman-20-root": (916, "Test-Staging", "2026-11-03T17:
 fm, out = run_once(ctx, tmp)
 assert 20 in ctx.gh.closed and "merged into Test-Staging" in ctx.gh.comments[20][0], ctx.gh.writes
 assert [o.task for o in out] == [21], "the dependent starts in the same pass"
+# a blocked task whose PR landed anyway (by hand or a later round) leaves Needs you the same way (LifeShare #1400)
+ctx, tmp = ctx_with({30: T(30, "Album", status=BLOCKED), 31: T(31, "Other", status=BLOCKED)})
+ctx.gh.merged = {"claude/foreman-30-album": (1592, "Test-Staging", "2026-11-13T00:00:00Z")}
+fm, out = run_once(ctx, tmp)
+assert 30 in ctx.gh.closed and 31 not in ctx.gh.closed, ctx.gh.writes
 
 
 # ---- several agents: routing, review by another vendor, escalation, per-agent limits, learning ----

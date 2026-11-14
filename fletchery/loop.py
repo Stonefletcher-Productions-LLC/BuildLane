@@ -381,9 +381,11 @@ class Engine:
         by_pr = _tasks_by_pr(tasks, prs)
         # A task whose PR merged into a non-default branch (Test-Staging) stays open: GitHub only acts on "Closes #n"
         # for the default branch. Close it here, or everything depending on it waits forever (round 7, 2026-11-03).
-        for t in [t for t in tasks.values() if t.status == PR and not t.pr_number]:
+        # Blocked tasks too: a PR landed by hand or by a later round while its task sat in Needs you, and the blocker
+        # planner can only say "nothing left to do" (LifeShare #1400, #1448, #940, #1549 on 2026-11-14).
+        for t in [t for t in tasks.values() if (t.status == PR and not t.pr_number) or t.status == BLOCKED]:
             try:
-                m = gh.merged_pr(t.branch)
+                m = gh.merged_pr(t.branch)  # a "Repair PR #n" task's branch is that PR's own head
             except Exception as e:
                 self.ctx.log(f"#{t.number}: could not look up its merged PR: {type(e).__name__}: {e}")
                 continue
