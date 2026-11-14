@@ -888,25 +888,45 @@ def raise_alert(gh, state_dir, res: dict, alert: str) -> int:
         pass
     text = (f"Round {res.get('round')} ({res.get('result')}): {alert}"
             + (f"\n\nRepair issue: #{res['failure_issue']}" if res.get("failure_issue") else ""))
+    return alert_comment(gh, state_dir, text)
+
+
+def alert_comment(gh, state_dir, text: str) -> int:
+    """Comment `text` on the one "Fletchery round alerts" issue (made on first use). Returns its number, 0 when GitHub
+    failed. The issue carries no Fletchery label (it is no task), so the label-filtered marker search never finds it:
+    its number is kept in <state>/alert-issue.json, or every alert opened another issue."""
+    remembered = Path(state_dir) / "alert-issue.json"
     try:
-        found = gh.marked_issues(ALERT_MARKER)
-        if found:
-            gh.comment(found[0]["number"], text)
-            return int(found[0]["number"])
-        return gh.create_issue("Fletchery round alerts", "Fletchery comments here when a merge round lands nothing, "
-                               "the base branch itself fails, or a failure repeats across rounds.\n\n" + text + "\n\n"
-                               + ALERT_MARKER, [])
+        number = int(json.loads(remembered.read_text(encoding="utf-8")).get("issue", 0))
+    except (OSError, ValueError, AttributeError):
+        number = 0
+    try:
+        if not number:
+            found = gh.marked_issues(ALERT_MARKER)
+            number = int(found[0]["number"]) if found else 0
+        if number:
+            gh.comment(number, text)
+        else:
+            number = gh.create_issue("Fletchery round alerts", "Fletchery comments here when a merge round lands nothing, "
+                                     "the base branch itself fails, a failure repeats across rounds, or rounds have "
+                                     "nothing they can take.\n\n" + text + "\n\n" + ALERT_MARKER, [])
+        try:
+            remembered.write_text(json.dumps({"issue": number}), encoding="utf-8")
+        except OSError:
+            pass
+        return number
     except Exception:
         return 0
 
 
-def split_halves(prs: list, tasks: dict, known_closed: set | None = None) -> list[list]:
+def split_halves(prs: list, tasks: dict, known_closed: set | None = None,
+                 repository_closed: set | None = None) -> list[list]:
     """Two groups from a failed batch, in its order. A PR whose prerequisite PR falls in the second half moves there
     too, so each half can land on its own. A batch of one, or one that can't be split, comes back whole."""
     if len(prs) < 2:
         return [list(prs)]
     half = (len(prs) + 1) // 2
-    first = without_failed_dependencies(list(prs[:half]), {}, tasks, known_closed)
+    first = without_failed_dependencies(list(prs[:half]), {}, tasks, known_closed, repository_closed)
     keep = {p.number for p in first}
     second = [p for p in prs if p.number not in keep]
     if not first or not second:

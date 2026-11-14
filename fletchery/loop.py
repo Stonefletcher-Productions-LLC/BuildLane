@@ -52,6 +52,7 @@ class State:
     merge_parked: dict = field(default_factory=dict)           # PR -> {head, count, why, parked}: deferred again and again at one head
     merge_split: dict = field(default_factory=dict)            # {from_round, why, groups: [[{pr, head}]]}: a failed batch tried in parts
     merge_base_red: dict = field(default_factory=dict)         # {round, why, at}: the base branch itself fails; only fixes go in
+    merge_starved: dict = field(default_factory=dict)          # {since, blocked, alerted, retried}: ready PRs but none eligible (watchdog.py)
     storage_last: dict = field(default_factory=dict)          # latest bounded cleanup result
     storage_requested: bool = False
     merge_resume: dict = field(default_factory=dict)          # explicit interrupted candidate + user authorization
@@ -907,6 +908,7 @@ class Engine:
         if st.spent.get(today(), 0.0) >= cfg.daily_budget_usd:
             self.merge_why = "daily budget spent"
             return
+        repository_closed: set[tuple[str, int]] = set()
         try:
             ready = rounds.ready_prs(self.ctx.gh.labelled_prs(cfg.merge_label or "ready", cfg.base_branch), cfg)
             labelled = list(ready)
@@ -956,6 +958,7 @@ class Engine:
             declarations = [*self._tasks.values(), *(Task(p.number, p.title, p.body) for p in ready)]
             verify = getattr(self, "_verify_repository_dependencies", None)
             repository_closed = verify(declarations) if verify else set()
+            self._repository_closed = repository_closed
             ready = rounds.without_failed_dependencies(ready, st.merge_excluded, self._tasks, known_closed, repository_closed)
         except Exception as e:  # GitHub down: try again next pass
             self.merge_why = f"couldn't list the PRs: {type(e).__name__}"
@@ -1002,6 +1005,7 @@ class Engine:
             # The label is there; every PR carrying it is left out at its head (repair pending or spent) or parked.
             why = (f"{len(labelled)} PR(s) labelled `{cfg.merge_label or 'ready'}`, but none can join a round: each was left "
                    "out at its current head (repair pending, or needs a person) or is parked until it changes")
+            self._starved(labelled, repository_closed, resume)
         self.merge_why = why
         if not ok:
             # Rounds come first on the one PC: a PC check of a single PR only starts when no PR can join a round now,
@@ -1017,13 +1021,22 @@ class Engine:
             split = rounds.split_batch(st.merge_split, ready)
             st.save(self.state_dir / "state.json")
         for offset in range(0, 0 if split else len(ready), limit):
-            batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks, getattr(self, "_known_closed_dependencies", set()))
+            # The same verified cross-repo prerequisites as the eligibility filter above: without them every PR with a
+            # "Depends on: owner/repo#n" line was dropped here although that issue had closed (11-14: #1568 on Hearth#42
+            # held rounds 180+ with the backend healthy and nothing logged).
+            batch = rounds.without_failed_dependencies(ready[offset:offset + limit], st.merge_excluded, self._tasks,
+                                                       getattr(self, "_known_closed_dependencies", set()), repository_closed)
             if batch:
                 break
         batch = split or batch
         if not batch:
             self.merge_why = "ready PRs wait for prerequisite PRs to become eligible"
+            self._starved(labelled, repository_closed, resume)
             return
+        if st.merge_starved.get("since"):
+            import watchdog
+            watchdog.resumed(self)
+            st.save(self.state_dir / "state.json")
         self.merge_priority = True
         pool = self.ctx.agents
         agent = pool.merger(cfg.merge_agent) if pool is not None else ""
@@ -1279,7 +1292,8 @@ class Engine:
         import rounds
         known = getattr(self, "_known_closed_dependencies", set())
         split, culprits = rounds.after_round(self.state.merge_split, batch, res, in_split,
-                                             lambda prs: rounds.split_halves(prs, self._tasks, known))
+                                             lambda prs: rounds.split_halves(prs, self._tasks, known,
+                                                                               getattr(self, "_repository_closed", set())))
         heads = {p.number: p.head_sha for p in batch}
         for number, why in culprits:
             self.state.merge_excluded[str(number)] = {"head": heads[number], "why": why[:4000], "round": n, "at": now(),
@@ -1295,6 +1309,22 @@ class Engine:
             if started:
                 parts = " then ".join("+".join(f"#{x['pr']}" for x in g) for g in split["groups"])
                 self.ctx.log(f"merge round {n}: {res['result']} with no PR named; trying the batch in parts: {parts}")
+            self.wake()
+
+    def _starved(self, labelled: list, repository_closed: set, resume) -> None:
+        """Ready PRs exist but none can join a round (watchdog.py): recheck, retry, and alert if that changes nothing."""
+        if resume or self.dry_run or not labelled:
+            return
+        import watchdog
+        pending = {p.number: {f"{repo}#{n}" for repo, n in Task(p.number, p.title, p.body).repository_dependencies
+                              - repository_closed} for p in labelled}
+        try:
+            freed = watchdog.starved(self, labelled, {k: v for k, v in pending.items() if v})
+        except Exception as e:  # the watchdog must never stop the pass
+            self.ctx.log(f"merge rounds: starve check failed: {type(e).__name__}: {e}")
+            return
+        self.state.save(self.state_dir / "state.json")
+        if freed:
             self.wake()
 
     def _conflicting(self, ready: list) -> list:
@@ -1882,17 +1912,37 @@ class Engine:
         loop = asyncio.get_running_loop()
         self._reload_draining = False
         self.update_pending = False
+        import watchdog
+        guard = watchdog.HangGuard(getattr(self.cfg, "hang_minutes", 0) if not self.dry_run else 0,
+                                   lambda minutes: watchdog.exit_hung(str(self.state_dir), self.ctx.log, minutes))
+        self._hang_guard = guard
+        guard.start()
+        drain_limit = float(getattr(self.cfg, "drain_max_minutes", 0) or 0) * 60
+        drain_started = 0.0
+        drain_deferred_until = 0.0  # after a drain ran out of time: reload only when nothing runs, or try again then
         while True:
+            guard.beat()
             if not self._reload_draining:
                 changed = bool(code_changed and code_changed())
                 if changed and not self.update_pending and not self.restart_reason:
                     self.ctx.log("Updated code is installed; workers continue until the active merge round finishes"
                                  if self.round_job is not None else "Updated code is installed; preparing to reload")
                 self.update_pending = changed
-                if self.restart_reason or (changed and self.round_job is None):
+                idle = not self.jobs and self.round_job is None
+                if self.restart_reason or (changed and self.round_job is None and (idle or loop.time() >= drain_deferred_until)):
                     self._reload_draining = True
+                    drain_started = loop.time()
                     self.ctx.log(f"{self.restart_reason or 'Fletchery' + chr(39) + 's code changed on disk'}; "
                                  "restarting once running sessions finish")
+            elif (drain_limit and not self.restart_reason and self.jobs
+                    and loop.time() - drain_started > drain_limit):
+                # 11-13: a reload waited hours behind one long session while no round could start. Past the limit the
+                # reload stops holding everything back: rounds and workers go on, and it happens the moment nothing
+                # runs (or the drain is tried again after a while). Nothing running is cancelled.
+                self._reload_draining = False
+                drain_deferred_until = loop.time() + 6 * drain_limit
+                self.ctx.log(f"reload waited {int(drain_limit // 60)} min for {len(self.jobs)} session(s); rounds and "
+                             "workers continue, and Fletchery reloads as soon as nothing is running")
             try:
                 self.dispatch(draining=self._reload_draining)
                 await asyncio.sleep(0)  # let new worker coroutines start before optional status publishing
@@ -1905,6 +1955,7 @@ class Engine:
             if self._reload_draining and not self.jobs and self.round_job is None and not (self._storage_job and not self._storage_job.done()):
                 if self._package_poll_job is not None:
                     await self._package_poll_job
+                guard.stop()
                 return
             wait = min(30, self.cfg.poll_minutes * 60) if self.sync_error else self.cfg.poll_minutes * 60
             handoff = self.state.merge_resume.get("wait_for") or {}
@@ -1935,6 +1986,7 @@ class Engine:
                 waits = [asyncio.ensure_future(self._wake.wait())] + list(self.jobs) + \
                     ([self.round_job] if self.round_job is not None else []) + ([self._storage_job] if self._storage_job and not self._storage_job.done() else [])
                 done, _ = await asyncio.wait(waits, timeout=min(left, 60), return_when=asyncio.FIRST_COMPLETED)
+                guard.beat()
                 try:
                     self.stop_stalled()
                 except Exception as e:  # the watchdog must never stop the loop
