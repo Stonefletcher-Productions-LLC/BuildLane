@@ -48,6 +48,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ONLINE_SECONDS = 90          # a node that has not called for this long shows as offline
+RETURN_SECONDS = 15 * 60     # `run` waits for a node seen this recently: its worker is probably restarting
+RETURN_WAIT_MINUTES = 8      # how long `run` waits for such a node to call in again before "no result"
 LOST_SECONDS = 180           # a running job without a heartbeat for this long is lost (the node stopped or rebooted)
 MAX_ATTEMPTS = 2             # a lost job is queued again once, then fails
 MAX_BODY = 1024 * 1024
@@ -589,6 +591,28 @@ class Machines:
                     out.append(m["name"])
         return out
 
+    def returning(self, labels: list, min_ram_gb: float = 0, recipe: str = "") -> list[str]:
+        """Nodes that would be eligible but have not called in for over ONLINE_SECONDS, though they were seen within
+        RETURN_SECONDS: most likely a worker restarting (after a package job, an update, a reboot), not a node gone.
+        A paused node is not returning: it was paused on purpose."""
+        at = datetime.now(timezone.utc)
+        out = []
+        with self._db() as db:
+            for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL ORDER BY name").fetchall():
+                stats = json.loads(m["stats"] or "{}")
+                if recipe and KIND.get(recipe) in self._paused(db, m["name"]):
+                    continue
+                if (ONLINE_SECONDS < _age(m["last_seen"], at) <= RETURN_SECONDS and not stats.get("pause_file")
+                        and set(labels) <= set(json.loads(m["labels"] or "[]")) and float(m["ram_gb"] or 0) >= min_ram_gb):
+                    out.append(m["name"])
+        return out
+
+    def carriers(self, labels: list) -> list[str]:
+        """Unrevoked nodes that carry every label, online or not."""
+        with self._db() as db:
+            return [m["name"] for m in db.execute("SELECT * FROM machines WHERE revoked IS NULL ORDER BY name").fetchall()
+                    if set(labels) <= set(json.loads(m["labels"] or "[]"))]
+
     # ---- GitHub commit statuses ----
     def status_for(self, row) -> tuple[str, str] | None:
         """(state, description) for a job's commit status now, or None when it reports nothing."""
@@ -1076,7 +1100,22 @@ def run_job(m: "Machines", recipe: str, sha: str, params: dict | None = None, re
     need = list(RECIPES[recipe]["labels"]) + [x for x in labels if x not in RECIPES[recipe]["labels"]]
     names = m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe)
     if not names:
-        out(f"No result: no online node takes {recipe} with labels {' '.join(need)} (offline, paused or busy elsewhere).")
+        # A node that dropped off a minute ago is usually its worker restarting (2026-11-13, round 165: SF-NODE-01
+        # restarted after a package job, both `run` attempts fell inside the gap and the round imported on the PC).
+        back = m.returning(need, RECIPES[recipe]["min_ram_gb"], recipe)
+        if back:
+            out(f"{', '.join(back)} was seen recently but is not calling in; waiting up to {RETURN_WAIT_MINUTES} min "
+                "for it to come back...")
+            start = clock()
+            while not names and clock() - start < RETURN_WAIT_MINUTES * 60:
+                sleep(poll)
+                names = m.eligible(need, RECIPES[recipe]["min_ram_gb"], recipe)
+    if not names:
+        if not m.carriers(need):
+            out(f"No result: no node has the labels {' '.join(need)} (no node carries them at all).")
+        else:
+            out(f"No result: no online node takes {recipe} with labels {' '.join(need)} (offline, paused or busy "
+                "elsewhere).")
         return 2
     chunks = [params.get("only", "")] if params.get("imports") else split_checks(params.get("only", ""), len(names))
     ids = []

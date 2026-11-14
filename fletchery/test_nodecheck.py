@@ -166,6 +166,61 @@ class RunJobTests(Harness):
         self.m.set_paused("SF-NODE-01", "tests", True)
         self.assertEqual(self.run_with(online=False)[0], 2)
 
+    def _seen_ago(self, seconds):
+        from datetime import datetime, timedelta, timezone
+        with self.m._db() as db:
+            db.execute("UPDATE machines SET last_seen=? WHERE name='SF-NODE-01'",
+                       ((datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat(),))
+
+    def test_waits_for_a_node_whose_worker_is_restarting(self):
+        # Round 165 (2026-11-13): the node's worker restarted after a package job; both attempts fell in the gap.
+        import machines
+        self.online()
+        self._seen_ago(130)
+        self.assertEqual(self.m.eligible(["unreal:5.8.3"], 0, "node-checks"), [])
+        self.assertEqual(self.m.returning(["unreal:5.8.3"], 0, "node-checks"), ["SF-NODE-01"])
+        out, t = [], [0.0]
+
+        def sleep(_):
+            t[0] += 60
+            if t[0] == 120:
+                self.online()   # the worker calls in again
+            elif t[0] > 120:
+                running = [j for j in self.m.active("node-checks") if j["state"] == "running"]
+                if not running:
+                    self.m.claim("SF-NODE-01")
+                else:
+                    self.m.finish("SF-NODE-01", running[0]["id"], 0, "Passed")
+        code = machines.run_job(self.m, "node-checks", BASE, {"only": "RunFlowTest"}, "round 9", ["unreal:5.8.3"],
+                                out=out.append, clock=lambda: t[0], sleep=sleep)
+        self.assertEqual(code, 0, "\n".join(out))
+        self.assertIn("waiting up to", "\n".join(out))
+
+    def test_gives_up_on_a_node_that_does_not_come_back(self):
+        import machines
+        self.online()
+        self._seen_ago(130)
+        out, t = [], [0.0]
+
+        def sleep(_):
+            t[0] += 60
+        code = machines.run_job(self.m, "node-checks", BASE, {"only": "RunFlowTest"}, "round 9", ["unreal:5.8.3"],
+                                out=out.append, clock=lambda: t[0], sleep=sleep)
+        self.assertEqual(code, 2)
+        self.assertEqual(t[0], machines.RETURN_WAIT_MINUTES * 60)
+        self.assertIn("offline, paused or busy", out[-1])
+        self.assertEqual(self.m.active("node-checks"), [])
+
+    def test_no_wait_for_a_node_gone_long_ago_and_says_when_no_node_has_the_labels(self):
+        import machines
+        self.online()
+        self._seen_ago(machines.RETURN_SECONDS + 60)
+        self.assertEqual(self.m.returning(["unreal:5.8.3"], 0, "node-checks"), [])
+        out = []
+        self.assertEqual(machines.run_job(self.m, "node-checks", BASE, {}, "r", ["role:imports"], out=out.append,
+                                          clock=lambda: 0.0, sleep=lambda _: self.fail("should not wait")), 2)
+        self.assertIn("no node has the labels", out[-1])
+
     def test_nobody_takes_it(self):
         code, text = self.run_with(finish=None)
         self.assertEqual(code, 2)
@@ -484,6 +539,8 @@ class NodeImportTests(unittest.TestCase):
         self.assertIn("--push-branch fletchery/round-9", text)
         self.assertIn("git merge --ff-only FETCH_HEAD", text)
         self.assertIn("no node has the `role:imports` label", text)
+        self.assertIn("no node has the labels", text)
+        self.assertIn("wait 3 minutes", text)
 
     def test_params_accept_imports_only_with_a_round_branch(self):
         from machines import check_params
