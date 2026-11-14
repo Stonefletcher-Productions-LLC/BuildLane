@@ -50,7 +50,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "3"   # 2: mirrors the PC's asset folders (label cap:asset-sync); 3: clears stale git locks, backs off on failed checkouts
+VERSION = "4"   # 2: mirrors the PC's asset folders (label cap:asset-sync); 3: clears stale git locks, backs off on failed checkouts;
+                # 4: keeps checking in while an idle mirror copies, so the node never looks offline
 ASSET_SYNC_LABEL = "cap:asset-sync"
 ASSET_IDLE_SECONDS = 15 * 60
 ASSET_INDEX = ".fletchery-assets.json"
@@ -459,10 +460,12 @@ def _safe_rel(rel: str) -> bool:
         and ":" not in rel
 
 
-def sync_assets(coord, cfg: dict, log=print) -> dict:
+def sync_assets(coord, cfg: dict, log=print, beat=None) -> dict:
     """Mirror every folder the PC shares (workers.machines.assetRoots) to the same path on this node (or cfg assetMap).
     Copies only files that are missing or differ, into <name>.fletchery-part, checks the SHA-256, then swaps it in.
     Raises AssetSyncError when the PC is missing a folder or a copy fails, so an import job stops before it imports.
+    `beat`, when given, is called about every HEARTBEAT_SECONDS while files copy: the idle loop passes one that checks in
+    with the coordinator, or a long first mirror (3.8 GB took 6 min on 11-13) makes the node look offline to rounds.
     Returns {"roots": n, "copied": n, "bytes": n}."""
     import base64
     import socket
@@ -513,7 +516,14 @@ def sync_assets(coord, cfg: dict, log=print) -> dict:
             if free - want < ASSET_MIN_FREE_GB * 2**30:
                 raise AssetSyncError(f"{dest} needs {want / 2**30:.1f} GB but its drive has {free / 2**30:.1f} GB free")
             log(f"assets: {root}: copying {len(need)} file(s), {want / 2**20:.0f} MB, to {dest}")
+        last_beat = time.monotonic()
         for rel, size, sha in need:
+            if beat and time.monotonic() - last_beat >= HEARTBEAT_SECONDS:
+                last_beat = time.monotonic()
+                try:
+                    beat()
+                except Exception as e:   # a missed check-in must not stop the copy
+                    log(f"assets: check-in failed: {e}")
             local = dest / rel
             local.parent.mkdir(parents=True, exist_ok=True)
             part = local.with_name(local.name + ASSET_PART)
@@ -877,7 +887,7 @@ def run(cfg: dict, once: bool = False) -> int:
                 if not st.get("paused") and time.monotonic() >= next_sync:
                     next_sync = time.monotonic() + ASSET_IDLE_SECONDS
                     try:
-                        got = sync_assets(coord, cfg, log)
+                        got = sync_assets(coord, cfg, log, beat=lambda: hello(coord, cfg))
                         if got["copied"]:
                             log(f"assets: copied {got['copied']} file(s), {got['bytes'] / 2**20:.0f} MB")
                     except Exception as e:   # an import job will try again and fail clearly if it still can't

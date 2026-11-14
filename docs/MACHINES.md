@@ -140,7 +140,7 @@ API, on the same Tailscale address and with the same per-node keys. There is no 
   with no `..` and no other paths.
 - **Worker:** `node_worker.py` (version 2) mirrors each shared folder to the **same path** on the node, or to a path set
   with `assetMap` in its config. It runs first in every import job, as the step "Mirror the PC's asset folders". It
-  also runs when the worker starts and every 15 minutes while it is idle, so a newly added node fills itself before
+  also runs when the worker starts and every 15 minutes while it is idle (checking in every 30 s while it copies, so the node never looks offline), so a newly added node fills itself before
   its first import. Only missing or changed files are copied. Each file goes to `<name>.fletchery-part`, has its SHA-256
   checked, and then replaces the old copy. Nothing on the node is deleted. A worker running on the PC itself skips this.
   `python node_worker.py sync --config <file>` mirrors on demand.
