@@ -46,7 +46,7 @@ WORKER_KEYS = {
     "plannerBudgetUsd": "planner_budget_usd", "dailyBudgetUsd": "daily_budget_usd",
     "workerMaxTurns": "worker_max_turns", "reviewerMaxTurns": "reviewer_max_turns", "fixerMaxTurns": "fixer_max_turns",
     "plannerMaxTurns": "planner_max_turns", "fixerAttempts": "fixer_attempts", "codeFreeze": "code_freeze",
-    "gateTimeoutSeconds": "gate_timeout_s", "stallMinutes": "stall_minutes", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
+    "gateTimeoutSeconds": "gate_timeout_s", "stallMinutes": "stall_minutes", "hangMinutes": "hang_minutes", "drainMaxMinutes": "drain_max_minutes", "plugin": "plugin", "dashboardPort": "dashboard_port", "label": "label",
     "watchFailures": "watch_failures", "runnerRoot": "runner_root", "watchSkipWorkflows": "watch_skip_workflows",
     "watchMinutes": "watch_minutes", "mergeFlags": "merge_flags", "mergeRoundFile": "merge_round_file",
     "heavyLeaseFile": "heavy_lease_file", "mergeRounds": "merge_rounds", "mergeLabel": "merge_label",
@@ -113,6 +113,8 @@ class Config:
     daily_budget_usd: float = 60.0
     worker_max_turns: int = 80
     stall_minutes: int = 60                  # a worker/fixer session with no tool call for this long is stopped and requeued (0 = never)
+    hang_minutes: float = 30                 # the backend's own pass loop stuck this long: it exits for a restart (watchdog.py; 0 = never)
+    drain_max_minutes: float = 60            # a code reload waits this long for sessions to finish, then rounds and workers go on
     reviewer_max_turns: int = 25
     fixer_max_turns: int = 50
     planner_max_turns: int = 40

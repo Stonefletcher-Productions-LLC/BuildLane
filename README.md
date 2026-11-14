@@ -370,6 +370,22 @@ Limits, unreachable models, busy checkouts and interruptions leave the split whe
 **Conflicts are caught before a round.** GitHub's PR list never says whether a PR conflicts, so before starting a round
 Fletchery reads each ready PR (once per head, at most every 10 minutes) and leaves out any that conflicts with the base
 branch, with its dependents, until its head changes. The PR's fixer (or a repair issue) is told to merge the base in.
+**Rounds never go quiet on their own.** When PRs carry `ready` but none can join a round (each left out at its head,
+parked, or waiting on a prerequisite), Fletchery treats it as a stall, not a wait. Each pass it rechecks the PRs left
+out only for a conflict (at most every 30 minutes each; the base moves with every round, so a conflict can clear
+without a new head) and frees any that now merge cleanly. After three hours it gives each PR left out for a failure one
+more round at that same head, once per head. If an hour passes with nothing freed, it comments on the **Fletchery round
+alerts** issue with every PR and what holds it, and says so again there when rounds can take PRs again. A paused merge,
+a code reload, a running round or the failed-round wait is not a stall. Cross-repository prerequisites
+(`Depends on: owner/repo#n`) count as met once that issue closes as completed, whatever case the owner is written in.
+
+**The backend restarts itself.** If Fletchery's own pass loop makes no progress for **Restart a stuck backend after**
+(`workers.hangMinutes`, 30), it writes every thread's stack to `hang.txt` in the state folder and exits with code 76;
+`Start-Fletchery.ps1` starts it again, and after four quick crashes waits ten minutes and tries again rather than
+staying down. A code reload waits for running sessions for at most **Longest wait to reload new code**
+(`workers.drainMaxMinutes`, 60); after that rounds and workers carry on and the reload happens as soon as nothing is
+running. No session is cancelled for a reload.
+
 During Game specs, the dashboard reads fresh check events from the workspace holding the test reservation on each
 three-second refresh. The panel puts running and failed checks first, shows a pass count, and displays recent engine
 output during data validation and native specs when available. The round checkpoint still controls phase acceptance.
@@ -392,6 +408,7 @@ output during data validation and native specs when available. The round checkpo
 | "Not signed in" on a provider | **Settings > Accounts**, **Sign in**, then **Check sign-ins**. Work resumes on the next check |
 | An agent says "Paused until…" | It hit a usage limit. Its tasks go to the other agents; it comes back by itself. Upgraded the plan? Press **Refresh agents** (or the chip) to lift the pause now |
 | Nothing new starts | Check *Workers* is not at 0, the daily cap is not reached, and **Pause** is not on |
+| PRs are labelled `ready` but no round starts | Read the newest comment on the **Fletchery round alerts** issue: it lists each PR and what holds it (a conflict, a failed head, a park, a prerequisite). A new head on a PR frees it at once |
 | "Can't reach Fletchery's backend" | The app restarts it by itself. If it stays, quit from the tray and reopen; the log is under **Open log folder** in the tray menu |
 | The backend stopped after an install and never came back | It exits (code 75) to reload new code, and only the app or `shell\Start-Fletchery.ps1` starts it again. A backend started bare with `python -m fletchery run` has neither: run it through `Start-Fletchery.ps1 -Profile <file>` instead |
 | A task keeps landing under **Needs you** | Read the last comment on its issue: it says what a person must decide |

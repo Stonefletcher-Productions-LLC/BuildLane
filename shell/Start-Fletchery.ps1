@@ -3,7 +3,10 @@
 # The backend exits with code 75 after new code is installed (it drains running sessions first). The desktop
 # app restarts only a backend it started itself, so a backend started bare (`python -m fletchery run`) stays
 # down after an install. This script is that supervisor: exit 75 starts it again at once, a crash starts it
-# again after 5 seconds (giving up after 4 crashes in 5 minutes), and exit 0 (Ctrl+C, Quit) stays stopped.
+# again after 5 seconds, and exit 0 (Ctrl+C, Quit) stays stopped. Exit 76 is the backend's own hang guard (watchdog.py:
+# its pass loop made no progress for hangMinutes; stacks in <state>\hang.txt): restarted like a crash. After 4 crashes
+# in 5 minutes it waits 10 minutes and tries again instead of giving up: a backend that stays down is the stall people
+# notice hours later (2026-11-14).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File shell\Start-Fletchery.ps1 -Profile C:\path\Project.profile.json
 #   Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',
@@ -43,8 +46,14 @@ while ($true) {
     Note "backend exited $code"
     if ($code -eq 75) { continue }   # new code installed: reload right away
     if ($code -eq 0) { break }       # a clean stop stays stopped
+    if ($code -eq 76) { Note 'backend hang guard fired (see hang.txt in the state folder); restarting' }
     $now = Get-Date
     $crashes = @($crashes | Where-Object { ($now - $_).TotalMinutes -lt 5 }) + $now
-    if ($crashes.Count -gt 3) { Note '4 crashes in 5 minutes; not starting again'; break }
+    if ($crashes.Count -gt 3) {
+        Note '4 crashes in 5 minutes; waiting 10 minutes before starting again'
+        Start-Sleep -Seconds 600
+        $crashes = @()
+        continue
+    }
     Start-Sleep -Seconds 5
 }
