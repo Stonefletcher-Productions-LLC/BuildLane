@@ -325,10 +325,17 @@ class Builds:
             self._log(f"{row['version']}: uploading {', '.join(z.name for z in zips)}")
             url = pub.release({**row, "name": self.engine.cfg.name}, zips)
             gone = pub.prune(max(1, int(p.get("keep") or 3)))
+            drive = ""
+            if p.get("driveDir"):
+                try:
+                    old = publish.to_drive(zips, Path(p["driveDir"]), self.engine.cfg.name or "Build", max(1, int(p.get("keep") or 3)))
+                    drive = f" Copied to {p['driveDir']}" + (f" (removed {', '.join(old)})." if old else ".")
+                except OSError as e:
+                    drive = f" Not copied to {p['driveDir']}: {e}"
             for z in zips:
                 z.unlink(missing_ok=True)
             self.update(row, publish="published", download=url,
-                        publish_reason=f"Download: {url}" + (f" (removed {', '.join(gone)})" if gone else ""))
+                        publish_reason=f"Download: {url}" + (f" (removed {', '.join(gone)})" if gone else "") + drive)
             self._log(f"{row['version']}: download ready at {url}" + (f"; removed {', '.join(gone)}" if gone else ""))
         except Exception as e:
             self.update(row, publish="failed", publish_reason=f"{type(e).__name__}: {e}"[:400])
