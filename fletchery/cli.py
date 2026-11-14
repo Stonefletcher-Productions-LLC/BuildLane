@@ -288,6 +288,11 @@ def utf8_console() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     utf8_console()
+    import clis
+    gone = clis.scrub_process_env()   # a backend started from inside a Codex session must not pass its variables on
+    if gone:
+        print(f"fletchery: ignoring {len(gone)} variables inherited from an agent session ({', '.join(sorted(gone)[:6])}"
+              f"{', ...' if len(gone) > 6 else ''})", file=sys.stderr)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["once", "run", "status", "plan", "config", "demo", "doctor", "usage"])
     ap.add_argument("goal", nargs="?", default="")
